@@ -1,0 +1,5 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Wechat-Agent · 本地登录</title>
+<style>body{font:16px system-ui;background:#f3f6f8;color:#192b38;max-width:500px;margin:12vh auto;padding:24px}input,button{padding:12px;border:1px solid #b8c4ce;border-radius:8px}input{width:90%}button{background:#086f71;color:white;margin-top:16px}code{word-break:break-all}p{line-height:1.8}</style>
+<h1>商家备货助手</h1><p>本地工作台 · 微信只读采集 · DeepSeek 分析</p><p>先运行 <code>uv run wechat-agent token</code> 查看本机登录口令。不要把口令发给别人。</p>
+<form id="login"><input id="token" type="password" placeholder="本地登录口令" required autocomplete="current-password"><button>进入工作台</button></form><p id="error"></p>
+<script nonce="{{nonce}}">document.querySelector('#login').onsubmit=async e=>{e.preventDefault();const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:document.querySelector('#token').value})});if(r.ok)location.reload();else document.querySelector('#error').textContent='口令不正确，请在本机终端查看。'};</script></html>
