@@ -156,7 +156,11 @@ class Collector:
                     if raw.get("msg_type") == 1 and not isinstance(text, str):
                         raise SourceError("full_content_unavailable")
                     if raw.get("msg_type") != 1:
-                        text = "[非文本消息：未解析正文]"
+                        text = (
+                            "[图片：正文未识别，可读取本机图片]"
+                            if raw.get("msg_type") == 3
+                            else "[非文本消息：未解析正文]"
+                        )
                     stamp = int(raw["create_time"])
                     if stamp < since or stamp > until:
                         raise SourceError("out_of_window")
@@ -182,6 +186,12 @@ class Collector:
                             message_type="text"
                             if raw.get("msg_type") == 1
                             else str(raw.get("msg_type", "unknown")),
+                            source_locator={"image_md5": content["Image"]["md5"]}
+                            if raw.get("msg_type") == 3
+                            and isinstance(content, dict)
+                            and isinstance(content.get("Image"), dict)
+                            and isinstance(content["Image"].get("md5"), str)
+                            else {},
                             text=text,
                             completeness="full"
                             if raw.get("msg_type") == 1

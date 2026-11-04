@@ -34,6 +34,10 @@ fs.mkdirSync(screenshots,{recursive:true});
   if((await page.locator('#pilot-results').innerText()).includes('需检查'))throw Error('pilot failed');
   await page.locator('#pilot-results [data-action=evidence]').first().click();
   await page.locator('#preview-dialog[open] .message').first().waitFor();
+  await page.locator('#preview-dialog [data-action=load-image]').click();
+  await page.locator('#preview-dialog img.archived-image').waitFor();
+  if(!(await page.locator('#preview-dialog .image-preview').innerText()).includes('缩略图'))throw Error('image quality not shown');
+  if(!await page.locator('#preview-dialog img.archived-image').evaluate(img=>img.complete && img.naturalWidth>0))throw Error('image decode failed');
   await page.locator('#preview-dialog [data-close]').click();
   await page.screenshot({path:path.join(screenshots,'source.png'),fullPage:true});
   await page.setViewportSize({width:390,height:844});
@@ -41,6 +45,6 @@ fs.mkdirSync(screenshots,{recursive:true});
   if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('mobile horizontal overflow');
   await page.screenshot({path:path.join(screenshots,'mobile.png'),fullPage:true});
   if(errors.length)throw Error(errors.join(';'));
-  console.log('Browser smoke passed: login, dashboard, manual task, account binding, two-group local pilot, message preview, mobile width; no JavaScript exceptions.');
+  console.log('Browser smoke passed: login, dashboard, manual task, account binding, two-group local pilot, message/image preview, thumbnail quality, mobile width; no JavaScript exceptions.');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e.message);process.exit(1)});

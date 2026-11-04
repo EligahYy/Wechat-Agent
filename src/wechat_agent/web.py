@@ -8,7 +8,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import ValidationError
@@ -98,7 +98,7 @@ def create_app(settings=None, source_factory=None):
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Content-Security-Policy"] = (
-            f"default-src 'self'; script-src 'nonce-{request.state.nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+            f"default-src 'self'; script-src 'nonce-{request.state.nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         )
         return response
 
@@ -148,7 +148,7 @@ def create_app(settings=None, source_factory=None):
     def health():
         return {
             "database": "ok",
-            "schema": 2,
+            "schema": 3,
             "runtime": db.rows("SELECT * FROM runtime"),
             "gaps": db.rows("SELECT COUNT(*) n FROM sync_windows WHERE status='gap'")[
                 0
@@ -345,6 +345,17 @@ def create_app(settings=None, source_factory=None):
         return db.rows(
             "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time DESC LIMIT 100",
             (cid,),
+        )
+
+    @app.get("/api/messages/{mid}/image")
+    def message_image(mid: str):
+        from .media import local_image
+
+        image = local_image(db, mid, source_factory)
+        return Response(
+            image["bytes"],
+            media_type=image["mime"],
+            headers={"X-Wechat-Media-Quality": image["quality"]},
         )
 
     @app.post("/api/merchants")

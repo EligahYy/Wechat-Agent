@@ -81,6 +81,7 @@ def ingest(db: DB, records: list[dict], preview=False):
                         "sender_id": m.sender_id,
                         "direction": m.direction,
                         "event_time": stamp,
+                        "source_locator": dumps(m.source_locator),
                     }.items()
                 )
                 if same:
@@ -99,7 +100,7 @@ def ingest(db: DB, records: list[dict], preview=False):
                             ),
                         )
                         c.execute(
-                            "UPDATE messages SET text=?,completeness=?,type=?,sender_id=?,direction=?,event_time=?,revision=revision+1 WHERE id=?",
+                            "UPDATE messages SET text=?,completeness=?,type=?,sender_id=?,direction=?,event_time=?,source_locator=?,revision=revision+1 WHERE id=?",
                             (
                                 m.text,
                                 m.completeness,
@@ -107,8 +108,13 @@ def ingest(db: DB, records: list[dict], preview=False):
                                 m.sender_id,
                                 m.direction,
                                 stamp,
+                                dumps(m.source_locator),
                                 existing["id"],
                             ),
+                        )
+                        c.execute(
+                            "DELETE FROM attachments WHERE message_id=?",
+                            (existing["id"],),
                         )
                         changed.setdefault(chat["id"], set()).add(m.source_id)
             else:
@@ -128,6 +134,10 @@ def ingest(db: DB, records: list[dict], preview=False):
                             m.completeness,
                             now(),
                         ),
+                    )
+                    c.execute(
+                        "UPDATE messages SET source_locator=? WHERE conversation_id=? AND source_id=?",
+                        (dumps(m.source_locator), chat["id"], m.source_id),
                     )
                     changed.setdefault(chat["id"], set()).add(m.source_id)
         for chat_id in changed:

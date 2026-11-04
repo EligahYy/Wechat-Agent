@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 2:
+            if version > 3:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -64,6 +64,10 @@ class DB:
             if version < 2:
                 connection.executescript(
                     "BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS contact_roles(conversation_id TEXT NOT NULL REFERENCES conversations(id),sender_id TEXT NOT NULL,role TEXT NOT NULL,display_name TEXT NOT NULL DEFAULT '',PRIMARY KEY(conversation_id,sender_id)); PRAGMA user_version=2; COMMIT;"
+                )
+            if version < 3:
+                connection.executescript(
+                    "BEGIN IMMEDIATE; ALTER TABLE messages ADD COLUMN source_locator TEXT NOT NULL DEFAULT '{}'; CREATE TABLE attachments(message_id TEXT PRIMARY KEY REFERENCES messages(id),sha256 TEXT NOT NULL,mime TEXT NOT NULL,quality TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL); PRAGMA user_version=3; COMMIT;"
                 )
         finally:
             connection.close()

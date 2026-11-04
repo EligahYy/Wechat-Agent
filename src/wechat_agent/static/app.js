@@ -22,6 +22,7 @@ const sourceError = code => ({
   window_too_large_split_required:'最近窗口消息过多，请使用更小时间范围回填。'
 }[code] || code);
 let state = {}, taskFilter = 'active', draftText = '', sourceAccount = null;
+const imageURLs = [];
 let discovered = new Map(), selected = new Set(), nextOffset = 0, toastTimer;
 
 function notify(message, error=false) {
@@ -105,7 +106,7 @@ function render() {
 async function load(){state=await api('/api/state');render();}
 function previewMessages(messages) {
   $('#preview-title').textContent='本地消息 · 最近 100 条'; $('#preview').classList.add('hidden'); $('#message-preview').classList.remove('hidden');
-  $('#message-preview').innerHTML=messages.map(m=>`<article class="message"><div class="meta">${escape(date(m.event_time))} · ${m.direction==='outgoing'?'我方发出':'收到'} · ${m.completeness==='full'?'文本正文':'非全文 / 元数据'}</div><p>${escape(m.text)}</p><small class="muted">发送者 ID：${escape(m.sender_id)}</small></article>`).join('') || empty('最近还没有采集到消息','可以在微信中正常产生一条业务消息，然后重新试采。');
+  $('#message-preview').innerHTML=messages.map(m=>`<article class="message"><div class="meta">${escape(date(m.event_time))} · ${m.direction==='outgoing'?'我方发出':'收到'} · ${m.completeness==='full'?'文本正文':'非全文 / 元数据'}</div><p>${escape(m.text)}</p>${['3','image'].includes(m.type)?`<div class="image-preview" data-image-box="${m.id}"><button data-action="load-image" data-id="${m.id}">读取本机图片</button><p class="hint">仅在本机获取并缓存，不调用 DeepSeek。能否读到原图取决于微信下载与图片解密状态。</p></div>`:''}<small class="muted">发送者 ID：${escape(m.sender_id)}</small></article>`).join('') || empty('最近还没有采集到消息','可以在微信中正常产生一条业务消息，然后重新试采。');
   draftText='';$('#copy-draft').classList.add('hidden');$('#preview-dialog').showModal();
 }
 function step(index){document.querySelectorAll('[data-step]').forEach(s=>{s.classList.toggle('active',Number(s.dataset.step)===index);s.classList.toggle('done',Number(s.dataset.step)<index);});}
@@ -171,6 +172,13 @@ document.addEventListener('click',async event=>{
       for(const [key,value] of Object.entries(c)){const input=f.elements.namedItem(key);if(input)input.value=key==='egress'?String(Boolean(value)):value??'';}
       f.elements.namedItem('source_id').value=c.source_id;f.scrollIntoView({behavior:'smooth',block:'center'});
     }
+    if(action==='load-image'){
+      const response=await fetch(`/api/messages/${id}/image`);
+      if(!response.ok){const error=await response.json();throw Error(error.error||'图片读取失败');}
+      const url=URL.createObjectURL(await response.blob());imageURLs.push(url);
+      const box=$(`[data-image-box="${id}"]`);const img=document.createElement('img');img.src=url;img.alt='本机归档的群聊图片';img.className='archived-image';box.appendChild(img);
+      const quality=response.headers.get('X-Wechat-Media-Quality');box.querySelector('.hint').textContent=quality==='thumbnail'?'当前只有缩略图，价格等细小文字需核对原图。':quality==='full'?'上游标记为完整图；尚未进行 OCR 或模型分析。':'图像已读取，清晰度未知；尚未进行 OCR。';button.remove();
+    }
     if(action==='evidence')previewMessages(await api(`/api/messages/${id}`));
     if(action==='preview'||action==='draft'){
       const result=await api(action==='preview'?`/api/analysis/${id}/preview`:`/api/drafts/${id}`,{});
@@ -184,3 +192,5 @@ document.addEventListener('click',async event=>{
 $('#today-date').textContent=new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'long',day:'numeric',weekday:'long'}).format(new Date());
 $('#task-filters').onclick=event=>{if(!event.target.dataset.filter)return;taskFilter=event.target.dataset.filter;document.querySelectorAll('[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter===taskFilter));renderTasks();};
 load().catch(error=>notify(error.message,true));
+
+$('#preview-dialog').addEventListener('close',()=>{imageURLs.forEach(url=>URL.revokeObjectURL(url));imageURLs.length=0;});
