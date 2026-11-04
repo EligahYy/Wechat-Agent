@@ -304,3 +304,70 @@ def test_failure_report_has_safe_details_and_http_code(db):
     assert report["failed_conversations"][0]["page_offset"] == 0
     assert "should not leak" not in str(report)
     assert status_report(db)["failed_conversations"] == []
+
+
+def test_validation_error_is_field_specific_and_does_not_block_page(db):
+
+    secret_text = "PRIVATE-CONTENT-MUST-NOT-ENTER-REPORT"
+    invalid = item(2) | {"sender": "s" * 201, "content": {"Text": secret_text}}
+    source = make_source(
+        db,
+        lambda req: httpx.Response(
+            200,
+            json={
+                "items": [item(1), invalid, item(3)],
+                "paging": {"has_more": False},
+                "stats": {},
+            },
+        ),
+    )
+    register(
+        db,
+        [
+            {
+                "source_id": "person",
+                "title": "个人",
+                "kind": "private",
+                "excluded": False,
+            }
+        ],
+        500,
+    )
+    events = []
+    report = import_history(db, source, emit=events.append, delay=0)
+    assert report["messages"] == 2 and report["quarantined_rows"] == 1
+    assert report["progress"][0]["status"] == "scanned_with_gaps"
+    assert report["issues"][0]["error"] == "validation:sender_id:string_too_long"
+    assert secret_text not in str(report) and secret_text not in str(events)
+    assert (
+        secret_text in db.rows("SELECT payload FROM archive_quarantine")[0]["payload"]
+    )
+    assert db.rows("SELECT * FROM archive_progress")[0]["page_offset"] == 3
+    assert not db.rows("SELECT * FROM jobs")
+
+
+def test_http400_classification_never_returns_arbitrary_body(db):
+
+    source = make_source(
+        db,
+        lambda req: httpx.Response(
+            400, json={"error": "ambiguous contact PRIVATE_NAME"}
+        ),
+    )
+    register(
+        db,
+        [
+            {
+                "source_id": "person",
+                "title": "个人",
+                "kind": "private",
+                "excluded": False,
+            }
+        ],
+        500,
+    )
+    report = import_history(db, source, delay=0)
+    assert report["failure_reasons"] == [
+        {"error": "HTTP_400:ambiguous_contact", "conversations": 1}
+    ]
+    assert "PRIVATE_NAME" not in str(report)

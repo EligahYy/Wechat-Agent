@@ -12,7 +12,7 @@
 | 旧密钥 | 用户报告旧 raw key 通过 21 个库首页 HMAC，导入成功 | 所有历史或所有账号的密钥都有效 |
 | 解密 | 用户报告 21 decrypted、0 errors | WAL／最新消息一定全部覆盖 |
 | 源服务与试点 | 用户报告链路打通，截图证明群列表可见、可选择两个群 | 每条消息与图片完整归档、DeepSeek 实际分析成功 |
-| 应用回归 | 51 项自动测试通过；Chromium 模拟源验证双群试采、图片预览、缩略图提示和移动布局 | 自动代替用户设备的真实验收 |
+| 应用回归 | 53 项自动测试通过；Chromium 模拟源验证双群试采、图片预览、缩略图提示和移动布局 | 自动代替用户设备的真实验收 |
 | 图片 | 本版新增按需读取源服务图片、缓存、质量标记 | 自动全量图片归档、OCR、价卡理解已经完成 |
 
 安装与密钥获取是两件事。没有有效密钥时，当前候选 wx-cli 的首次提取路径有 SIP 前提；本 SOP 不自动关闭 SIP、不重签微信、不重新提取。**从零安装可以完成，但保持现有系统保护且没有已有密钥时，真实采集须停在密钥准入关口。** 不要把演示数据当作真实接入成功。
@@ -54,7 +54,7 @@ git pull origin main
 uv sync --frozen
 ```
 
-不要删除数据库，不重复导入 demo。启动时会事务迁移数据库 v1／v2／v3 到 v4；迁移前的旧备份应保留，旧版应用不保证能打开新版库。
+不要删除数据库，不重复导入 demo。启动时会事务迁移数据库 v1／v2／v3／v4 到 v5；迁移前的旧备份应保留，旧版应用不保证能打开新版库。
 
 演示是可选分支，**不要在真实目录执行 demo**：
 
@@ -241,6 +241,10 @@ uv run wechat-agent archive status --details
 ```
 
 repair 只将旧 sender_unavailable 相关会话从第一页重扫，并续跑失败／待处理会话；保留已归档消息和业务数据，不重新发现全账号或开启外发。没有这些旧缺口时不会重扫所有已完成会话。缺少发送者的消息现在保存正文、sender_id=unknown、direction=unknown，计入 metadata_warnings 而不是丢掉正文；客户档案不会据此虚构联系人。stable_server_id_unavailable 仍保留为记录缺口，不能凭文本相同生成假唯一 ID。
+
+如果出现 ValidationError，不要直接清库或放宽所有字段：更新后运行 `archive resume` 重试失败会话。归档现在逐行校验，正常行继续入库；坏行进入本机 archive_quarantine，报告例如 validation:text:string_too_long 或 validation:sender_id:string_too_long。quarantined_rows 是待适配原始行数量，不计入正常 messages，也不能当作已完整处理；隔离正文不发模型、不进入诊断日志。`scanned_with_gaps` 依然是有缺口，需按具体字段继续修复。
+
+HTTP 400 仅输出安全分类（如 ambiguous_contact、contact_not_found、time_range），不把上游完整错误响应放入日志。未知类型仍显示 HTTP_400，不能猜测原因。
 
 failure_reasons 给出失败原因汇总，--details 增加本地会话 UUID、页断点和错误，不含正文或密钥。旧 HTTPStatusError 记录需 resume／repair 实际重试后才能细分为 HTTP_404、HTTP_500 等。不能从 failed 数量单独判断是超时还是版本问题。
 

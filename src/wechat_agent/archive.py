@@ -8,10 +8,12 @@ import hashlib
 import time
 
 import httpx
+from pydantic import ValidationError
 
 from .collector import SourceError
 from .db import dumps, now, uid
 from .ingestion import ingest
+from .schemas import Message
 
 SYSTEM = {
     "weixin",
@@ -171,11 +173,32 @@ def import_history(db, source, emit=lambda event: None, delay=0.1):
                     raise SourceError("history_pagination_stalled")
                 records = []
                 issues = []
+                quarantine = []
                 for item in items:
                     try:
-                        records.append(
-                            source.normalize_message(chat, item, 0, progress["until"])
+                        normalized = source.normalize_message(
+                            chat, item, 0, progress["until"]
                         )
+                        records.append(
+                            Message.model_validate(normalized).model_dump(mode="json")
+                        )
+                    except ValidationError as exc:
+                        # Field names and error types only: no input, message text,
+                        # validation context or exception repr enters logs.
+                        labels = []
+                        for error in exc.errors(
+                            include_input=False,
+                            include_context=False,
+                            include_url=False,
+                        ):
+                            field = error["loc"][0] if error["loc"] else "record"
+                            if field not in Message.model_fields:
+                                field = "record"
+                            labels.append(str(field) + ":" + error["type"])
+                        code = "validation:" + ",".join(sorted(set(labels)))
+                        row_hash = hashlib.sha256(dumps(item).encode()).hexdigest()
+                        issues.append((row_hash, code))
+                        quarantine.append((row_hash, dumps(item), code))
                     except (SourceError, KeyError, TypeError, ValueError) as exc:
                         code = (
                             str(exc)
@@ -201,6 +224,11 @@ def import_history(db, source, emit=lambda event: None, delay=0.1):
                         c.execute(
                             "INSERT OR IGNORE INTO archive_issues VALUES(?,?,?)",
                             (chat["id"], row_hash, code),
+                        )
+                    for row_hash, payload, code in quarantine:
+                        c.execute(
+                            "INSERT OR REPLACE INTO archive_quarantine VALUES(?,?,?,?,?)",
+                            (chat["id"], row_hash, payload, code, now()),
                         )
                     gaps = c.execute(
                         "SELECT COUNT(*) FROM archive_issues WHERE conversation_id=?",
@@ -240,7 +268,7 @@ def import_history(db, source, emit=lambda event: None, delay=0.1):
             error = (
                 str(exc)
                 if isinstance(exc, SourceError)
-                else f"HTTP_{exc.response.status_code}"
+                else http_error_code(exc)
                 if isinstance(exc, httpx.HTTPStatusError)
                 else type(exc).__name__
             )
@@ -251,6 +279,31 @@ def import_history(db, source, emit=lambda event: None, delay=0.1):
                 )
             emit({"conversation_id": chat["id"], "status": "failed", "error": error})
     return status_report(db)
+
+
+def http_error_code(exc):
+    code = f"HTTP_{exc.response.status_code}"
+    if exc.response.status_code != 400:
+        return code
+    try:
+        body = exc.response.json()
+        message = body.get("error", "") if isinstance(body, dict) else ""
+        if not isinstance(message, str):
+            return code
+        text = message.lower()
+        if "ambig" in text:
+            return code + ":ambiguous_contact"
+        if "not found" in text or "no contact" in text or "no match" in text:
+            return code + ":contact_not_found"
+        if "missing" in text and "contact" in text:
+            return code + ":missing_contact"
+        if "since" in text or "until" in text:
+            return code + ":time_range"
+        if "offset" in text or "limit" in text:
+            return code + ":paging_parameter"
+    except ValueError:
+        pass
+    return code
 
 
 def repair_metadata(db):
@@ -273,6 +326,10 @@ def repair_metadata(db):
 
 def status_report(db, details=False):
     return {
+        "quarantined_rows": db.rows(
+            "SELECT COUNT(*) n FROM archive_quarantine q JOIN conversations c ON c.id=q.conversation_id WHERE c.account_id=?",
+            (db.settings.source_account,),
+        )[0]["n"],
         "scope": "local_visible_sessions_only",
         "progress": db.rows(
             "SELECT p.status,COUNT(*) conversations,SUM(p.page_offset) source_rows FROM archive_progress p JOIN conversations c ON c.id=p.conversation_id WHERE c.account_id=? GROUP BY p.status",

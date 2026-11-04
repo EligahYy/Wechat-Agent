@@ -148,7 +148,7 @@ def create_app(settings=None, source_factory=None):
     def health():
         return {
             "database": "ok",
-            "schema": 4,
+            "schema": 5,
             "runtime": db.rows("SELECT * FROM runtime"),
             "gaps": db.rows("SELECT COUNT(*) n FROM sync_windows WHERE status='gap'")[
                 0

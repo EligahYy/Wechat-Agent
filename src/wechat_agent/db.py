@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 4:
+            if version > 5:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -72,6 +72,10 @@ class DB:
             if version < 4:
                 connection.executescript(
                     "BEGIN IMMEDIATE; CREATE TABLE archive_progress(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),until INTEGER NOT NULL,page_offset INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL,error TEXT,updated_at TEXT NOT NULL,last_page_hash TEXT NOT NULL DEFAULT ''); CREATE TABLE archive_issues(conversation_id TEXT NOT NULL REFERENCES conversations(id),row_hash TEXT NOT NULL,error TEXT NOT NULL,PRIMARY KEY(conversation_id,row_hash)); CREATE INDEX IF NOT EXISTS messages_sender ON messages(sender_id,conversation_id,event_time); PRAGMA user_version=4; COMMIT;"
+                )
+            if version < 5:
+                connection.executescript(
+                    "BEGIN IMMEDIATE; CREATE TABLE archive_quarantine(conversation_id TEXT NOT NULL REFERENCES conversations(id),row_hash TEXT NOT NULL,payload TEXT NOT NULL,error TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(conversation_id,row_hash)); PRAGMA user_version=5; COMMIT;"
                 )
         finally:
             connection.close()

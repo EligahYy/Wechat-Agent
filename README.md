@@ -12,7 +12,7 @@ Use agent to manage Wechat
 
 覆盖 Git／uv 安装、wx-cli 下载校验、已有密钥复用、服务启动、双群试采、图片检查、DeepSeek、备份与故障排查。没有有效密钥时的阻塞条件明确列出，不要求为试点关闭 SIP。
 
-已有用户更新后重启 serve／collect／worker，无需重新 init、demo 或删除数据；数据库自动升级到 v4。图片消息点击“读取本机图片”，仅在本机获取缓存，尚无 OCR。
+已有用户更新后重启 serve／collect／worker，无需重新 init、demo 或删除数据；数据库自动升级到 v5。图片消息点击“读取本机图片”，仅在本机获取缓存，尚无 OCR。
 
 ## 全量接入与手动入口
 
