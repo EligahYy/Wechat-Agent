@@ -4,11 +4,11 @@ Actual macOS/version compatibility must be verified separately. A successful HTT
 request never establishes complete historical coverage.
 """
 
-import os
 from datetime import UTC, datetime
 
 import httpx
 
+from .config import secret
 from .db import now, uid
 from .ingestion import ingest
 
@@ -20,34 +20,81 @@ class SourceError(ValueError):
 class Collector:
     def __init__(self, db, client=None):
         self.db = db
+        token = secret("WX_SOURCE_TOKEN") if client is None else None
         self.client = client or httpx.Client(
             base_url=db.settings.source_endpoint(),
             timeout=30,
-            headers={"Authorization": "Bearer " + os.environ["WX_SOURCE_TOKEN"]}
-            if os.environ.get("WX_SOURCE_TOKEN")
-            else {},
+            headers={"Authorization": "Bearer " + token} if token else {},
             follow_redirects=False,
             trust_env=False,
         )
 
-    def validate(self):
+    def probe(self):
         r = self.client.get("/api/v1/health")
         r.raise_for_status()
         data = r.json()
-        identity = data.get("current_account", {}).get("wxid")
+        if not isinstance(data, dict):
+            raise SourceError("source_schema_incompatible")
+        account = data.get("current_account") or {}
+        if not isinstance(account, dict):
+            raise SourceError("source_schema_incompatible")
+        identity = account.get("wxid")
         if data.get("ready") is not True:
             raise SourceError("source_not_ready")
-        if (
-            not identity
-            or identity != self.db.settings.source_account
-            or identity != self.db.settings.self_id
-        ):
+        if not isinstance(identity, str) or not identity:
+            raise SourceError("source_account_unavailable")
+        return {
+            "account_id": identity,
+            "account_name": account.get("name") or identity,
+            "source_version": data.get("cli_version"),
+            "ready": True,
+            "bound": identity
+            == self.db.settings.source_account
+            == self.db.settings.self_id,
+        }
+
+    def validate(self):
+        result = self.probe()
+        if not result["bound"]:
             raise SourceError("source_account_mismatch_or_unconfigured")
         return {
             "health": "ready",
             "account_binding": "matched",
-            "source_version": data.get("cli_version"),
+            "source_version": result["source_version"],
             "capabilities": "full content and paging require sync test",
+        }
+
+    def groups(self, offset=0):
+        self.validate()
+        if not isinstance(offset, int) or not 0 <= offset <= 10000:
+            raise SourceError("invalid_offset")
+        r = self.client.get(
+            "/api/v1/sessions", params={"limit": 100, "offset": offset, "order": "desc"}
+        )
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data.get("items"), list) or not isinstance(
+            data.get("paging", {}).get("has_more"), bool
+        ):
+            raise SourceError("source_schema_incompatible")
+        groups = []
+        for item in data["items"]:
+            session = item.get("session", item)
+            identity = session.get("username", "")
+            if isinstance(identity, str) and identity.endswith("@chatroom"):
+                groups.append(
+                    {
+                        "source_id": identity,
+                        "title": item.get("display_name")
+                        or session.get("name")
+                        or identity,
+                    }
+                )
+        # No private conversation names, snippets, or contacts leave this adapter.
+        return {
+            "groups": groups,
+            "has_more": bool(data["paging"]["has_more"]),
+            "next_offset": offset + 100,
         }
 
     def sync_window(self, chat, since, until):

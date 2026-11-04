@@ -6,22 +6,32 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from . import services
 from .analysis import Blocked, call_model, context
+from .collector import Collector, SourceError
 from .config import Settings
 from .db import DB, now, uid
 from .ingestion import enqueue, ingest
 
 
-def create_app(settings=None):
+def create_app(settings=None, source_factory=None):
     db = DB(settings or Settings())
     app = FastAPI(title="Wechat-Agent", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.db = db
+    source_factory = source_factory or Collector
+    app.mount(
+        "/static",
+        StaticFiles(directory=Path(__file__).parent / "static"),
+        name="static",
+    )
     env = Environment(
         loader=FileSystemLoader(Path(__file__).parent / "templates"),
         autoescape=select_autoescape(),
@@ -182,6 +192,153 @@ def create_app(settings=None):
             ),
             "activation": services.activation(db),
         }
+
+    def source_operation(operation):
+        source = source_factory(db)
+        try:
+            return operation(source)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (401, 403):
+                raise SourceError(
+                    "采集服务需要认证。请在本机配置 WX_SOURCE_TOKEN 并重启应用。"
+                ) from None
+            raise SourceError(
+                "采集接口返回错误，请核对 wx-cli 版本与服务日志。"
+            ) from None
+        except httpx.TransportError:
+            raise SourceError(
+                "未连接到本机微信采集服务。请先安装并启动 wx-cli（默认 9100 端口）。"
+            ) from None
+        except (KeyError, TypeError):
+            raise SourceError("采集接口结构不兼容，请核对 wx-cli 版本。") from None
+        finally:
+            source.client.close()
+
+    @app.post("/api/source/probe")
+    def source_probe():
+        return source_operation(lambda source: source.probe())
+
+    @app.post("/api/source/bind")
+    async def source_bind(request: Request):
+        b = await request.json()
+
+        def bind(source):
+            account = source.probe()
+            if account["account_id"] != b["account_id"]:
+                raise SourceError("当前微信账号已变化，请重新检测并确认")
+            db.settings.bind_source(account["account_id"])
+            with db.tx() as c:
+                db.event(c, account["account_id"], "source_bound", {})
+            return {"ok": True, "account_id": account["account_id"]}
+
+        return await run_in_threadpool(source_operation, bind)
+
+    @app.post("/api/source/groups")
+    async def source_groups(request: Request):
+        b = await request.json()
+        return await run_in_threadpool(
+            source_operation, lambda source: source.groups(b.get("offset", 0))
+        )
+
+    @app.post("/api/source/pilot")
+    async def source_pilot(request: Request):
+        b = await request.json()
+        groups = b.get("groups")
+        if not isinstance(groups, list) or not 1 <= len(groups) <= 2:
+            raise ValueError("试采集请选择 1–2 个群")
+        ids = [g.get("source_id") for g in groups if isinstance(g, dict)]
+        if (
+            len(ids) != len(groups)
+            or any(not isinstance(x, str) or not x.endswith("@chatroom") for x in ids)
+            or len(set(ids)) != len(ids)
+        ):
+            raise ValueError("必须选择不同的精确群 ID")
+
+        # Validate all project associations before changing any white-list policy.
+        for group in groups:
+            if not isinstance(group.get("title", ""), str):
+                raise ValueError("群名称必须为文本")
+            merchant, project = (
+                group.get("merchant_id") or None,
+                group.get("project_id") or None,
+            )
+            if merchant and (
+                not isinstance(merchant, str)
+                or not db.rows("SELECT id FROM merchants WHERE id=?", (merchant,))
+            ):
+                raise ValueError("关联商家不存在")
+            if project and (
+                not isinstance(project, str)
+                or not db.rows(
+                    "SELECT id FROM projects WHERE id=? AND merchant_id=?",
+                    (project, merchant),
+                )
+            ):
+                raise ValueError("关联项目与商家不匹配")
+
+        # One-shot pilot never archives unrelated allowlisted conversations.
+        def pilot(source):
+            source.validate()
+            chats = []
+            for group in groups:
+                existing = db.rows(
+                    "SELECT * FROM conversations WHERE source='wx_cli' AND account_id=? AND source_id=?",
+                    (db.settings.source_account, group["source_id"]),
+                )
+                merchant_id = group.get("merchant_id") or None
+                project_id = group.get("project_id") or None
+                if not merchant_id and existing:
+                    merchant_id, project_id = (
+                        existing[0]["merchant_id"],
+                        existing[0]["project_id"],
+                    )
+                cid = services.allow_conversation(
+                    db,
+                    "wx_cli",
+                    db.settings.source_account,
+                    group["source_id"],
+                    group.get("title") or group["source_id"],
+                    "group",
+                    merchant_id,
+                    project_id,
+                    False,
+                )
+                chats.append(
+                    db.rows("SELECT * FROM conversations WHERE id=?", (cid,))[0]
+                )
+            end = int(datetime.now(UTC).timestamp())
+            results = []
+            for chat in chats:
+                result = source.sync_window(chat, end - 900, end)
+                messages = db.rows(
+                    "SELECT COUNT(*) n FROM messages WHERE conversation_id=?",
+                    (chat["id"],),
+                )[0]["n"]
+                results.append(
+                    {
+                        "conversation_id": chat["id"],
+                        "title": chat["title"],
+                        "message_count": messages,
+                        **result,
+                    }
+                )
+            return {"results": results, "egress": False, "window_minutes": 15}
+
+        return await run_in_threadpool(source_operation, pilot)
+
+    @app.post("/api/conversations/{cid}/pause")
+    def pause_conversation(cid: str):
+        with db.tx() as c:
+            if not c.execute(
+                "UPDATE conversations SET allowlisted=0,egress=0 WHERE id=?", (cid,)
+            ).rowcount:
+                raise ValueError("会话不存在")
+            c.execute(
+                "UPDATE suggestions SET status='stale' WHERE status='pending' AND job_id IN (SELECT id FROM jobs WHERE json_extract(payload,'$.conversation_id')=?)",
+                (cid,),
+            )
+            db.event(c, cid, "collection_paused", {})
+        return {"ok": True}
 
     @app.get("/api/messages/{cid}")
     def messages(cid: str):

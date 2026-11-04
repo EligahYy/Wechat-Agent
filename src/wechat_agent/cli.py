@@ -26,7 +26,7 @@ def parser():
     )
     s.add_parser("demo")
     auth = s.add_parser("credentials")
-    auth.add_argument("name", choices=["DEEPSEEK_API_KEY"])
+    auth.add_argument("name", choices=["DEEPSEEK_API_KEY", "WX_SOURCE_TOKEN"])
     imp = s.add_parser("import")
     imp.add_argument("file", type=Path)
     imp.add_argument("--preview", action="store_true")

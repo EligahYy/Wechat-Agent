@@ -1,5 +1,7 @@
+import json
 import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -38,7 +40,32 @@ class Settings:
     def prepare(self):
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.data_dir.chmod(0o700)
+        source_config = self.data_dir / "source-binding.json"
+        if source_config.exists():
+            binding = json.loads(source_config.read_text())
+            if not os.environ.get("WX_ACCOUNT_ID"):
+                self.source_account = binding["account_id"]
+            if not os.environ.get("WX_SELF_ID"):
+                self.self_id = binding["account_id"]
         return self
+
+    def bind_source(self, account_id):
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ValueError("账号标识不能为空")
+        for name in ("WX_ACCOUNT_ID", "WX_SELF_ID"):
+            if os.environ.get(name) and os.environ[name] != account_id:
+                raise ValueError("终端环境变量与所选账号冲突，请更新环境变量后重启")
+        fd, name = tempfile.mkstemp(prefix=".source-", dir=self.data_dir)
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump({"account_id": account_id}, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(name, self.data_dir / "source-binding.json")
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+        self.source_account = self.self_id = account_id
 
     def source_endpoint(self):
         parsed = urlparse(self.source_url)

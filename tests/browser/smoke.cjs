@@ -1,0 +1,46 @@
+const {chromium}=require('playwright');
+const fs=require('fs');
+const path=require('path');
+const base=process.env.WA_BROWSER_URL||'http://127.0.0.1:8767';
+const dataDir=process.env.WA_BROWSER_DATA_DIR;
+const screenshots=process.env.WA_BROWSER_SCREENSHOTS||'/tmp/wechat-agent-browser';
+if(!dataDir)throw Error('Set WA_BROWSER_DATA_DIR to the isolated browser test data directory');
+if(!['127.0.0.1','localhost'].includes(new URL(base).hostname))throw Error('Browser smoke only targets a local test service');
+fs.mkdirSync(screenshots,{recursive:true});
+(async()=>{
+ const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined),headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
+ try {
+  const page=await browser.newPage({viewport:{width:1440,height:1050}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(base);
+  await page.locator('#token').fill(fs.readFileSync(path.join(dataDir,'session-token'),'utf8').trim());
+  await page.getByRole('button',{name:'进入工作台'}).click();
+  await page.locator('#metrics .metric').first().waitFor();
+  await page.screenshot({path:path.join(screenshots,'today.png'),fullPage:true});
+  await page.locator('#heading-action').click();
+  await page.locator('#task-dialog [name=summary]').fill('虚构：向头程服务商确认本批附加费');
+  await page.locator('#task-dialog [name=party]').selectOption('service_provider');
+  await page.locator('#task-dialog button.primary').click();
+  await page.locator('#tasks h3').filter({hasText:'虚构：向头程服务商确认本批附加费'}).waitFor();
+  await page.locator('.nav-item[data-tab=sources]').click();
+  await page.locator('#probe-source').click();
+  await page.locator('#account-confirm:visible').waitFor();
+  await page.locator('#bind-source').click();
+  await page.locator('#group-options input').first().waitFor();
+  if(await page.locator('#group-options input').count()!==2)throw Error('group filtering failed');
+  await page.locator('#group-options input').nth(0).check();
+  await page.locator('#group-options input').nth(1).check();
+  await page.locator('#start-pilot').click();
+  await page.locator('#pilot-results .trial-result').nth(1).waitFor();
+  if((await page.locator('#pilot-results').innerText()).includes('需检查'))throw Error('pilot failed');
+  await page.locator('#pilot-results [data-action=evidence]').first().click();
+  await page.locator('#preview-dialog[open] .message').first().waitFor();
+  await page.locator('#preview-dialog [data-close]').click();
+  await page.screenshot({path:path.join(screenshots,'source.png'),fullPage:true});
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('.nav-item[data-tab=today]').click();
+  if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('mobile horizontal overflow');
+  await page.screenshot({path:path.join(screenshots,'mobile.png'),fullPage:true});
+  if(errors.length)throw Error(errors.join(';'));
+  console.log('Browser smoke passed: login, dashboard, manual task, account binding, two-group local pilot, message preview, mobile width; no JavaScript exceptions.');
+ } finally {await browser.close();}
+})().catch(e=>{console.error(e.message);process.exit(1)});

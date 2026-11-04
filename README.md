@@ -26,6 +26,7 @@ uv run wechat-agent serve
 
 本地部署采集器、API、数据库、分析 worker 和页面，不需要先购买服务器或部署 Tailscale。本地运行不等于数据不出本机：获准的脱敏业务上下文会经 HTTPS 发往 DeepSeek，微信密钥、整库和原始素材默认不外发。
 
+- [真实微信试点指南](docs/07-wechat-pilot.md)：设备诊断、wx-cli 前提、选择 1–2 个群与本地试采。
 - [开发与验证记录](docs/06-development-status.md)：已实现、已验证、未验证与下一轮工作。
 - [首版运行指南](docs/05-run-local.md)：安装、演示、真实采集、API key 配置、备份及已知限制。
 - [业务工作流](docs/01-workflow.md)：BD、备货项目、三方责任、价卡与履约节点。

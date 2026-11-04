@@ -16,7 +16,7 @@
 
 ## 已验证
 
-- 23 项 pytest 测试通过：覆盖导入去重／修订、事务性失败、备份、真实源契约模拟、账号切换拒绝、全文缺失与 gap、DeepSeek 响应契约模拟、无效证据、政策撤销、预算、租约、建议接受、人工状态版本、会话安全、过期素材和备货核验。
+- 26 项 pytest 测试通过：覆盖导入去重／修订、事务性失败、备份、真实源契约模拟、账号切换拒绝、全文缺失与 gap、DeepSeek 响应契约模拟、无效证据、政策撤销、预算、租约、建议接受、人工状态版本、会话安全、过期素材和备货核验。
 - 一条端到端集成用例经过 collector → SQLite → DeepSeek 客户端 → 建议 → 真实应用 HTTP 审核接口 → 跟进任务与联系记录；两端外部服务均使用 MockTransport。
 - 实际启动 Uvicorn，通过本地 HTTP 请求验证登录、HTML 页面、示例项目及 health；JavaScript 通过 node --check；Ruff 静态与格式检查通过。
 - CLI init、demo、worker --once 和 backup 已执行；示例默认禁止外发，worker 正确保持政策阻塞，不会伪造成功。
@@ -41,3 +41,13 @@
 ## 页面导航修复
 
 增加外部链接进入根页面的顶层导航回归测试，同时断言跨站 API、登录写入、iframe 与错误 Origin 仍被拒绝。新增 token --rotate 与跨进程令牌刷新测试，确认运行中的旧会话也会失效。
+
+
+## v0.2 工作台与试点向导
+
+新增侧栏、项目进度、待办筛选、消息对话框和响应式布局；JSON 诊断默认收起。新增源探测、账号持久绑定、群列表过滤、最多两群试采及暂停采集。试采读取所选群最近 15 分钟，关闭模型外发；持续采集仍由独立 collector 命令启动。
+
+26 项 Python 测试通过。使用实际 Chromium 在虚构上游下验证登录、页面、新建待办、账号确认、两群选择／试采、消息核对及 390px 移动布局，未发现 JavaScript 异常或横向溢出。该结果不是用户 macOS 27／微信 4.1.15.55 真实连接证明；设备组合仍待实测。
+
+
+可选浏览器回归：测试机需额外提供 Node.js、playwright 模块和 Chromium；这不是应用运行依赖。使用全新隔离数据目录，设置 WA_BROWSER_DATA_DIR 后运行 `uv run python tests/browser_server.py`；另一终端设置相同目录，运行 `node tests/browser/smoke.cjs`。可通过 CHROMIUM_PATH 指定浏览器。服务仅使用虚构上游，截图默认保存在 /tmp/wechat-agent-browser。该脚本会创建测试任务，不得指向真实业务数据目录。
