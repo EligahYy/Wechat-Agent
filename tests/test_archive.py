@@ -229,3 +229,78 @@ def test_cli_partial_scan_has_nonzero_exit(db, monkeypatch):
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 2
+
+
+def test_unknown_sender_preserves_body_reports_warning_and_can_repair(db):
+    from wechat_agent.archive import repair_metadata
+
+    def handler(req):
+        return httpx.Response(
+            200,
+            json={
+                "items": [item(1) | {"sender": ""}],
+                "paging": {"has_more": False},
+                "stats": {},
+            },
+        )
+
+    source = make_source(db, handler)
+    register(
+        db,
+        [
+            {
+                "source_id": "person",
+                "title": "个人",
+                "kind": "private",
+                "excluded": False,
+            }
+        ],
+        500,
+    )
+    cid = db.rows("SELECT id FROM conversations")[0]["id"]
+    with db.tx() as c:
+        c.execute(
+            "INSERT INTO archive_issues VALUES(?,'old-hash','sender_unavailable')",
+            (cid,),
+        )
+        c.execute(
+            "UPDATE archive_progress SET status='scanned_with_gaps',page_offset=1 WHERE conversation_id=?",
+            (cid,),
+        )
+    assert repair_metadata(db) == 1
+    report = import_history(db, source, delay=0)
+    assert report["messages"] == 1 and not report["issues"]
+    row = db.rows("SELECT * FROM messages")[0]
+    assert (
+        row["text"] == "历史 1"
+        and row["sender_id"] == "unknown"
+        and row["direction"] == "unknown"
+    )
+    assert report["metadata_warnings"]["messages"] == 1
+    assert report["progress"][0]["status"] == "scanned"
+
+
+def test_failure_report_has_safe_details_and_http_code(db):
+    from wechat_agent.archive import status_report
+
+    source = make_source(
+        db, lambda req: httpx.Response(404, json={"secret": "should not leak"})
+    )
+    register(
+        db,
+        [
+            {
+                "source_id": "person",
+                "title": "个人",
+                "kind": "private",
+                "excluded": False,
+            }
+        ],
+        500,
+    )
+    import_history(db, source, delay=0)
+    report = status_report(db, details=True)
+    assert report["failure_reasons"] == [{"error": "HTTP_404", "conversations": 1}]
+    assert report["failed_conversations"][0]["page_offset"] == 0
+    assert "should not leak" not in str(report)
+    assert status_report(db)["failed_conversations"] == []

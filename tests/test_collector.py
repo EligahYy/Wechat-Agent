@@ -100,3 +100,19 @@ def test_source_switch_during_restart_is_rejected(db):
     result = Collector(db, client).sync_window(chat, 90, 110)
     assert result["error"] == "source_account_mismatch_or_unconfigured"
     assert not db.rows("SELECT * FROM messages")
+
+
+def test_missing_sender_not_guessed_as_contact_or_self(db):
+    chat = setup_source(db)
+    c = Collector(
+        db,
+        httpx.Client(
+            base_url="http://127.0.0.1:9100",
+            transport=httpx.MockTransport(lambda r: httpx.Response(200)),
+        ),
+    )
+    for sender in ("", None):
+        record = c.normalize_message(chat, message(1) | {"sender": sender}, 90, 110)
+        assert record["sender_id"] == "unknown" and record["direction"] == "unknown"
+        assert record["source_locator"]["sender_resolution"] == "missing"
+        assert record["text"] == "同秒真实消息"

@@ -207,7 +207,7 @@ async function loadArchive(){
   const data=await api(`/api/archive/conversations?q=${encodeURIComponent(q)}&kind=${kind}&page=${archivePage}`);
   archiveRows=data.items;
   const summary=await api('/api/archive/status');
-  $('#archive-progress').textContent=`当前账号已归档 ${summary.messages} 条；${summary.progress.map(p=>({scanned:'已扫描',scanned_with_gaps:'已扫描但有缺口',pending:'待处理',failed:'失败待重试'}[p.status]||p.status)+': '+p.conversations+' 个会话').join('，')||'尚未运行历史初始化'}。扫描完成不代表源端历史完整。`;
+  $('#archive-progress').textContent=`当前账号已归档 ${summary.messages} 条；${summary.progress.map(p=>({scanned:'已扫描',scanned_with_gaps:'已扫描但有缺口',pending:'待处理',failed:'失败待重试'}[p.status]||p.status)+': '+p.conversations+' 个会话').join('，')||'尚未运行历史初始化'}。发送者未知但正文保留 ${summary.metadata_warnings?.messages||0} 条；失败原因 ${summary.failure_reasons?.map(r=>r.error+' × '+r.conversations).join('，')||'无'}。扫描完成不代表源端历史完整。`;
   $('#archive-list').innerHTML=data.items.map(c=>`<article class="card"><div class="card-top"><h3>${escape(c.title)}</h3><span class="badge">${c.kind==='group'?'群聊':'私信'}</span></div><p>${c.message_count} 条已归档消息 · ${c.egress?'已授权分析':'仅本地归档'} · ${c.allowlisted?'持续采集启用':'已暂停'}</p><div class="actions"><button data-action="evidence" data-id="${c.id}">查看消息</button><button data-action="configure" data-id="${c.id}">业务关联与授权</button><button data-action="pause" data-id="${c.id}">暂停</button></div></article>`).join('')||empty('当前没有匹配的归档会话','先运行会话发现与全量初始化命令。');
   $('#archive-page').textContent=`第 ${archivePage} 页 · 共 ${data.total} 个会话`;
   $('#archive-prev').disabled=archivePage<=1;$('#archive-next').disabled=!data.has_more;

@@ -118,11 +118,13 @@ class Collector:
         stamp = int(raw["create_time"])
         if stamp < since or stamp > until:
             raise SourceError("out_of_window")
-        sender = str(raw.get("sender", ""))
-        if not sender:
-            raise SourceError("sender_unavailable")
+        raw_sender = raw.get("sender")
+        sender = raw_sender.strip() if isinstance(raw_sender, str) else ""
+        sender = sender or "unknown"
         direction = (
-            "outgoing"
+            "unknown"
+            if sender == "unknown"
+            else "outgoing"
             if sender == self.db.settings.self_id
             else ("incoming" if self.db.settings.self_id else "unknown")
         )
@@ -139,12 +141,15 @@ class Collector:
             message_type="text"
             if raw.get("msg_type") == 1
             else str(raw.get("msg_type", "unknown")),
-            source_locator={"image_md5": content["Image"]["md5"]}
-            if raw.get("msg_type") == 3
-            and isinstance(content, dict)
-            and isinstance(content.get("Image"), dict)
-            and isinstance(content["Image"].get("md5"), str)
-            else {},
+            source_locator=(
+                {"image_md5": content["Image"]["md5"]}
+                if raw.get("msg_type") == 3
+                and isinstance(content, dict)
+                and isinstance(content.get("Image"), dict)
+                and isinstance(content["Image"].get("md5"), str)
+                else {}
+            )
+            | ({"sender_resolution": "missing"} if sender == "unknown" else {}),
             text=text,
             completeness="full" if raw.get("msg_type") == 1 else "metadata",
         )

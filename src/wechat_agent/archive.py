@@ -237,7 +237,13 @@ def import_history(db, source, emit=lambda event: None, delay=0.1):
             else:
                 raise SourceError("history_page_limit")
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-            error = str(exc) if isinstance(exc, SourceError) else type(exc).__name__
+            error = (
+                str(exc)
+                if isinstance(exc, SourceError)
+                else f"HTTP_{exc.response.status_code}"
+                if isinstance(exc, httpx.HTTPStatusError)
+                else type(exc).__name__
+            )
             with db.tx() as c:
                 c.execute(
                     "UPDATE archive_progress SET status='failed',error=?,updated_at=? WHERE conversation_id=?",
@@ -247,13 +253,45 @@ def import_history(db, source, emit=lambda event: None, delay=0.1):
     return status_report(db)
 
 
-def status_report(db):
+def repair_metadata(db):
+    """Revisit only chats with sender omissions, preserve good archived data."""
+    with db.tx() as c:
+        affected = c.execute(
+            "SELECT DISTINCT c.id FROM conversations c JOIN archive_issues i ON i.conversation_id=c.id WHERE c.source='wx_cli' AND c.account_id=? AND i.error='sender_unavailable'",
+            (db.settings.source_account,),
+        ).fetchall()
+        for row in affected:
+            c.execute(
+                "UPDATE archive_progress SET page_offset=0,status='pending',error=NULL,last_page_hash='',updated_at=? WHERE conversation_id=?",
+                (now(), row["id"]),
+            )
+            c.execute(
+                "DELETE FROM archive_issues WHERE conversation_id=?", (row["id"],)
+            )
+    return len(affected)
+
+
+def status_report(db, details=False):
     return {
         "scope": "local_visible_sessions_only",
         "progress": db.rows(
             "SELECT p.status,COUNT(*) conversations,SUM(p.page_offset) source_rows FROM archive_progress p JOIN conversations c ON c.id=p.conversation_id WHERE c.account_id=? GROUP BY p.status",
             (db.settings.source_account,),
         ),
+        "failure_reasons": db.rows(
+            "SELECT p.error,COUNT(*) conversations FROM archive_progress p JOIN conversations c ON c.id=p.conversation_id WHERE c.account_id=? AND p.status='failed' GROUP BY p.error",
+            (db.settings.source_account,),
+        ),
+        "failed_conversations": db.rows(
+            "SELECT c.id conversation_id,c.kind,p.page_offset,p.until,p.error,p.updated_at FROM archive_progress p JOIN conversations c ON c.id=p.conversation_id WHERE c.account_id=? AND p.status='failed' ORDER BY c.id LIMIT 100",
+            (db.settings.source_account,),
+        )
+        if details
+        else [],
+        "metadata_warnings": db.rows(
+            "SELECT COUNT(*) messages FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.account_id=? AND json_extract(m.source_locator,'$.sender_resolution')='missing'",
+            (db.settings.source_account,),
+        )[0],
         "issues": db.rows(
             "SELECT i.error,COUNT(*) count FROM archive_issues i JOIN conversations c ON c.id=i.conversation_id WHERE c.account_id=? GROUP BY i.error",
             (db.settings.source_account,),

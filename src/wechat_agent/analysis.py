@@ -110,7 +110,9 @@ def context(db, conversation_id, message_ids=None):
         "messages": [
             {
                 "ref": ref,
-                "actor": actors[m["sender_id"]],
+                "actor": ("U" + ref[1:])
+                if m["sender_id"] == "unknown"
+                else actors[m["sender_id"]],
                 "direction": m["direction"],
                 "role": roles.get(m["sender_id"], {}).get(
                     "role", "self" if m["direction"] == "outgoing" else "unknown"

@@ -12,7 +12,7 @@
 | 旧密钥 | 用户报告旧 raw key 通过 21 个库首页 HMAC，导入成功 | 所有历史或所有账号的密钥都有效 |
 | 解密 | 用户报告 21 decrypted、0 errors | WAL／最新消息一定全部覆盖 |
 | 源服务与试点 | 用户报告链路打通，截图证明群列表可见、可选择两个群 | 每条消息与图片完整归档、DeepSeek 实际分析成功 |
-| 应用回归 | 48 项自动测试通过；Chromium 模拟源验证双群试采、图片预览、缩略图提示和移动布局 | 自动代替用户设备的真实验收 |
+| 应用回归 | 51 项自动测试通过；Chromium 模拟源验证双群试采、图片预览、缩略图提示和移动布局 | 自动代替用户设备的真实验收 |
 | 图片 | 本版新增按需读取源服务图片、缓存、质量标记 | 自动全量图片归档、OCR、价卡理解已经完成 |
 
 安装与密钥获取是两件事。没有有效密钥时，当前候选 wx-cli 的首次提取路径有 SIP 前提；本 SOP 不自动关闭 SIP、不重签微信、不重新提取。**从零安装可以完成，但保持现有系统保护且没有已有密钥时，真实采集须停在密钥准入关口。** 不要把演示数据当作真实接入成功。
@@ -231,6 +231,18 @@ uv run wechat-agent archive status
 ```
 
 状态含 pending、failed、scanned、scanned_with_gaps。scanned 是本次固定时间上界的源端分页扫描结束，不等于微信服务器历史完整。source_rows 含上游行数，messages 是本地实际消息数，issues 单独列明异常。存在 failed／scanned_with_gaps 时命令返回退出码 2，不能用它当作全量成功。
+
+失败诊断与补回缺少发送者的记录：
+
+```bash
+uv run wechat-agent archive status --details
+uv run wechat-agent archive repair
+uv run wechat-agent archive status --details
+```
+
+repair 只将旧 sender_unavailable 相关会话从第一页重扫，并续跑失败／待处理会话；保留已归档消息和业务数据，不重新发现全账号或开启外发。没有这些旧缺口时不会重扫所有已完成会话。缺少发送者的消息现在保存正文、sender_id=unknown、direction=unknown，计入 metadata_warnings 而不是丢掉正文；客户档案不会据此虚构联系人。stable_server_id_unavailable 仍保留为记录缺口，不能凭文本相同生成假唯一 ID。
+
+failure_reasons 给出失败原因汇总，--details 增加本地会话 UUID、页断点和错误，不含正文或密钥。旧 HTTPStatusError 记录需 resume／repair 实际重试后才能细分为 HTTP_404、HTTP_500 等。不能从 failed 数量单独判断是超时还是版本问题。
 
 5. Ctrl+C／网络中断后续跑：
 

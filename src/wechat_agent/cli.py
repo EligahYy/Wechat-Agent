@@ -27,7 +27,12 @@ def parser():
     )
     s.add_parser("demo")
     archive = s.add_parser("archive", help="全量私信与群聊本地初始化，不依赖导出文件")
-    archive.add_argument("action", choices=["discover", "init-all", "resume", "status"])
+    archive.add_argument(
+        "action", choices=["discover", "init-all", "resume", "repair", "status"]
+    )
+    archive.add_argument(
+        "--details", action="store_true", help="显示失败会话断点与错误，不含消息正文"
+    )
     archive.add_argument("--account", help="明确确认源端 wxid；首次绑定必填")
     archive.add_argument(
         "--rescan", action="store_true", help="从第一页幂等重扫，重查迟到历史与缺口"
@@ -180,10 +185,16 @@ def main():
                 create_app(settings), host=args.host, port=args.port, access_log=False
             )
         elif args.command == "archive":
-            from .archive import discover, import_history, register, status_report
+            from .archive import (
+                discover,
+                import_history,
+                register,
+                repair_metadata,
+                status_report,
+            )
 
             if args.action == "status":
-                print(dumps(status_report(db)))
+                print(dumps(status_report(db, details=args.details)))
                 return
             source = Collector(db)
             try:
@@ -222,6 +233,11 @@ def main():
                         sessions,
                         int(datetime.now(UTC).timestamp()),
                         args.rescan,
+                    )
+                if args.action == "repair":
+                    print(
+                        dumps({"metadata_chats_requeued": repair_metadata(db)}),
+                        flush=True,
                     )
                 report = import_history(
                     db, source, emit=lambda event: print(dumps(event), flush=True)
