@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 3:
+            if version > 4:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -68,6 +68,10 @@ class DB:
             if version < 3:
                 connection.executescript(
                     "BEGIN IMMEDIATE; ALTER TABLE messages ADD COLUMN source_locator TEXT NOT NULL DEFAULT '{}'; CREATE TABLE attachments(message_id TEXT PRIMARY KEY REFERENCES messages(id),sha256 TEXT NOT NULL,mime TEXT NOT NULL,quality TEXT NOT NULL,size INTEGER NOT NULL,created_at TEXT NOT NULL); PRAGMA user_version=3; COMMIT;"
+                )
+            if version < 4:
+                connection.executescript(
+                    "BEGIN IMMEDIATE; CREATE TABLE archive_progress(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),until INTEGER NOT NULL,page_offset INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL,error TEXT,updated_at TEXT NOT NULL,last_page_hash TEXT NOT NULL DEFAULT ''); CREATE TABLE archive_issues(conversation_id TEXT NOT NULL REFERENCES conversations(id),row_hash TEXT NOT NULL,error TEXT NOT NULL,PRIMARY KEY(conversation_id,row_hash)); CREATE INDEX IF NOT EXISTS messages_sender ON messages(sender_id,conversation_id,event_time); PRAGMA user_version=4; COMMIT;"
                 )
         finally:
             connection.close()

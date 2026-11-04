@@ -33,15 +33,23 @@ def context(db, conversation_id, message_ids=None):
     if not chat["project_id"]:
         # Mixed/ambiguous group attribution needs project review before external analysis.
         raise Blocked("blocked_association")
-    messages = db.rows(
-        "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time,id",
-        (conversation_id,),
-    )
     if message_ids is not None:
         selected = set(message_ids)
-        messages = [m for m in messages if m["id"] in selected]
+        if not selected or len(selected) > 1000:
+            raise Blocked("stale_input")
+        messages = db.rows(
+            "SELECT * FROM messages WHERE conversation_id=? AND id IN ("
+            + ",".join("?" for _ in selected)
+            + ") ORDER BY event_time,id",
+            (conversation_id, *selected),
+        )
         if len(messages) != len(selected):
             raise Blocked("stale_input")
+    else:
+        messages = db.rows(
+            "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time,id LIMIT 81",
+            (conversation_id,),
+        )
     skipped = sum(m["type"] != "text" for m in messages)
     messages = [m for m in messages if m["type"] == "text"]
     if not messages:

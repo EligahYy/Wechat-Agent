@@ -97,6 +97,58 @@ class Collector:
             "next_offset": offset + 100,
         }
 
+    def normalize_message(self, chat, item, since, until):
+        raw = item.get("message", item)
+        if raw.get("talker") != chat["source_id"]:
+            raise SourceError("conversation_mismatch")
+        source_id = raw.get("server_id")
+        if source_id in (None, 0, "0", ""):
+            raise SourceError("stable_server_id_unavailable")
+        # Never promote snippet to full text.
+        content = raw.get("content")
+        text = content.get("Text") if isinstance(content, dict) else content
+        if raw.get("msg_type") == 1 and not isinstance(text, str):
+            raise SourceError("full_content_unavailable")
+        if raw.get("msg_type") != 1:
+            text = (
+                "[图片：正文未识别，可读取本机图片]"
+                if raw.get("msg_type") == 3
+                else "[非文本消息：未解析正文]"
+            )
+        stamp = int(raw["create_time"])
+        if stamp < since or stamp > until:
+            raise SourceError("out_of_window")
+        sender = str(raw.get("sender", ""))
+        if not sender:
+            raise SourceError("sender_unavailable")
+        direction = (
+            "outgoing"
+            if sender == self.db.settings.self_id
+            else ("incoming" if self.db.settings.self_id else "unknown")
+        )
+        return dict(
+            schema_version=1,
+            source="wx_cli",
+            account_id=chat["account_id"],
+            conversation_id=chat["source_id"],
+            conversation_type=chat["kind"],
+            source_id=str(source_id),
+            sender_id=sender,
+            direction=direction,
+            event_time=datetime.fromtimestamp(stamp, UTC).isoformat(),
+            message_type="text"
+            if raw.get("msg_type") == 1
+            else str(raw.get("msg_type", "unknown")),
+            source_locator={"image_md5": content["Image"]["md5"]}
+            if raw.get("msg_type") == 3
+            and isinstance(content, dict)
+            and isinstance(content.get("Image"), dict)
+            and isinstance(content["Image"].get("md5"), str)
+            else {},
+            text=text,
+            completeness="full" if raw.get("msg_type") == 1 else "metadata",
+        )
+
     def sync_window(self, chat, since, until):
         if until < since or until - since > 86400:
             raise SourceError("窗口必须递增且不超过 24 小时")
@@ -141,63 +193,11 @@ class Collector:
                     raise SourceError("invalid_paging")
                 for item in items:
                     # EnrichedMessage flattens raw Message fields in the audited version.
-                    raw = item.get("message", item)
-                    if raw.get("talker") != chat["source_id"]:
-                        raise SourceError("conversation_mismatch")
-                    source_id = raw.get("server_id")
-                    if source_id in (None, 0, "0", ""):
-                        raise SourceError("stable_server_id_unavailable")
-                    if str(source_id) in seen:
+                    record = self.normalize_message(chat, item, since, until)
+                    if record["source_id"] in seen:
                         raise SourceError("unstable_paging_duplicate")
-                    seen.add(str(source_id))
-                    # Never promote snippet to full text.
-                    content = raw.get("content")
-                    text = content.get("Text") if isinstance(content, dict) else content
-                    if raw.get("msg_type") == 1 and not isinstance(text, str):
-                        raise SourceError("full_content_unavailable")
-                    if raw.get("msg_type") != 1:
-                        text = (
-                            "[图片：正文未识别，可读取本机图片]"
-                            if raw.get("msg_type") == 3
-                            else "[非文本消息：未解析正文]"
-                        )
-                    stamp = int(raw["create_time"])
-                    if stamp < since or stamp > until:
-                        raise SourceError("out_of_window")
-                    sender = str(raw.get("sender", ""))
-                    if not sender:
-                        raise SourceError("sender_unavailable")
-                    direction = (
-                        "outgoing"
-                        if sender == self.db.settings.self_id
-                        else ("incoming" if self.db.settings.self_id else "unknown")
-                    )
-                    records.append(
-                        dict(
-                            schema_version=1,
-                            source="wx_cli",
-                            account_id=chat["account_id"],
-                            conversation_id=chat["source_id"],
-                            conversation_type=chat["kind"],
-                            source_id=str(source_id),
-                            sender_id=sender,
-                            direction=direction,
-                            event_time=datetime.fromtimestamp(stamp, UTC).isoformat(),
-                            message_type="text"
-                            if raw.get("msg_type") == 1
-                            else str(raw.get("msg_type", "unknown")),
-                            source_locator={"image_md5": content["Image"]["md5"]}
-                            if raw.get("msg_type") == 3
-                            and isinstance(content, dict)
-                            and isinstance(content.get("Image"), dict)
-                            and isinstance(content["Image"].get("md5"), str)
-                            else {},
-                            text=text,
-                            completeness="full"
-                            if raw.get("msg_type") == 1
-                            else "metadata",
-                        )
-                    )
+                    seen.add(record["source_id"])
+                    records.append(record)
                 if not paging["has_more"]:
                     break
                 if not items:
@@ -240,7 +240,15 @@ class Collector:
                 "SELECT until FROM sync_windows WHERE conversation_id=? AND status='scanned' ORDER BY until DESC LIMIT 1",
                 (chat["id"],),
             )
-            start = (last[0]["until"] - 900) if last else end - 900
+            history = self.db.rows(
+                "SELECT until FROM archive_progress WHERE conversation_id=?",
+                (chat["id"],),
+            )
+            start = (
+                (last[0]["until"] - 900)
+                if last
+                else ((history[0]["until"] - 900) if history else end - 900)
+            )
             # Bounded windows catch up without skipping downtime. Old gaps remain visible.
             for _ in range(6):
                 until = min(start + 300, end)

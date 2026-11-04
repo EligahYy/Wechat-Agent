@@ -148,7 +148,7 @@ def create_app(settings=None, source_factory=None):
     def health():
         return {
             "database": "ok",
-            "schema": 3,
+            "schema": 4,
             "runtime": db.rows("SELECT * FROM runtime"),
             "gaps": db.rows("SELECT COUNT(*) n FROM sync_windows WHERE status='gap'")[
                 0
@@ -160,7 +160,14 @@ def create_app(settings=None, source_factory=None):
     def state():
         return {
             **{
-                table: db.rows(f"SELECT * FROM {table}")
+                table: db.rows(
+                    f"SELECT * FROM {table}"
+                    + (
+                        " ORDER BY rowid DESC LIMIT 100"
+                        if table == "conversations"
+                        else ""
+                    )
+                )
                 for table in (
                     "merchants",
                     "providers",
@@ -189,6 +196,9 @@ def create_app(settings=None, source_factory=None):
             ),
             "usage": db.rows(
                 "SELECT day,SUM(COALESCE(actual,reserved)) tokens,COUNT(*) calls FROM usage GROUP BY day"
+            ),
+            "conversation_totals": db.rows(
+                "SELECT source,COUNT(*) n FROM conversations GROUP BY source"
             ),
             "activation": services.activation(db),
         }
@@ -340,11 +350,106 @@ def create_app(settings=None, source_factory=None):
             db.event(c, cid, "collection_paused", {})
         return {"ok": True}
 
-    @app.get("/api/messages/{cid}")
-    def messages(cid: str):
+    @app.get("/api/archive/status")
+    def archive_status():
+        from .archive import status_report
+
+        return status_report(db)
+
+    @app.get("/api/archive/conversations")
+    def archive_conversations(q: str = "", kind: str = "all", page: int = 1):
+        if (
+            kind not in {"all", "group", "private"}
+            or not 1 <= page <= 100000
+            or len(q) > 200
+        ):
+            raise ValueError("查询参数无效")
+        where = "source IN ('wx_cli','manual') AND account_id=?"
+        args = [db.settings.source_account]
+        if kind != "all":
+            where += " AND kind=?"
+            args.append(kind)
+        if q:
+            where += " AND (instr(title,?)>0 OR instr(source_id,?)>0)"
+            args.extend([q, q])
+        total = db.rows("SELECT COUNT(*) n FROM conversations WHERE " + where, args)[0][
+            "n"
+        ]
+        rows = db.rows(
+            "SELECT c.*,(SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) message_count FROM conversations c WHERE "
+            + where
+            + " ORDER BY title,id LIMIT 50 OFFSET ?",
+            [*args, (page - 1) * 50],
+        )
+        return {
+            "items": rows,
+            "total": total,
+            "page": page,
+            "has_more": page * 50 < total,
+        }
+
+    @app.post("/api/imports/file")
+    async def import_message_file(request: Request):
+        from .file_import import import_file
+
+        body = await request.json()
+        if not isinstance(body.get("text"), str) or not isinstance(
+            body.get("filename"), str
+        ):
+            raise ValueError("请选择文件")
+        return await run_in_threadpool(
+            import_file,
+            db,
+            body["text"],
+            body["filename"],
+            body.get("account_id") or db.settings.source_account or None,
+            body.get("write") is True,
+        )
+
+    @app.get("/api/customers")
+    def customer_list(q: str = "", page: int = 1):
+        if len(q) > 200 or not 1 <= page <= 100000:
+            raise ValueError("无效查询")
+        account = db.settings.source_account
+        rows = db.rows(
+            "SELECT c.source_id identity,c.title display_name FROM conversations c WHERE c.source IN ('wx_cli','manual') AND c.account_id=? AND c.kind='private' UNION SELECT m.sender_id identity,m.sender_id display_name FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.source IN ('wx_cli','manual') AND c.account_id=? AND m.direction='incoming' AND m.sender_id NOT IN ('unknown',?)",
+            (account, account, account),
+        )
+        people = {}
+        for row in rows:
+            key = row["identity"]
+            if key == account:
+                continue
+            previous = people.get(key)
+            if not previous or row["display_name"] != key:
+                people[key] = row
+        found = [
+            r
+            for r in people.values()
+            if q.lower() in (r["identity"] + " " + r["display_name"]).lower()
+        ]
+        found.sort(key=lambda r: r["display_name"])
+        return {
+            "items": found[(page - 1) * 50 : page * 50],
+            "total": len(found),
+            "has_more": page * 50 < len(found),
+        }
+
+    @app.get("/api/customers/{identity}/timeline")
+    def customer_timeline(identity: str):
+        account = db.settings.source_account
         return db.rows(
-            "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time DESC LIMIT 100",
-            (cid,),
+            "SELECT m.*,c.title conversation_title,c.kind conversation_kind FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.source IN ('wx_cli','manual') AND c.account_id=? AND (m.sender_id=? OR (c.kind='private' AND c.source_id=?)) ORDER BY m.event_time DESC LIMIT 100",
+            (account, identity, identity),
+        )
+
+    @app.get("/api/messages/{cid}")
+    def messages(cid: str, page: int = 1):
+        if not 1 <= page <= 100000:
+            raise ValueError("页码无效")
+        return db.rows(
+            "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time DESC,id DESC LIMIT 100 OFFSET ?",
+            (cid, (page - 1) * 100),
         )
 
     @app.get("/api/messages/{mid}/image")

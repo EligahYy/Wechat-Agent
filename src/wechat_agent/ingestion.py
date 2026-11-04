@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import nullcontext
 from datetime import UTC
 
 from .db import DB, dumps, now, uid
@@ -6,12 +7,22 @@ from .schemas import Message
 
 
 def enqueue(c, conversation_id, message_ids=None):
-    rows = c.execute(
-        "SELECT id,revision FROM messages WHERE conversation_id=? ORDER BY event_time,id",
-        (conversation_id,),
-    ).fetchall()
-    selected = set(message_ids) if message_ids is not None else None
-    rows = [tuple(x) for x in rows if selected is None or x["id"] in selected]
+    if message_ids is None:
+        rows = c.execute(
+            "SELECT id,revision FROM messages WHERE conversation_id=? ORDER BY event_time,id",
+            (conversation_id,),
+        ).fetchall()
+    else:
+        selected = list(set(message_ids))
+        if not selected:
+            return
+        rows = c.execute(
+            "SELECT id,revision FROM messages WHERE conversation_id=? AND id IN ("
+            + ",".join("?" for _ in selected)
+            + ") ORDER BY event_time,id",
+            (conversation_id, *selected),
+        ).fetchall()
+    rows = [tuple(x) for x in rows]
     roles = [
         tuple(r)
         for r in c.execute(
@@ -47,14 +58,16 @@ def enqueue(c, conversation_id, message_ids=None):
         )
 
 
-def ingest(db: DB, records: list[dict], preview=False):
+def ingest(
+    db: DB, records: list[dict], preview=False, *, analyze=True, connection=None
+):
     if len(records) > 1000:
         raise ValueError("单批最多 1000 条")
     messages = [
         Message.model_validate(x) for x in records
     ]  # All-or-nothing validation.
     counts = dict(inserted=0, duplicates=0, revised=0, excluded=0)
-    with db.tx() as c:
+    with db.tx() if connection is None else nullcontext(connection) as c:
         changed = {}
         for m in messages:
             chat = c.execute(
@@ -146,11 +159,15 @@ def ingest(db: DB, records: list[dict], preview=False):
                 "UPDATE suggestions SET status='stale' WHERE status='pending' AND job_id IN (SELECT id FROM jobs WHERE json_extract(payload,'$.conversation_id')=?)",
                 (chat_id,),
             )
+            if not analyze:
+                continue
             ids = [
                 r["id"]
                 for r in c.execute(
-                    "SELECT id,source_id FROM messages WHERE conversation_id=?",
-                    (chat_id,),
+                    "SELECT id,source_id FROM messages WHERE conversation_id=? AND source_id IN ("
+                    + ",".join("?" for _ in changed[chat_id])
+                    + ")",
+                    (chat_id, *changed[chat_id]),
                 )
                 if r["source_id"] in changed[chat_id]
             ]

@@ -3,6 +3,7 @@ import getpass
 import json
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .analysis import Blocked, call_model, run_once
@@ -25,6 +26,12 @@ def parser():
         "--rotate", action="store_true", help="轮换本地口令并使旧会话失效"
     )
     s.add_parser("demo")
+    archive = s.add_parser("archive", help="全量私信与群聊本地初始化，不依赖导出文件")
+    archive.add_argument("action", choices=["discover", "init-all", "resume", "status"])
+    archive.add_argument("--account", help="明确确认源端 wxid；首次绑定必填")
+    archive.add_argument(
+        "--rescan", action="store_true", help="从第一页幂等重扫，重查迟到历史与缺口"
+    )
     bridge = s.add_parser("key-import", help="本地校验并迁移旧导出工具密钥；默认只预览")
     bridge.add_argument("--legacy-root", type=Path, required=True)
     bridge.add_argument("--write", action="store_true")
@@ -33,6 +40,7 @@ def parser():
     imp = s.add_parser("import")
     imp.add_argument("file", type=Path)
     imp.add_argument("--preview", action="store_true")
+    imp.add_argument("--account", help="旧导出文件所属本机微信账号 wxid")
     serve = s.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1"])
     serve.add_argument("--port", type=int, default=8765)
@@ -148,12 +156,21 @@ def main():
         elif args.command == "demo":
             print(dumps(seed_demo(db)))
         elif args.command == "import":
-            if args.file.stat().st_size > 2_000_000:
-                raise ValueError("导入文件最多 2 MB")
-            rows = [
-                json.loads(x) for x in args.file.read_text().splitlines() if x.strip()
-            ]
-            print(dumps(ingest(db, rows, args.preview)))
+            from .file_import import MAX_BYTES, import_file
+
+            if args.file.stat().st_size > MAX_BYTES:
+                raise ValueError("文件超过 64 MB，请拆分")
+            print(
+                dumps(
+                    import_file(
+                        db,
+                        args.file.read_text(encoding="utf-8-sig"),
+                        args.file.name,
+                        args.account,
+                        write=not args.preview,
+                    )
+                )
+            )
         elif args.command == "serve":
             import uvicorn
 
@@ -162,6 +179,61 @@ def main():
             uvicorn.run(
                 create_app(settings), host=args.host, port=args.port, access_log=False
             )
+        elif args.command == "archive":
+            from .archive import discover, import_history, register, status_report
+
+            if args.action == "status":
+                print(dumps(status_report(db)))
+                return
+            source = Collector(db)
+            try:
+                account = source.probe()
+                if args.account:
+                    if args.account != account["account_id"]:
+                        raise ValueError("源端账号不匹配")
+                    db.settings.bind_source(args.account)
+                if not account["bound"] and not args.account:
+                    raise ValueError(
+                        "请用 --account 明确源端 wxid 后绑定，或先在页面确认账号"
+                    )
+                if args.action in {"discover", "init-all"}:
+                    sessions = discover(source)
+                    print(
+                        dumps(
+                            {
+                                "discovered": len(sessions),
+                                "groups": sum(
+                                    s["kind"] == "group" and not s["excluded"]
+                                    for s in sessions
+                                ),
+                                "private": sum(
+                                    s["kind"] == "private" and not s["excluded"]
+                                    for s in sessions
+                                ),
+                                "excluded": sum(s["excluded"] for s in sessions),
+                            }
+                        ),
+                        flush=True,
+                    )
+                    if args.action == "discover":
+                        return
+                    register(
+                        db,
+                        sessions,
+                        int(datetime.now(UTC).timestamp()),
+                        args.rescan,
+                    )
+                report = import_history(
+                    db, source, emit=lambda event: print(dumps(event), flush=True)
+                )
+                print(dumps(report))
+                if any(
+                    p["status"] in {"failed", "scanned_with_gaps"}
+                    for p in report["progress"]
+                ):
+                    raise SystemExit(2)
+            finally:
+                source.client.close()
         elif args.command == "source":
             client = Collector(db)
             try:

@@ -6,6 +6,8 @@ const party = {self:'我方协调',merchant:'商家',service_provider:'头程服
 const stages = {needs:'需求确认',connecting:'三方对接',proposal:'方案确认',planned:'备货计划',executing:'执行中',verification:'结果待核验',done:'已完成',paused:'暂停',cancelled:'终止'};
 const statuses = {open:'待处理',waiting_external:'等待反馈',snoozed:'暂缓',done:'已完成',cancelled:'已取消'};
 const pages = {
+  customers:['客户全景档案','把私信和群聊，连接到同一位客户','按稳定身份汇总沟通，再确认商家、角色和备货项目。'],
+  archive:['全量消息档案','让沟通记录留在本机','按私信和群聊浏览已归档记录，业务关联与模型分析可稍后配置。'],
   today:['今日工作台','把每一次沟通，推进成备货进展','聚焦今天该跟进的商家、需要协调的服务商，以及下一步。'],
   projects:['商家与备货项目','每一批货，都有清晰的下一步','把商家需求、三方方案与执行节点，归到正确的备货批次。'],
   materials:['价卡与服务商','带着合适的方案，再联系商家','管理有效版本与使用范围，保留每个项目自己的确认报价。'],
@@ -47,6 +49,8 @@ const name = (table,id) => state[table]?.find(x => x.id === id)?.name || '未关
 const date = value => value ? new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(new Date(value)) : '尚未设置';
 const empty = (title,description='') => `<div class="empty"><div class="empty-icon">◇</div><strong>${escape(title)}</strong><p>${escape(description)}</p></div>`;
 function tab(id) {
+  if(id==='archive')loadArchive().catch(error=>notify(error.message,true));
+  if(id==='customers')loadCustomers().catch(error=>notify(error.message,true));
   document.querySelectorAll('main>section').forEach(s => s.classList.toggle('hidden',s.id !== id));
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active',b.dataset.tab === id));
   const page = pages[id]; $('#breadcrumb').textContent=page[0]; $('#page-title').textContent=page[1]; $('#page-description').textContent=page[2];
@@ -94,19 +98,20 @@ function render() {
     const quotes=state.quotes.filter(q=>q.project_id===p.id), milestones=state.milestones.filter(m=>m.project_id===p.id);
     return `<article class="card project-entry"><div class="card-top"><span class="badge ${p.stage==='done'?'green':''}">${escape(stages[p.stage])}</span><span class="muted small">${escape(p.market||'市场待确认')}</span></div><h3>${escape(p.name)}</h3><p>${escape(name('merchants',p.merchant_id))}</p><div class="progress"><i style="width:${progress}%"></i></div><div class="row"><select data-stage="${p.id}" data-version="${p.version}" aria-label="项目阶段">${Object.entries(stages).map(([key,label])=>`<option value="${key}" ${key===p.stage?'selected':''}>${label}</option>`).join('')}</select><button data-action="stage" data-id="${p.id}">确认阶段</button></div><details><summary>报价 ${quotes.length} · 节点 ${milestones.length}</summary><div class="detail-body">${quotes.map(q=>`<p class="small"><span class="badge ${q.confirmed?'green':'gray'}">${q.confirmed?'已确认报价':'待确认报价'}</span> ${escape(q.terms)}</p>`).join('')}${milestones.map(m=>`<p class="small"><span class="badge ${m.verified?'green':'gray'}">${m.verified?'已核验':'未核验'}</span> ${escape(({dispatch:'发货',arrival:'到仓',stocking_result:'备货结果'})[m.kind]||m.kind)} · ${escape(m.note)}</p>`).join('') || '<p class="hint">尚无节点记录</p>'}</div></details></article>`;
   }).join('') || empty('先建立第一个备货项目','将商家的本批货物、目标市场和后续沟通放到一起。');
-  $('#conversation-count').textContent=real.length+' 个真实会话';
+  $('#conversation-count').textContent='最近 '+real.length+' 个；完整列表见消息档案';
   $('#conversations').innerHTML=state.conversations.map(c=>`<article class="card"><div class="card-top"><span class="badge ${c.source==='wx_cli'?'green':'gray'}">${c.source==='wx_cli'?'真实微信':c.source==='fixture'?'虚构样例':'人工导入'}</span><span class="small muted">${!c.allowlisted?'已暂停':c.egress?'已授权分析':'仅本地归档'}</span></div><h3>${escape(c.title)}</h3><p>${escape(name('merchants',c.merchant_id))} · ${escape(name('projects',c.project_id))}</p><div class="actions"><button data-action="evidence" data-id="${c.id}">查看消息</button><button data-action="configure" data-id="${c.id}">关联与授权</button>${c.egress?`<button data-action="preview" data-id="${c.id}">脱敏预览</button><button data-action="enqueue" data-id="${c.id}">安排分析</button><button data-action="draft" data-id="${c.id}">起草话术</button>`:''}${c.allowlisted?`<button class="subtle" data-action="pause" data-id="${c.id}">暂停采集</button>`:''}</div></article>`).join('') || empty('还没有接入会话','先通过上方向导选择 1–2 个试点群，默认只归档到本机。');
   $('#material-list').innerHTML=state.materials.map(m=>`<article class="card"><div class="card-top"><span class="badge ${m.status==='approved'?'green':'gray'}">${({approved:'已审核',pending:'待审核',withdrawn:'已撤回'})[m.status]||escape(m.status)}</span><span class="small muted">${escape(m.market)} · ${m.scope==='external'?'可对外使用':'仅内部'}</span></div><h3>${escape(m.name)} <span class="muted">${escape(m.version)}</span></h3><p class="summary">${escape(m.terms)}</p><p>有效至 ${escape(m.valid_until?date(m.valid_until):'未知，不自动推荐')}</p><button class="subtle" data-action="withdraw" data-id="${m.id}">撤回此版本</button></article>`).join('') || empty('让素材带着明确的适用条件','保存价卡版本、有效期和税费口径，再用于商家匹配。');
   $('#runtime').textContent=JSON.stringify({runtime:state.runtime,analysis:state.jobs,coverage:state.sync,usage:state.usage},null,2);
   const worker=state.runtime.find(r=>r.name==='worker');
   const recent=worker && Date.now()-new Date(worker.updated_at).getTime()<60000;
   const gaps=state.sync.filter(s=>s.status==='gap').length;
-  $('#overview-status').innerHTML=`<div class="status-line"><span>真实采集会话</span><strong>${real.length} 个</strong></div><div class="status-line"><span>分析 worker</span><span class="badge ${recent?'green':'gray'}">${recent?'最近有心跳':'等待启动 / 心跳过期'}</span></div><div class="status-line"><span>最近窗口待核查</span><strong>${gaps} 项</strong></div><div class="status-line"><span>DeepSeek 今日用量</span><strong>${(state.usage.find(u=>u.day===new Date().toISOString().slice(0,10))?.tokens||0).toLocaleString()} tokens</strong></div>`;
+  $('#overview-status').innerHTML=`<div class="status-line"><span>真实采集会话</span><strong>${state.conversation_totals.find(x=>x.source==='wx_cli')?.n||0} 个</strong></div><div class="status-line"><span>分析 worker</span><span class="badge ${recent?'green':'gray'}">${recent?'最近有心跳':'等待启动 / 心跳过期'}</span></div><div class="status-line"><span>最近窗口待核查</span><strong>${gaps} 项</strong></div><div class="status-line"><span>DeepSeek 今日用量</span><strong>${(state.usage.find(u=>u.day===new Date().toISOString().slice(0,10))?.tokens||0).toLocaleString()} tokens</strong></div>`;
 }
-async function load(){state=await api('/api/state');render();}
+async function load(){state=await api('/api/state');render();if(!$('#archive').classList.contains('hidden'))await loadArchive();if(!$('#customers').classList.contains('hidden'))await loadCustomers();}
 function previewMessages(messages) {
+  if($('#preview-dialog').open)$('#preview-dialog').close();
   $('#preview-title').textContent='本地消息 · 最近 100 条'; $('#preview').classList.add('hidden'); $('#message-preview').classList.remove('hidden');
-  $('#message-preview').innerHTML=messages.map(m=>`<article class="message"><div class="meta">${escape(date(m.event_time))} · ${m.direction==='outgoing'?'我方发出':'收到'} · ${m.completeness==='full'?'文本正文':'非全文 / 元数据'}</div><p>${escape(m.text)}</p>${['3','image'].includes(m.type)?`<div class="image-preview" data-image-box="${m.id}"><button data-action="load-image" data-id="${m.id}">读取本机图片</button><p class="hint">仅在本机获取并缓存，不调用 DeepSeek。能否读到原图取决于微信下载与图片解密状态。</p></div>`:''}<small class="muted">发送者 ID：${escape(m.sender_id)}</small></article>`).join('') || empty('最近还没有采集到消息','可以在微信中正常产生一条业务消息，然后重新试采。');
+  $('#message-preview').innerHTML=messages.map(m=>`<article class="message"><div class="meta">${m.conversation_title?escape(m.conversation_title)+' · ':''}${escape(date(m.event_time))} · ${m.direction==='outgoing'?'我方发出':'收到'} · ${m.completeness==='full'?'文本正文':'非全文 / 元数据'}</div><p>${escape(m.text)}</p>${['3','image'].includes(m.type)?`<div class="image-preview" data-image-box="${m.id}"><button data-action="load-image" data-id="${m.id}">读取本机图片</button><p class="hint">仅在本机获取并缓存，不调用 DeepSeek。能否读到原图取决于微信下载与图片解密状态。</p></div>`:''}<small class="muted">发送者 ID：${escape(m.sender_id)}</small></article>`).join('') || empty('最近还没有采集到消息','可以在微信中正常产生一条业务消息，然后重新试采。');
   draftText='';$('#copy-draft').classList.add('hidden');$('#preview-dialog').showModal();
 }
 function step(index){document.querySelectorAll('[data-step]').forEach(s=>{s.classList.toggle('active',Number(s.dataset.step)===index);s.classList.toggle('done',Number(s.dataset.step)<index);});}
@@ -167,7 +172,7 @@ document.addEventListener('click',async event=>{
     if(action==='pause')await api(`/api/conversations/${id}/pause`,{});
     if(action==='enqueue'){await api(`/api/analysis/${id}/enqueue`,{});notify('已安排分析；需启动本地 worker 执行。');}
     if(action==='configure'){
-      const c=state.conversations.find(c=>c.id===id);const f=document.querySelector('form[data-api="/api/conversations"]');
+      const c=state.conversations.find(c=>c.id===id)||archiveRows.find(c=>c.id===id);const f=document.querySelector('form[data-api="/api/conversations"]');
       tab('sources');f.closest('details').open=true;
       for(const [key,value] of Object.entries(c)){const input=f.elements.namedItem(key);if(input)input.value=key==='egress'?String(Boolean(value)):value??'';}
       f.elements.namedItem('source_id').value=c.source_id;f.scrollIntoView({behavior:'smooth',block:'center'});
@@ -179,10 +184,11 @@ document.addEventListener('click',async event=>{
       const box=$(`[data-image-box="${id}"]`);const img=document.createElement('img');img.src=url;img.alt='本机归档的群聊图片';img.className='archived-image';box.appendChild(img);
       const quality=response.headers.get('X-Wechat-Media-Quality');box.querySelector('.hint').textContent=quality==='thumbnail'?'当前只有缩略图，价格等细小文字需核对原图。':quality==='full'?'上游标记为完整图；尚未进行 OCR 或模型分析。':'图像已读取，清晰度未知；尚未进行 OCR。';button.remove();
     }
-    if(action==='evidence')previewMessages(await api(`/api/messages/${id}`));
+    if(action==='evidence'){messageConversation=id;messagePage=1;await showMessagePage();}
     if(action==='preview'||action==='draft'){
       const result=await api(action==='preview'?`/api/analysis/${id}/preview`:`/api/drafts/${id}`,{});
       $('#preview-title').textContent=action==='draft'?'话术草稿 · 尚未发送':'脱敏请求预览 · 未调用模型';
+      $('#message-pagination').classList.add('hidden');
       $('#message-preview').classList.add('hidden');$('#preview').classList.remove('hidden');$('#preview').textContent=action==='draft'?result.text:JSON.stringify(result.payload,null,2);
       draftText=action==='draft'?result.text:'';$('#copy-draft').classList.toggle('hidden',!draftText);$('#preview-dialog').showModal();
     }
@@ -194,3 +200,42 @@ $('#task-filters').onclick=event=>{if(!event.target.dataset.filter)return;taskFi
 load().catch(error=>notify(error.message,true));
 
 $('#preview-dialog').addEventListener('close',()=>{imageURLs.forEach(url=>URL.revokeObjectURL(url));imageURLs.length=0;});
+
+let archivePage=1,archiveRows=[];
+async function loadArchive(){
+  const form=$('#archive-search');const q=form.elements.q.value;const kind=form.elements.kind.value;
+  const data=await api(`/api/archive/conversations?q=${encodeURIComponent(q)}&kind=${kind}&page=${archivePage}`);
+  archiveRows=data.items;
+  const summary=await api('/api/archive/status');
+  $('#archive-progress').textContent=`当前账号已归档 ${summary.messages} 条；${summary.progress.map(p=>({scanned:'已扫描',scanned_with_gaps:'已扫描但有缺口',pending:'待处理',failed:'失败待重试'}[p.status]||p.status)+': '+p.conversations+' 个会话').join('，')||'尚未运行历史初始化'}。扫描完成不代表源端历史完整。`;
+  $('#archive-list').innerHTML=data.items.map(c=>`<article class="card"><div class="card-top"><h3>${escape(c.title)}</h3><span class="badge">${c.kind==='group'?'群聊':'私信'}</span></div><p>${c.message_count} 条已归档消息 · ${c.egress?'已授权分析':'仅本地归档'} · ${c.allowlisted?'持续采集启用':'已暂停'}</p><div class="actions"><button data-action="evidence" data-id="${c.id}">查看消息</button><button data-action="configure" data-id="${c.id}">业务关联与授权</button><button data-action="pause" data-id="${c.id}">暂停</button></div></article>`).join('')||empty('当前没有匹配的归档会话','先运行会话发现与全量初始化命令。');
+  $('#archive-page').textContent=`第 ${archivePage} 页 · 共 ${data.total} 个会话`;
+  $('#archive-prev').disabled=archivePage<=1;$('#archive-next').disabled=!data.has_more;
+}
+$('#archive-search').onsubmit=event=>{event.preventDefault();archivePage=1;loadArchive().catch(error=>notify(error.message,true));};
+$('#archive-prev').onclick=()=>{archivePage=Math.max(1,archivePage-1);loadArchive().catch(error=>notify(error.message,true));};
+$('#archive-next').onclick=()=>{archivePage+=1;loadArchive().catch(error=>notify(error.message,true));};
+
+let messageConversation=null,messagePage=1;
+async function showMessagePage(){
+  const rows=await api(`/api/messages/${messageConversation}?page=${messagePage}`);previewMessages(rows);
+  $('#preview-title').textContent='本地消息 · 第 '+messagePage+' 页';
+  $('#message-pagination').classList.remove('hidden');$('#messages-prev').disabled=messagePage<=1;$('#messages-next').disabled=rows.length<100;$('#messages-page').textContent='第 '+messagePage+' 页';
+}
+$('#messages-prev').onclick=()=>{messagePage=Math.max(1,messagePage-1);showMessagePage().catch(error=>notify(error.message,true));};
+$('#messages-next').onclick=()=>{messagePage++;showMessagePage().catch(error=>notify(error.message,true));};
+let importedFile=null;
+$('#file-import').onsubmit=event=>{event.preventDefault();busy($('#preview-file'),async()=>{
+ const f=event.target.file.files[0];if(!f)throw Error('请选择文件');if(f.size>1500000)throw Error('网页最多 1.5 MB，更大文件请使用 CLI import');
+ importedFile={filename:f.name,text:await f.text(),account_id:event.target.account_id.value};
+ const result=await api('/api/imports/file',{...importedFile,write:false});$('#file-report').classList.remove('hidden');$('#file-report').textContent=JSON.stringify(result,null,2);$('#write-file').disabled=result.rejected>0||result.valid===0;
+});};
+$('#file-import').addEventListener('change',()=>{$('#write-file').disabled=true;importedFile=null;});
+$('#write-file').onclick=()=>busy($('#write-file'),async()=>{if(!importedFile)throw Error('请先校验预览');const result=await api('/api/imports/file',{...importedFile,write:true});$('#file-report').textContent=JSON.stringify(result,null,2);notify('手动导入完成，未调用 DeepSeek');await load();await loadArchive();});
+let customerPage=1;
+async function loadCustomers(){const q=$('#customer-search').elements.q.value;const data=await api(`/api/customers?q=${encodeURIComponent(q)}&page=${customerPage}`);$('#customer-list').innerHTML=data.items.map(c=>`<article class="card"><h3>${escape(c.display_name)}</h3><p>${escape(c.identity)}</p><button data-customer="${escape(c.identity)}">私信与群内沟通时间线</button></article>`).join('')||empty('尚未发现可关联联系人','归档私信与群消息后，这里按稳定身份汇总。');$('#customer-page').textContent=`第 ${customerPage} 页 · ${data.total} 位联系人`;
+$('#customer-prev').disabled=customerPage<=1;$('#customer-next').disabled=!data.has_more;}
+$('#customer-search').onsubmit=e=>{e.preventDefault();customerPage=1;loadCustomers().catch(error=>notify(error.message,true));};
+$('#customer-prev').onclick=()=>{customerPage=Math.max(1,customerPage-1);loadCustomers().catch(error=>notify(error.message,true));};
+$('#customer-next').onclick=()=>{customerPage++;loadCustomers().catch(error=>notify(error.message,true));};
+document.addEventListener('click',async event=>{const button=event.target.closest('[data-customer]');if(!button)return;busy(button,async()=>{const rows=await api(`/api/customers/${encodeURIComponent(button.dataset.customer)}/timeline`);previewMessages(rows);$('#message-pagination').classList.add('hidden');$('#preview-title').textContent='客户沟通时间线 · 最近 100 条';});});
