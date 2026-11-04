@@ -23,6 +23,8 @@ src/wechat_agent/
   adapters/       # fixture、JSONL、wx-cli 接入隔离层
   ingestion/      # 校验、白名单、去重、游标及本地发送队列
   crm/            # 商家、身份关联、事实与触达限制
+  materials/      # 海报、结构化价卡及对外使用版本
+  stocking/       # 备货项目、三方角色、报价与里程碑
   followups/      # 任务状态机、联系记录、下一步
   analysis/       # 上下文构建、规则、本机模型、结果校验
   opportunities/  # 业务机会匹配与激活候选
@@ -40,7 +42,7 @@ API 监听 127.0.0.1，worker 独立运行；采集器作为可选第三进程�
 
 | 表 | 关键字段／约束 |
 | --- | --- |
-| merchants | name、stage、owner_note、created_at |
+| merchants | name、business_profile、owner_note、created_at；项目阶段单独存储 |
 | contacts | account_id、source_contact_id、display_name；来源身份唯一 |
 | merchant_contacts | merchant_id、contact_id、role、confirmed_at；多对多 |
 | conversations | account_id、source_conversation_id、kind、title、allowlisted |
@@ -51,10 +53,10 @@ API 监听 127.0.0.1，worker 独立运行；采集器作为可选第三进程�
 | merchant_facts | merchant_id、field、value、evidence_ids、review_status、user_locked |
 | analysis_runs | input_hash、input_message_ids、context_version、engine_version、prompt_version、status、error_code |
 | suggestions | run_id、kind、payload、evidence_ids、review_status、dedup_key |
-| followup_tasks | merchant_id、kind、state、due_at、due_text、due_precision、origin_suggestion_id、version |
+| followup_tasks | merchant_id、project_id（可空）、kind、state、responsible_party、responsible_contact_id、internal_owner、check_again_at、due_at、due_text、due_precision、origin_suggestion_id、version |
 | task_events | task_id、actor、action、before、after、created_at |
 | touchpoints | merchant_id、channel、contacted_at、outcome、next_action；人工确认 |
-| opportunities | description、eligibility、limitations、starts_at、ends_at |
+| opportunities | description、eligibility、limitations、material_version_ids、starts_at、ends_at |
 | outreach_preferences | merchant_id、do_not_contact、paused_until、cooldown_days |
 | sync_checkpoints | source、account_id、conversation_id、cursor_json、last_success、coverage_start、gap_status |
 | jobs | type、payload、dedup_key、status、attempts、lease_until、available_at、last_error |
@@ -66,7 +68,7 @@ API 监听 127.0.0.1，worker 独立运行；采集器作为可选第三进程�
 一期以 UTF-8 JSONL 为统一入口，每行一条消息。例如（虚构）：
 
 ```json
-{"schema_version":1,"source":"manual","account_id":"demo-account","conversation_id":"demo-chat-1","conversation_type":"private","source_id":"demo-msg-001","sender_id":"demo-customer-1","direction":"incoming","event_time":"2026-11-04T09:00:00+08:00","message_type":"text","text":"请周五前把试用安排发给我"}
+{"schema_version":1,"source":"manual","account_id":"demo-account","conversation_id":"demo-chat-1","conversation_type":"private","source_id":"demo-msg-001","sender_id":"demo-customer-1","direction":"incoming","event_time":"2026-11-04T09:00:00+08:00","message_type":"text","text":"请周五前确认这批货的头程方案"}
 ```
 
 - 必填：版本、来源、账号、会话、来源 ID、方向、带时区时间、消息类型；文本消息要求 text。
@@ -100,7 +102,7 @@ API 监听 127.0.0.1，worker 独立运行；采集器作为可选第三进程�
 
 ## 6. 分析流程
 
-上下文按商家／会话及话题组织，包含本批消息、必要引用、已确认事实、开放任务、近期联系记录和业务配置。以 Token 预算限长；历史摘要只作背景，不替代原始证据。跨商家数据不混入上下文。
+上下文按商家／备货项目／会话及话题组织，包含本批消息、必要引用、已确认事实、开放任务、近期联系记录和业务配置。以 Token 预算限长；历史摘要只作背景，不替代原始证据。跨商家数据不混入上下文；同商家不同批次先明确归属。参加同群不等于有权查看其全部关联项目。
 
 确定性任务键包含输入消息及修订、身份映射、业务配置、开放任务版本、分析器和提示词版本。相同输入不重复分析，相关状态变化则允许重算。规则先做触达限制与基础候选；可选本机模型提取语义。
 
@@ -112,8 +114,10 @@ API 监听 127.0.0.1，worker 独立运行；采集器作为可选第三进程�
   "suggestions": [{
     "kind": "task_create",
     "merchant_id": "demo-merchant-1",
-    "summary": "发送试用安排",
-    "responsible_party": "self",
+    "summary": "确认本批头程方案",
+    "project_id": "demo-project-1",
+    "responsible_party": "service_provider",
+    "internal_owner": "local-user",
     "due_at": null,
     "due_text": "周五前",
     "due_precision": "ambiguous",
@@ -172,3 +176,48 @@ API 监听 127.0.0.1，worker 独立运行；采集器作为可选第三进程�
 本期不设置云端脚本、Tailscale 或外部模型凭据。未来是否迁移，由实际采集稳定性、Mac 常驻条件、模型速度、数据许可和多设备需求决定。
 
 保留标准导入协议、服务层、任务队列和数据库迁移能力即可；不提前建设分布式系统。将来同步的是获准的数据与事件，不上传微信密钥或整库。
+
+
+## 10. 商家备货与三方物流业务扩展
+
+业务口径以 [工作流](01-workflow.md) 为准。本节为一期必要数据与接口，不引入云端依赖。
+
+### 数据实体与关联
+
+| 表 | 字段与约束 |
+| --- | --- |
+| service_providers | 名称、已核实线路／货型能力、联系信息、依据与核实日期；不作平台担保 |
+| provider_contacts | provider_id、contact_id、角色；身份可多角色 |
+| stocking_projects | merchant_id、market、destination_warehouse、origin、cargo_description、special_cargo_flags、weight、volume、pieces、ready_at、target_dispatch_at、target_arrival_at、stage、pause_reason、version；未知值为空 |
+| project_participants | project_id、party_type、party_id、contact_id、role、confirmed_at |
+| project_conversations | project_id、conversation_id、association_scope；同群多批次需消息级关联 |
+| message_projects | message_id、project_id、review_status；批次不明不自动归属 |
+| material_versions | material_id、version、kind、local_file、content_hash、source、review_status、external_use_scope、valid_from、valid_until、status；文件不进仓库 |
+| rate_card_rows | material_version_id、provider_id、origin、destination、route、cargo_scope、weight_band、currency、unit、amount（Decimal）、billing_rule、tax_scope、surcharges、transit_range、transit_basis；保留缺失标记 |
+| project_quotes | project_id、provider_id、rate_card_row_id（可空）、terms_snapshot、confirmed_by、confirmed_at、valid_until、evidence_ids、review_status；具体确认报价独立于参考价卡 |
+| project_milestones | project_id、kind、planned_at、actual_at、evidence_type、evidence_ids、verified_by、verified_at；计划、对方反馈、核验结果分别保存 |
+| project_blockers | project_id、category、description、responsible_party、internal_owner、check_again_at、evidence_ids、state |
+| outreach_records | merchant_id、project_id（可空）、contact_id／conversation_id、material_version_ids、sent_confirmed_at、outcome；不提供已读字段 |
+| product_issues | project_id、category、description、evidence_ids、review_status、resolution；与外部物流履约任务区分 |
+
+金额使用 Decimal／精确字符串，重量与体积字段携带单位；不将 kg、CBM、件数直接互换。日期范围和时效口径（自然日／工作日、起算节点）保留原始条件。未确认货型不判为可承运。
+
+### 流程规则与本地接口
+
+新增 materials／rate-cards 导入与审核、projects 创建与版本化阶段更新、participants／conversations 关联、quotes 确认、milestones 核验、blockers 和 product-issues 管理接口；拟使用 /api 下同名资源，所有变更使用 POST。这组接口与原有 suggestions、tasks、drafts 复用证据和版本机制。
+
+素材文件首先通过人工选择保存到本地受限目录，按类型／大小验证；不执行宏或主动内容。价卡关键字段一期人工填写或表格映射后逐条核对，海报图片不默认 OCR。导入任务在规则模式下可完成，不依赖 LLM 读图。
+
+模型输出扩展 project_id、responsible_party（self／merchant／service_provider／other／unknown）、milestone_update、blocker、product_issue、stage_change 建议。所有 ID 检查主体与项目归属；群里服务商对多个商家的报价不能互相引用。任务状态以业务文档为准，统一使用 waiting_external 加责任方，替代 waiting_customer。
+
+模型建议阶段变化后进入审核，不自动将“收到”、发素材或建群视为备货成功。里程碑证据级别至少区分 chat_report、document、platform_record、manual_verification；平台记录一期人工录入，不假定已接平台 API。
+
+价卡推荐先按有效状态、外发范围和适用条件确定性过滤，再做业务匹配。生成草稿、复制／导出附件前重新校验素材状态；若过期或未知条件，禁止自动带出确定价格，提示用户核实。没有可比计价条件不计算价差，宣传海报不充当最终确认报价。
+
+项目结果以用户配置的业务完成口径核验；配置变更保留版本，不能回溯重写历史结果。新方案可触发旧客户候选，但不能覆盖历史报价快照或绕过触达限制。
+
+### 工作台与分析上下文
+
+页面增加“备货项目看板”“三方卡点”“价卡与素材”“产品问题”；商家详情下展示多批次。建议卡含责任方、内部跟进人、下次检查时间和证据，不只显示客户多久没说话。
+
+本机模型上下文以项目及相关群消息为界，补充选定素材版本、确认报价、未完成节点和触达记录。上下文依赖键增加项目、价卡和素材状态版本。没有原消息的人工素材／平台记录可作为人工证据，但必须标明来源，不能伪造消息 ID。
