@@ -25,6 +25,9 @@ def parser():
         "--rotate", action="store_true", help="轮换本地口令并使旧会话失效"
     )
     s.add_parser("demo")
+    bridge = s.add_parser("key-import", help="本地校验并迁移旧导出工具密钥；默认只预览")
+    bridge.add_argument("--legacy-root", type=Path, required=True)
+    bridge.add_argument("--write", action="store_true")
     auth = s.add_parser("credentials")
     auth.add_argument("name", choices=["DEEPSEEK_API_KEY", "WX_SOURCE_TOKEN"])
     imp = s.add_parser("import")
@@ -117,6 +120,15 @@ def main():
     settings = Settings()
     if args.data_dir:
         settings.data_dir = args.data_dir
+    if args.command == "key-import":
+        from .key_import import import_legacy
+
+        try:
+            print(dumps(import_legacy(args.legacy_root, write=args.write)))
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(1)
+        return
     db = DB(settings)
     try:
         if args.command == "init":

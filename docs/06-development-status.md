@@ -51,3 +51,8 @@
 
 
 可选浏览器回归：测试机需额外提供 Node.js、playwright 模块和 Chromium；这不是应用运行依赖。使用全新隔离数据目录，设置 WA_BROWSER_DATA_DIR 后运行 `uv run python tests/browser_server.py`；另一终端设置相同目录，运行 `node tests/browser/smoke.cjs`。可通过 CHROMIUM_PATH 指定浏览器。服务仅使用虚构上游，截图默认保存在 /tmp/wechat-agent-browser。该脚本会创建测试任务，不得指向真实业务数据目录。
+
+
+## 旧密钥本地桥接
+
+新增 key-import（默认预览，--write 显式写入）：按旧配置定位账号与 raw-key-v1，检查数据库首页 HMAC，转换为 wx-cli keys.toml。保留其他账号、拒绝冲突条目、备份原文件、原子写入与 600 权限；密钥不进入 argv 或日志。31 项 Python 测试通过，真实用户密钥迁移仍需在 Mac 本机执行并验证后续解密。
