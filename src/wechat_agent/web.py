@@ -26,7 +26,6 @@ def create_app(settings=None):
         loader=FileSystemLoader(Path(__file__).parent / "templates"),
         autoescape=select_autoescape(),
     )
-    csrf = hashlib.sha256(("csrf:" + db.token).encode()).hexdigest()
 
     @app.middleware("http")
     async def security(request, call_next):
@@ -36,7 +35,18 @@ def create_app(settings=None):
         origin = request.headers.get("origin")
         if origin and origin != f"{request.url.scheme}://{request.headers.get('host')}":
             return JSONResponse({"error": "invalid_origin"}, 403)
-        if request.headers.get("sec-fetch-site") == "cross-site":
+        # A user following an external link may legitimately navigate to the
+        # entry page. Never extend this exception to API reads or mutations.
+        entry_navigation = (
+            request.method == "GET"
+            and request.url.path == "/"
+            and request.headers.get("sec-fetch-mode") == "navigate"
+            and request.headers.get("sec-fetch-dest") == "document"
+        )
+        if (
+            request.headers.get("sec-fetch-site") == "cross-site"
+            and not entry_navigation
+        ):
             return JSONResponse({"error": "cross_site"}, 403)
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             length = request.headers.get("content-length")
@@ -53,9 +63,12 @@ def create_app(settings=None):
                     raise ValueError()
             except (ValueError, TypeError):
                 return JSONResponse({"error": "JSON 对象无效"}, 422)
+        current_token = db.token
+        csrf = hashlib.sha256(("csrf:" + current_token).encode()).hexdigest()
+        request.state.csrf = csrf
         bearer = request.headers.get("authorization", "").removeprefix("Bearer ")
         token = bearer or request.cookies.get("wa_session", "")
-        authenticated = bool(token) and hmac.compare_digest(token, db.token)
+        authenticated = bool(token) and hmac.compare_digest(token, current_token)
         if request.url.path not in {"/login", "/"} and not authenticated:
             return JSONResponse({"error": "请登录本地会话"}, 401)
         if (
@@ -105,7 +118,8 @@ def create_app(settings=None):
     def index(request: Request):
         template = "dashboard.html" if request.state.authenticated else "login.html"
         return env.get_template(template).render(
-            csrf=csrf if request.state.authenticated else "", nonce=request.state.nonce
+            csrf=request.state.csrf if request.state.authenticated else "",
+            nonce=request.state.nonce,
         )
 
     @app.post("/login")

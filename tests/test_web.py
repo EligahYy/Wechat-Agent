@@ -133,3 +133,73 @@ def test_malformed_and_missing_fields_are_422(tmp_path):
     h = {"Authorization": "Bearer " + app.state.db.token}
     assert c.post("/api/merchants", json={}, headers=h).status_code == 422
     assert c.post("/api/merchants", json=[], headers=h).status_code == 422
+
+
+def test_cross_site_entry_navigation_but_not_api_or_iframe(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path))
+    c = TestClient(app)
+    navigation = {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+        "sec-fetch-user": "?1",
+    }
+    entry = c.get("/", headers=navigation)
+    assert entry.status_code == 200
+    assert "本地登录" in entry.text
+    assert "frame-ancestors 'none'" in entry.headers["content-security-policy"]
+    assert entry.headers["cache-control"] == "no-store"
+    assert c.get("/api/state", headers=navigation).status_code == 403
+    assert (
+        c.get("/", headers=navigation | {"sec-fetch-dest": "iframe"}).status_code == 403
+    )
+    assert (
+        c.get("/", headers=navigation | {"sec-fetch-mode": "cors"}).status_code == 403
+    )
+    assert (
+        c.post(
+            "/login", json={"token": app.state.db.token}, headers=navigation
+        ).status_code
+        == 403
+    )
+    assert (
+        c.get("/", headers=navigation | {"origin": "https://evil.example"}).status_code
+        == 403
+    )
+    # Subsequent same-origin login and dashboard operations remain usable.
+    assert (
+        c.post(
+            "/login",
+            json={"token": app.state.db.token},
+            headers={"sec-fetch-site": "same-origin"},
+        ).status_code
+        == 200
+    )
+    assert (
+        c.get("/api/state", headers={"sec-fetch-site": "same-origin"}).status_code
+        == 200
+    )
+    assert c.get("/api/state", headers=navigation).status_code == 403
+
+
+def test_token_rotation_revokes_running_sessions(tmp_path):
+    from wechat_agent.db import DB
+
+    app = create_app(Settings(data_dir=tmp_path))
+    c = TestClient(app)
+    old = app.state.db.token
+    assert c.post("/login", json={"token": old}).status_code == 200
+    assert c.get("/api/state").status_code == 200
+    other_process = DB(app.state.db.settings)
+    other_process.rotate_token()
+    assert other_process.token != old
+    assert c.get("/api/state").status_code == 401
+    assert (
+        c.get("/api/state", headers={"Authorization": "Bearer " + old}).status_code
+        == 401
+    )
+    assert c.post("/login", json={"token": old}).status_code == 401
+    assert c.post("/login", json={"token": other_process.token}).status_code == 200
+    assert c.get("/api/state").status_code == 200
+    assert (tmp_path / "session-token").stat().st_mode & 0o777 == 0o600
+    assert not list(tmp_path.glob(".session-*"))

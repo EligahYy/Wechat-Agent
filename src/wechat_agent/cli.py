@@ -20,7 +20,10 @@ def parser():
     )
     s = p.add_subparsers(dest="command", required=True)
     s.add_parser("init")
-    s.add_parser("token")
+    token = s.add_parser("token")
+    token.add_argument(
+        "--rotate", action="store_true", help="轮换本地口令并使旧会话失效"
+    )
     s.add_parser("demo")
     auth = s.add_parser("credentials")
     auth.add_argument("name", choices=["DEEPSEEK_API_KEY"])
@@ -119,6 +122,8 @@ def main():
         if args.command == "init":
             print("已初始化本地数据库；查看登录口令：wechat-agent token")
         elif args.command == "token":
+            if args.rotate:
+                db.rotate_token()
             print(db.token)
         elif args.command == "credentials":
             import keyring

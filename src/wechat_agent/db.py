@@ -1,8 +1,10 @@
 """SQLite storage with transactional, versioned schema migration."""
 
 import json
+import os
 import secrets
 import sqlite3
+import tempfile
 import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -74,7 +76,23 @@ class DB:
                 f.write(secrets.token_urlsafe(32))
         except FileExistsError:
             pass
-        self.token = token_path.read_text().strip()
+
+    @property
+    def token(self):
+        # Reload each request so rotation also revokes already-running sessions.
+        return (self.settings.data_dir / "session-token").read_text().strip()
+
+    def rotate_token(self):
+        fd, name = tempfile.mkstemp(prefix=".session-", dir=self.settings.data_dir)
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(secrets.token_urlsafe(32))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(name, self.settings.data_dir / "session-token")
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
 
     def connect(self):
         c = sqlite3.connect(self.path, timeout=10)
