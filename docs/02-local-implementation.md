@@ -1,223 +1,178 @@
-# 本地技术实现设计
+# 完整架构：微信采集、DeepSeek 分析与商家备货协同
 
-状态：拟实现契约；没有已运行服务。部署目标：Apple Silicon Mac，单用户、本地访问。本期不依赖云端服务。
+状态：拟实施设计，未验证真实设备和 API。本文替代旧的“先导入、可选本机模型”架构；默认分析引擎为 DeepSeek API。业务状态以 [工作流](01-workflow.md) 为准。
 
-## 1. 技术选择
+## 1. 部署决策与边界
 
-| 部分 | 一期选择 | 理由 |
-| --- | --- | --- |
-| 运行时 | Python 3.12，uv 管理依赖与锁文件 | 一套语言完成导入、任务处理与页面 |
-| Web | FastAPI + Jinja2，少量 HTMX／原生 JS | 避免额外前端构建链 |
-| 存储 | SQLite，WAL，外键，Alembic 迁移 | 单用户足够；保持迁移与备份能力 |
-| 数据访问 | SQLAlchemy 2 + Pydantic | 数据模型与输入契约明确 |
-| 后台处理 | 独立 Python worker，SQLite 持久化任务队列 | 模型耗时不阻塞页面；无需 Redis |
-| 分析 | 规则基线；可选本机 Ollama 模型 | 无模型也能验证业务流程 |
-| 验证 | pytest，HTTP 集成测试，人工验收 | 覆盖重复处理、状态与故障恢复 |
+首版全部应用进程放在个人 Mac：微信、本地采集服务、采集适配器、Web API、SQLite、worker 与浏览器。仅分析调用通过 HTTPS 到 DeepSeek。应用无需入站公网端口、ECS、Redis、Tailscale 或本机大模型。
 
-模型不作为应用启动依赖。规则模式仅识别明确日期／关键词候选，不能宣称具备完整语义理解；语义提取与草稿质量需单独验收。本机模型性能按 Mac 可用内存实测，不预先保证速度。
+系统不提供发送微信、自动加好友、自动拉群接口；不使用 RPA 操作微信，不以规避 EDR／DLP 或审计作为实现目标。业务数据外发须处于用户有权处理的范围，选用 DeepSeek 不意味着已经取得平台对所有内部数据的外发许可。
 
-## 2. 模块与进程
+### 总体结构
 
-```text
-src/wechat_agent/
-  adapters/       # fixture、JSONL、wx-cli 接入隔离层
-  ingestion/      # 校验、白名单、去重、游标及本地发送队列
-  crm/            # 商家、身份关联、事实与触达限制
-  materials/      # 海报、结构化价卡及对外使用版本
-  stocking/       # 备货项目、三方角色、报价与里程碑
-  followups/      # 任务状态机、联系记录、下一步
-  analysis/       # 上下文构建、规则、本机模型、结果校验
-  opportunities/  # 业务机会匹配与激活候选
-  jobs/           # 持久化任务及 worker
-  web/            # 页面、接口、模板
-  cli.py          # 导入、服务、worker、备份、诊断
-tests/fixtures/   # 仅虚构数据
+```mermaid
+flowchart LR
+    subgraph MAC[个人 Mac]
+      W[已登录微信与本地加密数据库] --> X[只读采集服务 wx-cli 候选]
+      X --> C[Collector：白名单、规范化、分页与回查]
+      I[人工导入与价卡录入] --> C
+      C --> DB[(SQLite：消息、来源、项目、任务)]
+      DB --> Q[持久化分析队列]
+      Q --> P[项目上下文与外发策略过滤]
+      V[结构、证据与版本校验] --> DB
+      DB --> UI[本地工作台与审核]
+      UI --> H[人工复制、微信沟通、确认结果]
+    end
+    P -->|脱敏文本 HTTPS| DS[DeepSeek API]
+    DS --> V
 ```
 
-API 监听 127.0.0.1，worker 独立运行；采集器作为可选第三进程。worker 不持有长时间数据库事务调用模型。客户端先持久化数据，再排分析任务。
+wx-cli 的密钥提取与运行属于单独可信边界：微信密钥仅采集组件持有，业务应用与 DeepSeek 均不需要它。SQLite WAL 与微信自身数据库 WAL 为不同文件，备份／读取不能混用。
 
-## 3. 数据模型
+## 2. 组件、技术与进程
 
-所有主键使用应用生成的 UUID；原始来源 ID 作为文本保存，避免长整数转换丢失精度。时间保存 UTC，并在界面按业务时区展示；原始时间和时区信息单独保留。
-
-| 表 | 关键字段／约束 |
+| 组件 | 技术与职责 |
 | --- | --- |
-| merchants | name、business_profile、owner_note、created_at；项目阶段单独存储 |
-| contacts | account_id、source_contact_id、display_name；来源身份唯一 |
-| merchant_contacts | merchant_id、contact_id、role、confirmed_at；多对多 |
-| conversations | account_id、source_conversation_id、kind、title、allowlisted |
-| conversation_merchants | conversation_id、merchant_id、association_type；群关联不等于所有消息归属 |
-| messages | account_id、conversation_id、source_id、sender_id、direction、event_time、ingested_at、type、text、coverage_flags |
-| message_revisions | message_id、revision_hash、revision_type、content；记录可观察到的修订／撤回 |
-| message_merchants | message_id、merchant_id、confirmed_by；支持消息级归属 |
-| merchant_facts | merchant_id、field、value、evidence_ids、review_status、user_locked |
-| analysis_runs | input_hash、input_message_ids、context_version、engine_version、prompt_version、status、error_code |
-| suggestions | run_id、kind、payload、evidence_ids、review_status、dedup_key |
-| followup_tasks | merchant_id、project_id（可空）、kind、state、responsible_party、responsible_contact_id、internal_owner、check_again_at、due_at、due_text、due_precision、origin_suggestion_id、version |
-| task_events | task_id、actor、action、before、after、created_at |
-| touchpoints | merchant_id、channel、contacted_at、outcome、next_action；人工确认 |
-| opportunities | description、eligibility、limitations、material_version_ids、starts_at、ends_at |
-| outreach_preferences | merchant_id、do_not_contact、paused_until、cooldown_days |
-| sync_checkpoints | source、account_id、conversation_id、cursor_json、last_success、coverage_start、gap_status |
-| jobs | type、payload、dedup_key、status、attempts、lease_until、available_at、last_error |
+| wx-source | 经实测的 wx-cli，读取本地微信 DB／WAL，提供回环查询接口；账号与版本固定 |
+| collector | Python 3.12 + httpx，按白名单获取、转换与幂等保存；维护独立覆盖信息 |
+| application | FastAPI、Jinja2、少量 HTMX／原生 JS；SQLAlchemy 2、Pydantic、Alembic |
+| app-db | SQLite WAL、外键、busy timeout；消息、项目、任务、租约队列统一事务 |
+| analysis-worker | DeepSeek 客户端、上下文预算、脱敏与 JSON 验证；初始并发 1 |
+| scheduler | 作为 worker 内定时循环：到期提醒、回查任务、日清单；固定任务键防重 |
+| browser | 本机登录、商家／项目／三方卡点／价卡／今日工作台 |
+| lifecycle | 手工前台运行验证后，以用户级 launchd 管理进程；不依赖终端永远打开 |
 
-明确区分消息入库、成功分析与人工确认。消息提交成功后才能推进采集游标；不等待模型完成。任务与事件在同一事务更新；页面使用 version 字段检测并发修改。
+采集器每批短事务写入；worker 调模型前释放数据库锁。SQLite 单机部署不跨网络文件系统；库默认位于 ~/Library/Application Support/Wechat-Agent/，配置可更改且避开同步目录。仓库只存代码、迁移、虚构样例，不存聊天、价卡或凭据。
 
-## 4. 标准导入协议
+## 3. 真实微信接入契约
 
-一期以 UTF-8 JSONL 为统一入口，每行一条消息。例如（虚构）：
+### 3.1 选型与设备前提
 
-```json
-{"schema_version":1,"source":"manual","account_id":"demo-account","conversation_id":"demo-chat-1","conversation_type":"private","source_id":"demo-msg-001","sender_id":"demo-customer-1","direction":"incoming","event_time":"2026-11-04T09:00:00+08:00","message_type":"text","text":"请周五前确认这批货的头程方案"}
-```
+首选验证 pandorafuture/wx-cli，前次源码核对提交 2abe708f55bfe135539a385df856fdc58f97fc74。它是第三方工具，不是官方消息接口；不能保证任意版本适用或无账号风险。必须保存兼容矩阵：芯片、macOS、微信构建号、工具 tag／commit、权限方式、消息覆盖与已知缺陷。
 
-- 必填：版本、来源、账号、会话、来源 ID、方向、带时区时间、消息类型；文本消息要求 text。
-- direction 为 incoming／outgoing／unknown；不能根据昵称猜方向。
-- 导入前预览来源、数量、日期、会话；未批准会话不保存正文，返回被排除计数。
-- 返回新增、重复、修订、拒绝及隔离条数和逐行错误码。格式失败不推进整批源游标。
-- 一批数据事务性入库；建议批量上限初始设为 1000 条，并限制文件大小。
-- 对有可靠 source_id 的来源，按来源命名空间、账号、会话、source_id 唯一。
-- 人工数据须分配稳定 ID；重复导入同一文件复用 ID。缺失稳定 ID 时隔离并提示，不能仅靠文本哈希把两条真实重复发言误合并。
-- 非文本、解码失败、仅摘要、缺失上下文以 coverage_flags 表示。图片／语音一期只保存占位与可用元数据，不宣称完成转写或全文归档。
+前次核对文档描述 LLDB hook、重启微信与 SIP 权限前提，与“纯内存扫描”不同。不得把关闭 SIP、重签客户端或其他系统保护变更自动写入安装脚本。如果设备上无法按可接受权限运行，该采集路径阻塞，继续使用导入模式但不标记实时就绪。
 
-## 5. 微信适配器：独立的验证关口
+仅微信小号所在、用户批准的私信与群可导入。Mac 微信必须实际获得消息；离线后不保证补齐全部历史。微信退出、休眠、密钥失效、新分片、版本升级都会影响覆盖，需要可见告警。
 
-候选为 pandorafuture/wx-cli；前期调研提交为 2abe708f55bfe135539a385df856fdc58f97fc74，不保证最新版本或当前 Mac 兼容。记录 macOS、芯片、微信、工具版本和取得权限的方式。
+### 3.2 采集接口与能力探测
 
-不将关闭 SIP、修改微信签名或规避终端防护作为自动安装步骤。若候选工具在实际设备上要求这些变更，暂停该接入路径，单独评估；业务闭环继续使用标准导入。仅在授权范围内读取本机业务数据。
+候选服务监听 127.0.0.1:9100；启动器不能假定它支持配置文件或环境变量 token，应以选定版本 --help 和源码验证。若仅支持命令行 token，避免写 shell 历史／日志，并记录同机参数可见风险；不宣称已由系统钥匙串自动解决上游所有存储问题。
 
-优先让工具仅监听回环地址，由适配器读取，不对公网或公司网络暴露 API。白名单在适配器／导入层强制执行，不依赖上游“隐藏联系人”功能。
+现有候选接口：health、sessions、contacts、messages、timeline、events（SSE）。这是上游接口，与应用自己的 /api 路由分开。实际用法在接入时做契约测试，不能凭路径名假定参数相同。
 
-已核实候选版本的 timeline 要求 since 和 until，同时支持 limit／offset，返回分页和分片警告；数据结构使用 snippet，正文是否完整必须实测。若不能取得完整正文，保存为 partial，不用于需要完整证据的正式提取。
+已核对 timeline 必须同时传 since 和 until，支持 limit、offset、order、分页元数据及分片警告；返回 snippet，不足以直接保证全文。优先白名单会话级 messages 查询，避免全会话 timeline 枚举私人聊天；如必须使用 timeline，适配器丢弃非白名单正文，不写入日志、数据库或队列。上游解密缓存仍可能包含更多会话，这是本地暴露边界，需在设备准入时说明。
 
-同步策略：
+必须探测并记录：全文能力、稳定 ID、方向、发送者、引用、消息类型、分页排序、范围含端点语义、分片状态、原地更新／撤回可见性。snippet 不能静默当全文；必要时按会话补查正文，若无完整接口则标 partial 并进入采集阻塞／复核。
 
-1. 按固定时间窗口查询，固定 until，升序完整分页；窗口内结果暂存。
-2. 检查 has_more、skipped、分片警告、正文完整性及分页稳定性。
-3. 幂等保存结果，推进“已扫描窗口”，记录数据质量与覆盖缺口。
-4. 近期窗口重叠回查，定期核对更早窗口；延迟补录可能早于重叠窗口，不能承诺绝不漏数。
-5. SSE 仅提示有新消息，不能替代持久化进度和回查。
+SSE 用于提醒 collector 提前扫描；实际消息以持久化查询入库为准。不能把断开的 SSE 当成持久消息队列。
 
-固定窗口并不提供数据库快照隔离；出现分页期间变动时须回查。无法确认完整的窗口保留 gap 状态，不能用最后一条消息时间冒充完整同步水位。缺失本地记录、已清理历史和无法解码分片需明确提示。
-
-## 6. 分析流程
-
-上下文按商家／备货项目／会话及话题组织，包含本批消息、必要引用、已确认事实、开放任务、近期联系记录和业务配置。以 Token 预算限长；历史摘要只作背景，不替代原始证据。跨商家数据不混入上下文；同商家不同批次先明确归属。参加同群不等于有权查看其全部关联项目。
-
-确定性任务键包含输入消息及修订、身份映射、业务配置、开放任务版本、分析器和提示词版本。相同输入不重复分析，相关状态变化则允许重算。规则先做触达限制与基础候选；可选本机模型提取语义。
-
-输出采用版本化 JSON Schema：
+### 3.3 Collector 标准消息
 
 ```json
 {
   "schema_version": 1,
-  "suggestions": [{
-    "kind": "task_create",
-    "merchant_id": "demo-merchant-1",
-    "summary": "确认本批头程方案",
-    "project_id": "demo-project-1",
-    "responsible_party": "service_provider",
-    "internal_owner": "local-user",
-    "due_at": null,
-    "due_text": "周五前",
-    "due_precision": "ambiguous",
-    "evidence_message_ids": ["stored-message-uuid"],
-    "existing_task_id": null,
-    "needs_review": true
-  }]
+  "source": "wx_cli",
+  "account_id": "local-account-id",
+  "conversation_id": "source-chat-id",
+  "conversation_type": "group",
+  "source_id": "source-message-id-as-string",
+  "sender_id": "source-contact-id",
+  "direction": "incoming",
+  "event_time": "2026-11-04T09:00:00+08:00",
+  "message_type": "text",
+  "text": "请服务商明天确认这批货的附加费",
+  "completeness": "full",
+  "source_locator": {"shard_id": "source-shard", "local_id": "source-local-id"}
 }
 ```
 
-示例中的相对日期保留待确认；解析器仅在规则明确时结合原消息时间和业务时区归一化，绝不按分析当天解释历史消息。歧义和节假日规则交给用户确认。
+原始账号／联系人 ID 只用于本地映射，不发送模型。direction 为 incoming／outgoing／unknown；自己发出的微信消息不等于系统自动发送，也不自动视为某个待办完成。
 
-校验内容：结构、字段枚举、证据存在、证据属于本批允许上下文、商家归属、关联任务权限及日期。失败最多重试两次，仍失败进入人工处理；不把失败输出写成事实。
+ID 去重策略按能力验证：有可靠服务端 ID 时用 source + account + conversation + server_id；不存在时用经验证的 shard + local_id 稳定组合，并标来源。绝不跨账号／会话仅凭 ID 去重。只有时间、文本而无稳定 ID 时隔离复核，不能丢掉真实重复发言。所有 ID 作为文本，金额精确存储。
 
-建议去重用消息证据、动作类型和目标任务共同约束；跨批语义相似仅提示合并，不直接吞掉事项。接受同一建议必须幂等。用户已确认内容受锁定和版本控制保护。
+采集游标、原始时间、入库时间、消息修订和质量状态分别保存。人工 JSONL 使用同一契约与稳定 ID，source=manual；虚构数据 source=fixture，禁止混为真实业务数据。
 
-草稿使用已确认事实生成，不得虚构优惠、报价、客户兴趣或完成状态；缺失价格时保留显式待填写项。聊天内容为不可信数据，模型没有 shell、浏览器、文件遍历或微信操作工具。
+### 3.4 增量与恢复算法
 
-## 7. 本地接口与页面
+默认可配置轮询 10 秒、固定扫描窗口 5 分钟、最近 15 分钟重叠回查；均为起始调优值，不是完整性保证。首次历史回填选择日期范围，限速按小时／天窗口推进，增量优先于历史任务。
 
-拟实现入口：
+1. 取得白名单会话与账号身份；意外切号暂停，不把新号并入旧号。
+2. 从 checkpoint 选择固定 [since, until]，使用明确升序遍历全部分页，页大小遵守上游上限。
+3. 每页规范化并幂等保存，记录原始分页计数、跳过／警告和摘要完整度。新消息与对应分析 job 在同一事务创建。
+4. 所有页完成后才记录窗口扫描完成；警告、partial 或分页异常留下 gap，不声称覆盖完整。允许继续采其他窗口，但 gap 独立持久化，不能被更大的成功时间戳抹掉。
+5. 崩溃重放整窗口，重复记录不重复分析。固定 until 不等于快照，offset 分页仍可能漂移，近期回查和更早抽查负责发现迟到记录。
+6. 初始配置每小时回查最近 24 小时、每日检查更早可用历史，并对关键项目抽样核对；无限迟到与已清理本地历史无法保证补齐。
+7. 变更／撤回只有上游可观察时记录 revision，撤回触发相关建议失效复核，不伪造已无法访问的原文。
+
+去重键包含修订和业务上下文版本；消息采集水位不等待 DeepSeek 完成。上游离线时暂停扫描、保留分析队列与人工工作；显示采集最后成功时间、已扫描范围及 gap。
+
+## 4. 存储模型与业务约束
+
+所有实体使用内部 UUID；时间存 UTC、业务显示 Asia/Shanghai。JSON 载荷必须配应用 schema 验证，不能替代外键及唯一约束。
+
+| 表组 | 核心实体与字段 |
+| --- | --- |
+| 主体 | merchants；service_providers；contacts(account_id, source_contact_id)；merchant_contacts、provider_contacts；关系人工确认 |
+| 会话与消息 | conversations、allowlist；messages（标准字段、唯一键、ingested_at）；message_revisions；message_merchants、message_projects；非白名单不存正文 |
+| 项目与参与方 | stocking_projects(merchant_id, market, origin, warehouse, cargo, weight/unit, volume/unit, pieces, ready_at, dispatch/arrival_target, stage, version)；project_participants、project_conversations |
+| 价卡与素材 | material_versions(file_hash, local_path, version, kind, source, review_status, external_use_scope, valid_from/until, status)；rate_card_rows(route, cargo, band, currency, unit, amount, billing_rule, tax, surcharge, transit_basis) |
+| 确认报价 | project_quotes(project, provider, card_version, terms_snapshot, evidence, confirmed_by/at, valid_until)；新卡不覆盖旧报价 |
+| 执行协同 | project_milestones(planned_at, actual_at, evidence_type, verification)；project_blockers(category, responsible_party, internal_owner, check_again_at, state) |
+| 客户跟进 | merchant_facts(evidence, review_status, user_locked)；followup_tasks(project可空, state, responsible_party/contact, internal_owner, check_again_at, due_at, due_text/precision, version)；task_events |
+| BD 与激活 | outreach_records(material_versions, sent_confirmed_at, outcome)；touchpoints；opportunities；outreach_preferences(do_not_contact, paused_until, cooldown) |
+| 产品反馈 | product_issues(project, category, description, evidence, review_status, resolution) |
+| 运行 | sync_checkpoints、coverage_gaps、jobs(lease/attempts)、analysis_runs、suggestions、model_usage、egress_policies、audit_events |
+
+补充约束：
+
+- 项目／群多对多，消息可待归属；关联群不自动将同群所有消息归入全部项目。
+- 待审核建议与正式任务分离。任务 open／waiting_external／snoozed／done／cancelled；responsible_party 与 internal_owner 分开。
+- 接受建议在同一事务幂等生成／更新业务对象与事件；version 乐观锁防止覆盖用户修改。用户锁定事实不可由模型重写。
+- 单位、税费、附加费和时效起算不同，不直接比较价格或算节省比例；不满足货型条件不能推荐确定报价。
+- evidence_type 区分 chat_report、document、platform_record、manual_verification。用户配置的备货完成口径有版本；建群、说收到、聊天报告已发货不直接等于备货成功。
+- 图片／语音／文件默认仅元数据和覆盖标记。价卡、海报由用户选择本地原文件，关键字段人工录入并审核；不假定 DeepSeek 文本 API 能处理图片、语音或 PDF。
+
+## 5. 业务 API、页面与事件
 
 | 接口 | 用途 |
 | --- | --- |
-| GET /health | 数据库与 worker 心跳状态；不返回正文 |
-| POST /api/imports | 提交标准消息批次 |
-| GET /api/merchants | 商家列表／搜索 |
-| POST /api/associations | 人工关联联系人、会话、消息与商家 |
-| POST /api/analysis-runs | 对选定范围排分析任务 |
-| GET /api/suggestions | 待审核建议 |
-| POST /api/suggestions/{id}/accept | 幂等接受建议，事务创建／更新任务 |
-| POST /api/tasks/{id}/transition | 检查版本及状态迁移，追加事件 |
-| POST /api/touchpoints | 确认联系记录与下次任务 |
-| POST /api/opportunities | 录入业务机会 |
-| POST /api/drafts | 生成草稿，不发送 |
-| GET /api/sync-status | 覆盖范围、缺口、最后成功时间 |
+| GET /health | DB、collector/worker 心跳、采集与模型状态，不含消息正文 |
+| POST /api/sources/validate | 真实源能力诊断，不自动降低系统保护 |
+| POST /api/sources/sync | 排增量／回填任务，限定范围和白名单 |
+| GET /api/sources/coverage | 已扫描窗口、缺口、最近成功与部分覆盖 |
+| POST /api/imports | 标准批次导入；校验、预览、唯一键和逐条报告 |
+| POST /api/associations | 主体、联系人、会话、消息／项目关联 |
+| GET/POST /api/merchants、/api/projects | 查询／创建商家与备货项目 |
+| POST /api/projects/{id}/transition | 版本化阶段建议人工确认 |
+| POST /api/materials、/api/materials/{id}/review | 素材导入／审核，价卡行字段确认 |
+| POST /api/quotes、/api/milestones、/api/blockers | 项目报价、节点与三方卡点；验证归属与证据 |
+| POST /api/analysis-runs | 排分析任务；受外发政策和预算约束 |
+| GET /api/suggestions | 待审建议与证据 |
+| POST /api/suggestions/{id}/accept | 幂等接受；不直接对外发消息 |
+| POST /api/tasks/{id}/transition | 任务状态与审计事件 |
+| POST /api/touchpoints、/api/opportunities、/api/product-issues | 联系结果、激活契机、产品问题 |
+| POST /api/drafts | 生成可编辑草稿，重查素材有效性及外发范围 |
+| GET /api/model-usage | 脱敏策略版本、token、费用估计、错误分布 |
 
-页面：今日工作台、建议收件箱、商家详情／时间线、机会与激活、导入与运行状态。状态变更均使用 POST，不能通过 GET 触发。
+GET 无副作用。工作台包含今日节点风险、三方卡点、BD 后续、历史激活、待审核、采集／分析异常。每卡展示主体、批次、责任方、内部跟进人、证据与下一次检查；没有可靠客户端定位能力时不提供虚假的微信消息直达链接。
 
-默认不设计“发送微信”接口。复制按钮只复制草稿；没有发送成功回执。
+内部事件：message_ingested/revised → analysis_requested → suggestions_ready → suggestion_accepted → task/project_changed。相同业务事件具有唯一键；接受更新后可使旧草稿过期，但不能形成无新输入的无限分析循环。定时跟进由确定规则生成，模型不决定是否绕过触达限制。
 
-## 8. 可靠性与本地保护
+## 6. 可靠性、运维与安全
 
-- SQLite 队列使用短事务领取任务与租约；worker 崩溃后可重新领取。重试采用退避，超过阈值进入 failed，可人工重放。
-- SQLite 忙超时、单 worker 和有限分析并发，模型调用期间释放数据库锁。
-- 程序只监听 127.0.0.1；使用本机会话认证、CSRF 防护和 Origin／Host 校验，防止其他网页调用本机变更接口。
-- 页面转义消息文本；一期不渲染聊天中的原始 HTML，不自动访问链接或加载远程图片。
-- 敏感配置和密钥不进入仓库；数据目录仅当前用户可访问。FileVault 是磁盘保护，不等同于 SQLite 自带加密。
-- 日志仅记录内部 ID、计数、状态和错误码，默认不记录消息正文、密钥和完整模型输入输出。
-- 本机模型绑定回环地址；运行时不回退外部 API。首次下载模型文件与运行期数据外发是两件事，分别说明。
-- 使用 SQLite Backup API 创建一致性备份，不直接只复制正在写入的主 DB 文件。恢复到新目录验证消息、任务、事件和关联关系。
-- 提供按商家／来源清理数据的设计；删除须覆盖衍生建议、模型缓存和导出文件。备份保留期限单独管理，不宣称删除主库即清除所有副本。
+- 原文采集与模型外发使用不同政策：会话可归档但可禁止外发。默认禁止未配置范围外发；blocked_policy 不阻塞采集、不死循环重试。
+- 业务页面 127.0.0.1:8765；上游采集 127.0.0.1:9100；本地会话认证、Host/Origin 校验、CSRF、文本转义。不同本地端口并不自动构成权限隔离。
+- wx 密钥只在上游本机受限存储；DeepSeek API key 由应用通过 macOS Keychain 获取（开发可用忽略的本地环境配置），不放 URL、前端、聊天或日志。collector 不需要 DeepSeek key。
+- 日志默认 ID、计数、耗时、错误码；HTTP SDK 调试日志关闭。模型原始输入／输出如需排障，单独开本地受限短期保存策略。
+- lease 队列、指数退避与有限重试，异常进入 failed；worker 崩溃可重领，外部 API 请求超时后重试可能重复计费，不能宣称 exactly-once。
+- 每日 SQLite Backup API 一致性备份到非同步目录；按策略保留并实测恢复。消息、素材、任务、人工修改及证据映射一起验证。
+- 素材文件限制类型／大小，不执行宏、不自动访问聊天链接。文件权限仅当前用户，FileVault 不等同于数据库逐字段加密。
+- 采集／调用延迟、窗口缺口、队列积压、token、错误率、任务重复率分别监控；heartbeat 不替代真实读写与模型契约检查。
+- 用户级 launchd 按采集器健康顺序启动 collector，其后 API／worker 可独立运行；系统休眠仍会停止实时性。登录后恢复任务，不承诺合盖持续采集。
+- 删除按主体覆盖派生建议、缓存、导出和本地备份保留策略；外部 API 数据保留不由本机删除控制，需核实服务条款。
 
-## 9. 后续扩展边界
+## 7. 配置契约与未来部署
 
-本期不设置云端脚本、Tailscale 或外部模型凭据。未来是否迁移，由实际采集稳定性、Mac 常驻条件、模型速度、数据许可和多设备需求决定。
+示例配置见 DeepSeek 文档。所有默认间隔、重叠、批大小与预算都是起始配置，性能和完整性需实测。
 
-保留标准导入协议、服务层、任务队列和数据库迁移能力即可；不提前建设分布式系统。将来同步的是获准的数据与事件，不上传微信密钥或整库。
-
-
-## 10. 商家备货与三方物流业务扩展
-
-业务口径以 [工作流](01-workflow.md) 为准。本节为一期必要数据与接口，不引入云端依赖。
-
-### 数据实体与关联
-
-| 表 | 字段与约束 |
-| --- | --- |
-| service_providers | 名称、已核实线路／货型能力、联系信息、依据与核实日期；不作平台担保 |
-| provider_contacts | provider_id、contact_id、角色；身份可多角色 |
-| stocking_projects | merchant_id、market、destination_warehouse、origin、cargo_description、special_cargo_flags、weight、volume、pieces、ready_at、target_dispatch_at、target_arrival_at、stage、pause_reason、version；未知值为空 |
-| project_participants | project_id、party_type、party_id、contact_id、role、confirmed_at |
-| project_conversations | project_id、conversation_id、association_scope；同群多批次需消息级关联 |
-| message_projects | message_id、project_id、review_status；批次不明不自动归属 |
-| material_versions | material_id、version、kind、local_file、content_hash、source、review_status、external_use_scope、valid_from、valid_until、status；文件不进仓库 |
-| rate_card_rows | material_version_id、provider_id、origin、destination、route、cargo_scope、weight_band、currency、unit、amount（Decimal）、billing_rule、tax_scope、surcharges、transit_range、transit_basis；保留缺失标记 |
-| project_quotes | project_id、provider_id、rate_card_row_id（可空）、terms_snapshot、confirmed_by、confirmed_at、valid_until、evidence_ids、review_status；具体确认报价独立于参考价卡 |
-| project_milestones | project_id、kind、planned_at、actual_at、evidence_type、evidence_ids、verified_by、verified_at；计划、对方反馈、核验结果分别保存 |
-| project_blockers | project_id、category、description、responsible_party、internal_owner、check_again_at、evidence_ids、state |
-| outreach_records | merchant_id、project_id（可空）、contact_id／conversation_id、material_version_ids、sent_confirmed_at、outcome；不提供已读字段 |
-| product_issues | project_id、category、description、evidence_ids、review_status、resolution；与外部物流履约任务区分 |
-
-金额使用 Decimal／精确字符串，重量与体积字段携带单位；不将 kg、CBM、件数直接互换。日期范围和时效口径（自然日／工作日、起算节点）保留原始条件。未确认货型不判为可承运。
-
-### 流程规则与本地接口
-
-新增 materials／rate-cards 导入与审核、projects 创建与版本化阶段更新、participants／conversations 关联、quotes 确认、milestones 核验、blockers 和 product-issues 管理接口；拟使用 /api 下同名资源，所有变更使用 POST。这组接口与原有 suggestions、tasks、drafts 复用证据和版本机制。
-
-素材文件首先通过人工选择保存到本地受限目录，按类型／大小验证；不执行宏或主动内容。价卡关键字段一期人工填写或表格映射后逐条核对，海报图片不默认 OCR。导入任务在规则模式下可完成，不依赖 LLM 读图。
-
-模型输出扩展 project_id、responsible_party（self／merchant／service_provider／other／unknown）、milestone_update、blocker、product_issue、stage_change 建议。所有 ID 检查主体与项目归属；群里服务商对多个商家的报价不能互相引用。任务状态以业务文档为准，统一使用 waiting_external 加责任方，替代 waiting_customer。
-
-模型建议阶段变化后进入审核，不自动将“收到”、发素材或建群视为备货成功。里程碑证据级别至少区分 chat_report、document、platform_record、manual_verification；平台记录一期人工录入，不假定已接平台 API。
-
-价卡推荐先按有效状态、外发范围和适用条件确定性过滤，再做业务匹配。生成草稿、复制／导出附件前重新校验素材状态；若过期或未知条件，禁止自动带出确定价格，提示用户核实。没有可比计价条件不计算价差，宣传海报不充当最终确认报价。
-
-项目结果以用户配置的业务完成口径核验；配置变更保留版本，不能回溯重写历史结果。新方案可触发旧客户候选，但不能覆盖历史报价快照或绕过触达限制。
-
-### 工作台与分析上下文
-
-页面增加“备货项目看板”“三方卡点”“价卡与素材”“产品问题”；商家详情下展示多批次。建议卡含责任方、内部跟进人、下次检查时间和证据，不只显示客户多久没说话。
-
-本机模型上下文以项目及相关群消息为界，补充选定素材版本、确认报价、未完成节点和触达记录。上下文依赖键增加项目、价卡和素材状态版本。没有原消息的人工素材／平台记录可作为人工证据，但必须标明来源，不能伪造消息 ID。
+未来如需服务器，采用 Mac 本地 outbox 主动推送获准标准事件，云端幂等接收后 ACK；密钥与整库不传云端。采用 HTTPS／必要时 Tailscale，不能让云端任意查询联系人和完整数据库。届时再评估 Postgres 与多用户权限，不是首版必要条件。
