@@ -4,6 +4,7 @@ import re
 
 from .analysis import budget_state
 from .config import secret
+from .model_network import transport_summary
 
 
 def explain(code):
@@ -33,6 +34,34 @@ def explain(code):
         "ConnectTimeout": (
             "连接模型接口超时",
             "检查本机能否连接api.deepseek.com与代理配置。",
+        ),
+        "ConnectError:tls_certificate": (
+            "HTTPS证书校验失败",
+            "核对Python使用的CA证书及SSL_CERT_FILE/SSL_CERT_DIR；不要关闭证书校验。",
+        ),
+        "ConnectError:dns": (
+            "无法解析模型接口域名",
+            "检查当前终端的DNS与代理配置，确认api.deepseek.com可解析。",
+        ),
+        "ConnectError:refused": (
+            "连接被拒绝",
+            "若使用本机代理，核对软件是否运行及HTTP/混合端口是否一致；不要猜测端口。",
+        ),
+        "ConnectError:unreachable": (
+            "当前路由无法到达模型接口",
+            "检查当前终端的外网连接、网卡路由和代理；微信采集服务正常不代表外网可达。",
+        ),
+        "model_proxy_configuration": (
+            "模型代理地址配置无效",
+            "DEEPSEEK_PROXY仅支持direct或http(s)代理URL；代理地址不要发到聊天。",
+        ),
+        "model_ca_configuration": (
+            "模型CA证书配置不可用",
+            "核对SSL_CERT_FILE/SSL_CERT_DIR指向的文件是否存在且可读取。",
+        ),
+        "model_transport_configuration": (
+            "模型网络客户端配置失败",
+            "核对代理与CA配置，修正后重启应用。",
         ),
         "ConnectError": (
             "无法连接模型接口",
@@ -84,5 +113,6 @@ def snapshot(db):
         "model": db.settings.model,
         "key_configured": bool(secret("DEEPSEEK_API_KEY")),
         "budget": budget_state(db),
+        "transport": transport_summary(),
         "recent_errors": [explain(r["error"]) | {"at": r["created_at"]} for r in rows],
     }

@@ -719,6 +719,7 @@ name = "wechat-agent"
 version = "0.5.1"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -735,6 +736,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2024.8.30,<2027" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "jinja2", specifier = ">=3.1,<4" },

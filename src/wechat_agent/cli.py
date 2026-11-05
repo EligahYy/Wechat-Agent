@@ -21,7 +21,14 @@ def parser():
     )
     s = p.add_subparsers(dest="command", required=True)
     s.add_parser("init")
-    s.add_parser("diagnose", help="输出安全的模型失败诊断，不调用API、不输出聊天或凭据")
+    diagnosis = s.add_parser(
+        "diagnose", help="安全诊断；默认仅本地读取，不输出聊天或凭据"
+    )
+    diagnosis.add_argument(
+        "--network",
+        action="store_true",
+        help="无key请求DeepSeek的/models，仅检查连接，不调用推理",
+    )
     token = s.add_parser("token")
     token.add_argument(
         "--rotate", action="store_true", help="轮换本地口令并使旧会话失效"
@@ -152,7 +159,12 @@ def main():
         elif args.command == "diagnose":
             from .diagnostics import snapshot
 
-            print(dumps(snapshot(db)))
+            result = snapshot(db)
+            if args.network:
+                from .model_network import probe
+
+                result["network_probe"] = probe()
+            print(dumps(result))
         elif args.command == "token":
             if args.rotate:
                 db.rotate_token()

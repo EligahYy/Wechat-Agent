@@ -263,3 +263,28 @@ uv run wechat-agent backup "$HOME/Wechat-Agent-backups/agent-$(date +%Y%m%d-%H%M
 “连续请求未成功”是保护性暂停，不代表仍未入队，也不能据此判断余额或网络。分析概览暂停提示会显示最近失败的具体错误与处理方向，可“复制诊断信息”；诊断不含聊天正文、账号ID或API key。
 
 终端也可运行 `uv run wechat-agent diagnose`。该命令只读取本机状态，不发起模型请求。若仍使用旧界面，可在“分析队列”筛选“需要关注”，查看原有错误码。HTTP_402 是模型账户余额问题；ReadTimeout 是响应超时；model_schema／model_unknown_actor 等表示输出校验失败，需修复契约，不能通过调高预算或关闭证据校验解决。
+
+
+### ConnectError：双网卡／Clash连接排查
+
+ConnectError 是模型连接阶段失败，不是聊天入队、JSON提取或每日预算问题。先用同一个启动终端运行 `uv run wechat-agent diagnose --network`：只向官方 `/models` 发出无 key 的 GET，不发送聊天，不调用推理；返回 HTTP 401 表示该无鉴权自检已建立连接，但不验证模型权限。
+
+输出会区分 DNS、连接拒绝、路由不可达、证书校验失败等，且不打印代理地址／密码、证书路径或聊天。分析请求与自检使用相同代理及 CA 配置。默认沿用 Python 系统／环境代理；不会在失败时偷偷改走其他出口。
+
+Clash Verge 应以设置面板的实际混合端口为准，配置文件里的 mixed-port 可能被客户端覆写。本次实际端口为 7897，可只对本应用的模型请求指定 HTTP 入口：
+
+```bash
+DEEPSEEK_PROXY=http://127.0.0.1:7897 uv run wechat-agent diagnose --network
+```
+
+确认连接成功后，停止旧 start，再以相同配置启动：
+
+```bash
+DEEPSEEK_PROXY=http://127.0.0.1:7897 uv run wechat-agent start
+```
+
+然后在分析概览点“恢复／重试分析”。本地 wx-cli 仍通过回环地址读取，不使用该模型代理。此变量只选择模型客户端的代理入口；实际外网出口仍由 Clash 规则决定。
+
+若要明确不使用 HTTP／系统代理，可以设置 `DEEPSEEK_PROXY=direct`；这不等于绕开 TUN 或网卡路由。指定路由仍尊重 SSL_CERT_FILE／SSL_CERT_DIR 并保持证书校验；证书错误应修复 CA 配置，不能关闭校验。
+
+对于“ChatGPT域名走代理、其他 MATCH DIRECT-HOTSPOT”的分流，DeepSeek 会走热点直连，不会自动使用 ChatGPT 策略组。无需为了调用 DeepSeek 改动公司内网规则。
