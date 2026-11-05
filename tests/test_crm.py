@@ -23,7 +23,16 @@ from wechat_agent.web import create_app
 def setup_work_chat(db, record, kind="private", chat_id="merchant"):
     db.settings.source_account = db.settings.self_id = "account"
     cid = allow_conversation(
-        db, "wx_cli", "account", chat_id, "客户甲", kind, None, None, False
+        db,
+        "wx_cli",
+        "account",
+        chat_id,
+        "客户甲",
+        kind,
+        None,
+        None,
+        False,
+        followup_source=True,
     )
     row = record | {
         "source": "wx_cli",
@@ -205,7 +214,16 @@ def test_cross_private_and_group_identity_and_same_name_isolation(
     monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     _, row = setup_work_chat(db, record)
     allow_conversation(
-        db, "wx_cli", "account", "room@chatroom", "三方群", "group", None, None, False
+        db,
+        "wx_cli",
+        "account",
+        "room@chatroom",
+        "三方群",
+        "group",
+        None,
+        None,
+        False,
+        followup_source=True,
     )
     ingest(
         db,

@@ -59,6 +59,7 @@ def fixture(settings):
         None,
         None,
         False,
+        followup_source=True,
     )
     stamp = datetime.now(UTC).isoformat()
     base = {

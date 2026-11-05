@@ -17,7 +17,16 @@ def test_source_to_review_to_confirmed_followup(db, monkeypatch):
     mid = create_merchant(db, "示例商家")
     pid = create_project(db, mid, "第一批", "美国")
     cid = allow_conversation(
-        db, "wx_cli", "wx-self", "room@chatroom", "三方群", "group", mid, pid, True
+        db,
+        "wx_cli",
+        "wx-self",
+        "room@chatroom",
+        "三方群",
+        "group",
+        mid,
+        pid,
+        True,
+        followup_source=True,
     )
 
     def source(req):

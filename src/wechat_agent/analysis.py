@@ -53,7 +53,7 @@ def context(db, conversation_id, message_ids=None):
     if not chat_rows:
         raise Blocked("blocked_policy")
     chat = chat_rows[0]
-    if not chat["allowlisted"] or not chat["egress"]:
+    if not chat["allowlisted"] or not chat["egress"] or not chat["followup_source"]:
         raise Blocked("blocked_policy")
     if message_ids is not None:
         selected = set(message_ids)
@@ -149,6 +149,8 @@ def context(db, conversation_id, message_ids=None):
         "SELECT * FROM crm_policies WHERE account_id=?", (chat["account_id"],)
     )
     if policy and policy[0]["enabled"]:
+        from .source_scope import allowed_evidence
+
         if chat["account_id"] != db.settings.source_account:
             raise Blocked("blocked_account")
         from .crm import stable_actor
@@ -183,12 +185,9 @@ def context(db, conversation_id, message_ids=None):
         payload["timezone"] = "Asia/Shanghai"
         payload["participants"] = participants
         payload["known_roles"] = {
-            r["id"]: r["role"]
-            for r in db.rows(
-                "SELECT id,role FROM crm_contacts WHERE account_id=?",
-                (chat["account_id"],),
-            )
-            if r["id"] in participants
+            stable_actor(chat["account_id"], sender): row["role"]
+            for sender, row in roles.items()
+            if stable_actor(chat["account_id"], sender) in participants
         }
         payload["customer_memory"] = [
             {
@@ -201,7 +200,7 @@ def context(db, conversation_id, message_ids=None):
                 "SELECT u.contact_id,f.* FROM crm_facts f JOIN crm_customers u ON u.id=f.customer_id WHERE u.account_id=? AND f.status='active' ORDER BY f.event_time DESC LIMIT 50",
                 (chat["account_id"],),
             )
-            if r["contact_id"] in participants
+            if r["contact_id"] in participants and allowed_evidence(db, r["evidence"])
         ]
 
         if chat["kind"] == "private":
@@ -210,7 +209,7 @@ def context(db, conversation_id, message_ids=None):
             )
         payload["known_actions"] = (
             db.rows(
-                "SELECT a.action_key,a.summary,a.state,a.event_time,c.contact_id customer_ref FROM crm_actions a JOIN crm_customers c ON c.id=a.customer_id WHERE c.account_id=? AND c.contact_id IN ("
+                "SELECT a.action_key,a.summary,a.state,a.event_time,a.evidence,c.contact_id customer_ref FROM crm_actions a JOIN crm_customers c ON c.id=a.customer_id WHERE c.account_id=? AND c.contact_id IN ("
                 + ",".join("?" for _ in participants)
                 + ") ORDER BY a.event_time DESC LIMIT 20",
                 (chat["account_id"], *participants),
@@ -219,17 +218,24 @@ def context(db, conversation_id, message_ids=None):
             else []
         )
     if payload.get("contract") == "crm_v2":
+        payload["known_actions"] = [
+            {k: v for k, v in row.items() if k != "evidence"}
+            for row in payload["known_actions"]
+            if allowed_evidence(db, row["evidence"])
+        ]
         notes = []
         for row in db.rows(
             "SELECT resolution,evidence FROM crm_reviews WHERE account_id=? AND status='resolved' ORDER BY created_at DESC LIMIT 30",
             (chat["account_id"],),
         ):
             ids = {ref["id"] for ref in json.loads(row["evidence"])}
-            if ids.intersection(m["id"] for m in evidence.values()):
+            if ids.intersection(
+                m["id"] for m in evidence.values()
+            ) and allowed_evidence(db, row["evidence"]):
                 notes.append(redact(row["resolution"]))
         for row in (
             db.rows(
-                "SELECT e.payload FROM events e JOIN crm_actions a ON a.id=e.entity_id JOIN crm_customers c ON c.id=a.customer_id WHERE c.account_id=? AND e.kind='user_task_change' AND c.contact_id IN ("
+                "SELECT e.payload,a.evidence FROM events e JOIN crm_actions a ON a.id=e.entity_id JOIN crm_customers c ON c.id=a.customer_id WHERE c.account_id=? AND e.kind='user_task_change' AND c.contact_id IN ("
                 + ",".join("?" for _ in payload["participants"])
                 + ") ORDER BY e.created_at DESC LIMIT 10",
                 (chat["account_id"], *payload["participants"]),
@@ -238,7 +244,7 @@ def context(db, conversation_id, message_ids=None):
             else []
         ):
             note = json.loads(row["payload"]).get("note")
-            if note:
+            if note and allowed_evidence(db, row["evidence"]):
                 notes.append(redact(note))
         payload["user_corrections"] = notes
     # Snapshot includes policy/association and revisions; validate again after network I/O.
@@ -456,7 +462,7 @@ def claim(db):
             (stamp,),
         )
         row = c.execute(
-            "SELECT * FROM jobs WHERE (?=0 OR COALESCE(json_extract(payload,'$.scope'),'')<>'history') AND (json_extract(payload,'$.engine') IS NULL OR (?=0 AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=?))) AND attempts<3 AND ((status IN ('queued','retry_wait') AND available_at<=?) OR (status='running' AND lease_until<?)) ORDER BY COALESCE(json_extract(payload,'$.priority'),0),created_at LIMIT 1",
+            "SELECT * FROM jobs WHERE (?=0 OR COALESCE(json_extract(payload,'$.scope'),'')<>'history') AND (json_extract(payload,'$.engine') IS NULL OR (?=0 AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND followup_source=1))) AND attempts<3 AND ((status IN ('queued','retry_wait') AND available_at<=?) OR (status='running' AND lease_until<?)) ORDER BY COALESCE(json_extract(payload,'$.priority'),0),created_at LIMIT 1",
             (
                 int(history_paused),
                 int(paused),
@@ -522,13 +528,14 @@ def run_once(db, client=None):
                 ):
                     raise Blocked("superseded")
                 allowed = c.execute(
-                    "SELECT allowlisted,egress,account_id FROM conversations WHERE id=?",
+                    "SELECT allowlisted,egress,account_id,followup_source FROM conversations WHERE id=?",
                     (cid,),
                 ).fetchone()
                 if (
                     not allowed
                     or not allowed["allowlisted"]
                     or not allowed["egress"]
+                    or not allowed["followup_source"]
                     or allowed["account_id"] != db.settings.source_account
                 ):
                     raise Blocked("blocked_policy")

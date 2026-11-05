@@ -175,7 +175,7 @@ def create_app(settings=None, source_factory=None, background=False):
     def health():
         return {
             "database": "ok",
-            "schema": 6,
+            "schema": 7,
             "runtime": db.rows("SELECT * FROM runtime"),
             "gaps": db.rows("SELECT COUNT(*) n FROM sync_windows WHERE status='gap'")[
                 0
@@ -939,6 +939,21 @@ def create_app(settings=None, source_factory=None, background=False):
 
         schedule(db)
         return {"ok": True}
+
+    @app.get("/api/crm/followup-sources")
+    def followup_sources(
+        q: str = "", kind: str = "all", scope: str = "all", page: int = 1
+    ):
+        from .source_scope import list_sources
+
+        return list_sources(db, q, kind, scope, page)
+
+    @app.post("/api/crm/followup-sources")
+    async def update_followup_sources(request: Request):
+        from .source_scope import set_sources
+
+        body = await request.json()
+        return set_sources(db, body.get("conversation_ids"), body.get("enabled"))
 
     @app.get("/api/crm/customers")
     def crm_customers(q: str = "", page: int = 1):

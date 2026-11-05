@@ -15,7 +15,16 @@ def chat(db):
     mid = create_merchant(db, "商家甲")
     pid = create_project(db, mid, "第一批", "美国")
     return allow_conversation(
-        db, "fixture", "account", "chat", "三方群", "group", mid, pid, True
+        db,
+        "fixture",
+        "account",
+        "chat",
+        "三方群",
+        "group",
+        mid,
+        pid,
+        True,
+        followup_source=True,
     )
 
 

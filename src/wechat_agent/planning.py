@@ -30,7 +30,7 @@ def inventory(c, account):
     rows = [
         dict(r)
         for r in c.execute(
-            "SELECT m.*,v.title,v.egress,v.allowlisted FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE v.account_id=? AND m.type='text' AND m.completeness='full' ORDER BY m.event_time,m.id",
+            "SELECT m.*,v.title,v.egress,v.allowlisted,v.followup_source FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE v.account_id=? AND m.type='text' AND m.completeness='full' ORDER BY m.event_time,m.id",
             (account,),
         )
     ]
@@ -143,7 +143,7 @@ def schedule(db, retry=False):
         )
         by_chat = {}
         for r in rows:
-            if r["egress"] and r["allowlisted"]:
+            if r["egress"] and r["allowlisted"] and r["followup_source"]:
                 by_chat.setdefault(r["conversation_id"], []).append(r)
         candidates = []
         for cid, messages in by_chat.items():
@@ -225,7 +225,13 @@ def schedule(db, retry=False):
                 p.get("planner") == PLANNER
                 and job["dedup_key"] not in keys
                 and job["status"]
-                not in {"succeeded", "filtered_noise", "superseded", "running"}
+                not in {
+                    "succeeded",
+                    "filtered_noise",
+                    "superseded",
+                    "running",
+                    "excluded_source",
+                }
             ):
                 c.execute(
                     "UPDATE jobs SET status='superseded',error='input_replanned' WHERE id=?",
@@ -233,7 +239,7 @@ def schedule(db, retry=False):
                 )
         if retry:
             c.execute(
-                "UPDATE jobs SET status='deferred_'||json_extract(payload,'$.scope'),attempts=0,error=NULL,available_at=? WHERE json_extract(payload,'$.planner')=? AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1) AND status IN ('blocked_credentials','blocked_budget','waiting_history_budget','failed','retry_wait')",
+                "UPDATE jobs SET status='deferred_'||json_extract(payload,'$.scope'),attempts=0,error=NULL,available_at=? WHERE json_extract(payload,'$.planner')=? AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1 AND followup_source=1) AND status IN ('blocked_credentials','blocked_budget','waiting_history_budget','failed','retry_wait')",
                 (now(), PLANNER, account),
             )
     # Gate checks happen outside the write transaction (budget_state reads SQLite).
@@ -254,11 +260,11 @@ def schedule(db, retry=False):
     history_paused = gate(db, history=True) is not None
     with db.tx() as c:
         active = c.execute(
-            "SELECT COUNT(*) FROM jobs WHERE json_extract(payload,'$.planner')=? AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1) AND status IN ('queued','running','retry_wait')",
+            "SELECT COUNT(*) FROM jobs WHERE json_extract(payload,'$.planner')=? AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1 AND followup_source=1) AND status IN ('queued','running','retry_wait')",
             (PLANNER, account),
         ).fetchone()[0]
         recent_pending = c.execute(
-            "SELECT COUNT(*) FROM jobs WHERE json_extract(payload,'$.planner')=? AND json_extract(payload,'$.scope')='recent' AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1) AND status NOT IN ('succeeded','filtered_noise','superseded')",
+            "SELECT COUNT(*) FROM jobs WHERE json_extract(payload,'$.planner')=? AND json_extract(payload,'$.scope')='recent' AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1 AND followup_source=1) AND status NOT IN ('succeeded','filtered_noise','superseded')",
             (PLANNER, account),
         ).fetchone()[0]
         scope = "recent" if recent_pending else "history"
@@ -271,7 +277,7 @@ def schedule(db, retry=False):
         if budget["remaining"] <= 0:
             room = 0
         for row in c.execute(
-            "SELECT id FROM jobs WHERE status=? AND json_extract(payload,'$.planner')=? AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1) ORDER BY created_at,id LIMIT ?",
+            "SELECT id FROM jobs WHERE status=? AND json_extract(payload,'$.planner')=? AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1 AND followup_source=1) ORDER BY created_at,id LIMIT ?",
             ("deferred_" + scope, PLANNER, account, room),
         ).fetchall():
             c.execute("UPDATE jobs SET status='queued' WHERE id=?", (row["id"],))

@@ -19,7 +19,16 @@ from wechat_agent.web import create_app
 def corpus(db, record, recent=160, history=100):
     db.settings.source_account = db.settings.self_id = "account"
     cid = allow_conversation(
-        db, "wx_cli", "account", "person", "商家昵称", "private", None, None, False
+        db,
+        "wx_cli",
+        "account",
+        "person",
+        "商家昵称",
+        "private",
+        None,
+        None,
+        False,
+        followup_source=True,
     )
     stamp = datetime.now(UTC)
     rows = [

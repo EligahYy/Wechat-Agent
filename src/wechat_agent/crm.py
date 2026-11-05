@@ -387,7 +387,19 @@ def overview(db):
         a["evidence_valid"] = bool(check["refs"] and check["valid"]) or bool(
             a["locked"] and not check["refs"]
         )
-    active = [a for a in actions if a["evidence_valid"] and not a["do_not_contact"]]
+    from .source_scope import allowed_evidence, counts
+
+    for action in actions:
+        action["source_eligible"] = (
+            allowed_evidence(db, action["evidence"])
+            if json.loads(action["evidence"])
+            else bool(action["locked"])
+        )
+    active = [
+        a
+        for a in actions
+        if a["evidence_valid"] and a["source_eligible"] and not a["do_not_contact"]
+    ]
     due = [
         a
         for a in active
@@ -426,6 +438,7 @@ def overview(db):
         (account,),
     )
     return {
+        "source_scope": counts(db),
         "account_id": account,
         "account_name": db.settings.source_name or account,
         "policy": policy[0] if policy else None,

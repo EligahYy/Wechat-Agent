@@ -110,7 +110,7 @@ function go(page) {
   if (page === "customers")
     loadCustomers().catch((e) => notice(e.message, true));
   if (page === "reviews") loadReviews().catch((e) => notice(e.message, true));
-  if (page === "settings") renderSettings();
+  if (page === "settings") { renderSettings(); loadSources().catch((e) => notice(e.message, true)); }
   if (page === "analysis") loadAnalysis().catch((e) => notice(e.message, true));
 }
 function renderToday() {
@@ -126,6 +126,8 @@ function renderToday() {
   else if (!policy?.enabled)
     banner =
       "<strong>聊天已归档，开启自动整理</strong><p>确认 DeepSeek 分析范围后，自动建立客户档案和跟进计划。</p>";
+  else if (!state.source_scope?.selected)
+    banner = "<strong>选择客户跟进白名单</strong><p>聊天继续归档；先选择 1–2 个客户私信或群聊，才会开始分析。</p>";
   else if (!state.key_configured)
     banner =
       "<strong>还需要连接 DeepSeek</strong><p>消息采集继续，配置 API key 后才能分析。</p>";
@@ -151,7 +153,7 @@ function renderToday() {
     ? actions
         .map(
           (a) =>
-            `<article class="action-card"><div class="avatar">${esc(a.customer_name.slice(0, 1))}</div><div><div class="card-heading"><h3>${esc(a.customer_name)}</h3><span class="tag ${a.due_date < state.today && a.state === "open" ? "amber" : ""}">${esc(statusNames[a.state] || a.state)}</span></div><div class="card-meta">${esc(a.opportunity || "客户跟进")} · ${esc(a.due_date || "时间待定")}${a.date_kind === "suggested" ? "（建议）" : ""} · 联系 ${esc(a.contact_name || a.customer_name)}</div><h2>${esc(a.summary)}</h2><div class="reason">为什么：${esc(a.reason)}${!a.evidence_valid ? " · 原始依据已变化，等待重算" : ""}</div><div class="card-actions"><button data-evidence="${esc(a.id)}">查看依据</button><button data-draft="${esc(a.id)}" ${a.do_not_contact || !a.evidence_valid || ["done", "cancelled", "historical_unresolved"].includes(a.state) ? "disabled" : ""}>查看话术</button><button data-result="${esc(a.id)}">记录结果</button><button data-postpone="${esc(a.id)}">改期</button><button class="quiet" data-customer="${esc(a.customer_id)}">客户档案 ↗</button></div></div></article>`,
+            `<article class="action-card"><div class="avatar">${esc(a.customer_name.slice(0, 1))}</div><div><div class="card-heading"><h3>${esc(a.customer_name)}</h3><span class="tag ${a.due_date < state.today && a.state === "open" ? "amber" : ""}">${esc(statusNames[a.state] || a.state)}</span></div><div class="card-meta">${esc(a.opportunity || "客户跟进")} · ${esc(a.due_date || "时间待定")}${a.date_kind === "suggested" ? "（建议）" : ""} · 联系 ${esc(a.contact_name || a.customer_name)}</div><h2>${esc(a.summary)}</h2><div class="reason">为什么：${esc(a.reason)}${!a.source_eligible ? " · 来源不在客户跟进白名单，保留历史记录" : !a.evidence_valid ? " · 原始依据已变化，等待重算" : ""}</div><div class="card-actions"><button data-evidence="${esc(a.id)}">查看依据</button><button data-draft="${esc(a.id)}" ${a.do_not_contact || !a.source_eligible || !a.evidence_valid || ["done", "cancelled", "historical_unresolved"].includes(a.state) ? "disabled" : ""}>查看话术</button><button data-result="${esc(a.id)}">记录结果</button><button data-postpone="${esc(a.id)}">改期</button><button class="quiet" data-customer="${esc(a.customer_id)}">客户档案 ↗</button></div></div></article>`,
         )
         .join("")
     : empty(
@@ -180,8 +182,6 @@ function renderSettings() {
   $("#change-key").classList.toggle("hidden", !state.key_configured);
   $("#policy-form [name=daily_budget]").value =
     state.policy?.daily_budget || 100000;
-  $("#policy-form [name=include_new]").checked =
-    state.policy?.include_new !== 0;
   $("#policy-form [name=consent]").checked = !!state.policy?.enabled;
   $("#diagnostics").innerHTML =
     (state.runtime || [])
@@ -543,7 +543,7 @@ $("#policy-form").onsubmit = safe(async (e) => {
   await api("/api/crm/configure", {
     enabled: true,
     daily_budget: Number(f.get("daily_budget")),
-    include_new: f.has("include_new"),
+    include_new: state.policy?.include_new !== 0,
   });
   await load();
   go("today");
@@ -654,7 +654,7 @@ async function loadAnalysis() {
       : "前往设置启用";
     $("#analysis-pause").disabled = !d.enabled;
     $("#analysis-status").innerHTML =
-      `<span class="live-dot ${!d.enabled || d.gate ? "paused" : ""}"></span><div><strong>${!d.enabled ? "分析已暂停" : d.gate ? esc(gateNames[d.gate.reason] || d.gate.reason) : r.pending ? "优先整理近 15 天的客户需求" : h.pending ? "近期已处理，历史按余量继续" : "本轮文本已处理，等待新消息"}</strong><p>${esc(d.account_name || "尚未连接工作账号")} · 更新于 ${esc(dateLabel(d.updated_at))}${d.gate ? " · 自动复查 " + esc(dateLabel(d.gate.until)) : ""}</p></div>`;
+      `<span class="live-dot ${!d.enabled || d.gate ? "paused" : ""}"></span><div><strong>${!d.enabled ? "分析已暂停" : !d.source_scope?.selected ? "尚未选择客户跟进会话，请前往设置加入白名单" : d.gate ? esc(gateNames[d.gate.reason] || d.gate.reason) : r.pending ? "优先整理近 15 天的客户需求" : h.pending ? "近期已处理，历史按余量继续" : "本轮文本已处理，等待新消息"}</strong><p>${esc(d.account_name || "尚未连接工作账号")} · 更新于 ${esc(dateLabel(d.updated_at))}${d.gate ? " · 自动复查 " + esc(dateLabel(d.gate.until)) : ""}</p></div>`;
     if (d.gate && d.diagnostics?.recent_errors?.length) {
       const problem = d.diagnostics.recent_errors[0];
       $("#analysis-status").insertAdjacentHTML(
@@ -666,7 +666,7 @@ async function loadAnalysis() {
       metric(
         d.messages.total || 0,
         "已归档消息",
-        `媒体 ${d.messages.media || 0} 条 · 残缺文本 ${d.messages.partial || 0} 条`,
+        `白名单 ${d.source_scope?.selected || 0} / ${d.source_scope?.total || 0} 个会话 · 媒体 ${d.messages.media || 0} 条`,
       ) +
       metric(r.analyzed, "近期已分析", `近15天共 ${r.total} 条完整文本`) +
       metric(d.customers, "客户档案", "根据聊天证据自动整理") +
@@ -798,3 +798,45 @@ function renderUsageTrend(days) {
       ?.focus({ preventScroll: true });
   }
 }
+
+// Archive scope and model follow-up scope are deliberately independent.
+let sourcePage = 1, sourceHasMore = false, sourceRows = [];
+const sourceSelection = new Set();
+function renderSourceSelection() {
+  $("#source-selection").textContent = `已勾选 ${sourceSelection.size} 个`;
+  $("#source-add").disabled = $("#source-remove").disabled = !sourceSelection.size;
+}
+async function loadSources() {
+  const f = new FormData($("#source-search"));
+  const params = new URLSearchParams({q: f.get("q"), kind: f.get("kind"), scope: f.get("scope"), page: sourcePage});
+  const d = await api("/api/crm/followup-sources?" + params);
+  sourceRows = d.items; sourceHasMore = d.has_more;
+  $("#source-counts").textContent = `已归档 ${d.counts.total} 个会话 · 客户跟进 ${d.counts.selected} 个 · 仅归档 ${d.counts.archive_only} 个`;
+  $("#source-list").innerHTML = d.items.length ? d.items.map(v => `<label class="source-option"><input type="checkbox" data-followup-source="${esc(v.id)}" ${sourceSelection.has(v.id) ? "checked" : ""}><span><strong>${esc(v.title || v.source_id)}</strong><small>${v.kind === "group" ? "群聊" : "私信"} · ${esc(v.messages)} 条 · ${v.followup_source ? "客户跟进" : "仅归档"}</small><small>${esc(v.source_id)}</small></span></label>`).join("") : empty("没有匹配会话", "先完成微信采集，或调整搜索条件。");
+  $("#source-prev").disabled = sourcePage <= 1;
+  $("#source-next").disabled = !sourceHasMore;
+  $("#source-page").textContent = `第 ${d.page} 页 · 匹配 ${d.total} 个`;
+  renderSourceSelection();
+}
+$("#source-list").onchange = e => {
+  const id = e.target.dataset.followupSource;
+  if (!id) return;
+  if (e.target.checked) sourceSelection.add(id); else sourceSelection.delete(id);
+  renderSourceSelection();
+};
+$("#source-search").onsubmit = safe(async e => { e.preventDefault(); sourcePage = 1; await loadSources(); });
+$("#source-select-page").onclick = safe(async () => { sourceRows.forEach(v => sourceSelection.add(v.id)); await loadSources(); });
+$("#source-clear").onclick = safe(async () => { sourceSelection.clear(); await loadSources(); });
+$("#source-prev").onclick = safe(async () => { if (sourcePage > 1) { sourcePage--; await loadSources(); } });
+$("#source-next").onclick = safe(async () => { if (sourceHasMore) { sourcePage++; await loadSources(); } });
+async function saveSources(enabled) {
+  if (!sourceSelection.size) return;
+  const ids = [...sourceSelection];
+  if (ids.length > 500) throw Error("单次最多更改500个会话，请分批操作。");
+  await api("/api/crm/followup-sources", {conversation_ids: ids, enabled});
+  sourceSelection.clear();
+  await load(); await loadSources();
+  notice(enabled ? "已加入客户跟进白名单；账号分析开启后会按近期优先整理。" : "已改为仅归档，历史记录保留。正在发送的模型请求无法撤回。");
+}
+$("#source-add").onclick = safe(() => saveSources(true));
+$("#source-remove").onclick = safe(() => saveSources(false));

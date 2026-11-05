@@ -147,7 +147,7 @@
           <div>
             <span class="eyebrow">工作空间</span>
             <h1>连接一次，持续整理</h1>
-            <p>日常无需逐群配置，也无需先建立商家或项目。</p>
+            <p>采集全部工作会话，选择客户跟进白名单，无需先建立商家或项目。</p>
           </div>
         </div>
         <div class="settings-grid">
@@ -190,12 +190,6 @@
                   required /></label
               ><label class="checkbox"
                 ><input
-                  name="include_new"
-                  type="checkbox"
-                  checked
-                />自动纳入新发现的工作会话</label
-              ><label class="checkbox"
-                ><input
                   name="consent"
                   type="checkbox"
                 />我确认此为工作账号，允许脱敏聊天文本发往 DeepSeek 分析</label
@@ -212,10 +206,31 @@
             </form>
           </div>
         </div>
+        <div class="panel" id="followup-sources">
+          <span class="step-label">03 · 客户跟进白名单</span>
+          <h2>哪些会话需要整理客户？</h2>
+          <p>默认只归档。加入白名单的私信／群聊才会调用模型、建立客户和生成跟进；同事、纯服务商会话可保持只归档。建议先选 1–2 个客户会话验证。</p>
+          <p id="source-counts" class="hint" aria-live="polite"></p>
+          <form id="source-search" class="button-row">
+            <input name="q" placeholder="搜索会话名称或微信 ID" aria-label="搜索跟进会话" />
+            <select name="kind" aria-label="会话类型"><option value="all">私信与群聊</option><option value="private">私信</option><option value="group">群聊</option></select>
+            <select name="scope" aria-label="白名单状态"><option value="all">全部状态</option><option value="customer">客户跟进</option><option value="archive">仅归档</option></select>
+            <button>搜索</button>
+          </form>
+          <div class="button-row">
+            <button id="source-select-page" type="button">勾选本页</button>
+            <button id="source-clear" type="button">清空勾选</button>
+            <span id="source-selection" class="hint" aria-live="polite"></span>
+          </div>
+          <div id="source-list" class="source-list"></div>
+          <div class="button-row"><button id="source-prev" type="button">上一页</button><span id="source-page" class="hint"></span><button id="source-next" type="button">下一页</button></div>
+          <div class="button-row"><button id="source-add" class="primary" type="button">加入客户跟进白名单</button><button id="source-remove" type="button">移出白名单</button></div>
+          <p class="hint">加入即将所选会话纳入已授权的 DeepSeek 分析范围；账号分析暂停时不会调用。新发现的会话仍默认只归档。移出后保留历史，停止后续分析和今日推荐，已发出的请求无法撤回。</p>
+        </div>
         <details class="panel">
           <summary>备用：手动导入文件</summary>
           <p>
-            仅保留一个文件入口，使用标准消息字段；不需要旧导出项目。导入后仍受账号分析授权控制。
+            仅保留一个文件入口，使用标准消息字段；不需要旧导出项目。导入后仍需加入客户跟进白名单，并受账号分析授权控制。
           </p>
           <form id="file-import">
             <input

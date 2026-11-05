@@ -43,6 +43,7 @@ def allow_conversation(
     merchant_id=None,
     project_id=None,
     egress=False,
+    followup_source=None,
 ):
     if (
         source not in {"fixture", "manual", "wx_cli"}
@@ -59,12 +60,12 @@ def allow_conversation(
             if project is None or project["merchant_id"] != merchant_id:
                 raise ValueError("项目与商家不匹配")
         old = c.execute(
-            "SELECT id FROM conversations WHERE source=? AND account_id=? AND source_id=?",
+            "SELECT id,followup_source FROM conversations WHERE source=? AND account_id=? AND source_id=?",
             (source, account, source_id),
         ).fetchone()
         cid = old["id"] if old else uid()
         c.execute(
-            "INSERT INTO conversations VALUES(?,?,?,?,?,?,?,?,1,?) ON CONFLICT(source,account_id,source_id) DO UPDATE SET title=excluded.title,merchant_id=excluded.merchant_id,project_id=excluded.project_id,allowlisted=1,egress=excluded.egress",
+            "INSERT INTO conversations(id,source,account_id,source_id,title,kind,merchant_id,project_id,allowlisted,egress,followup_source) VALUES(?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(source,account_id,source_id) DO UPDATE SET title=excluded.title,merchant_id=excluded.merchant_id,project_id=excluded.project_id,allowlisted=1,egress=excluded.egress,followup_source=excluded.followup_source",
             (
                 cid,
                 source,
@@ -75,6 +76,11 @@ def allow_conversation(
                 merchant_id,
                 project_id,
                 int(egress),
+                int(
+                    old["followup_source"]
+                    if old and followup_source is None
+                    else bool(followup_source)
+                ),
             ),
         )
         c.execute(

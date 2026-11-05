@@ -13,20 +13,20 @@ git pull origin main
 uv sync --frozen
 # wx-cli 已运行则跳过
 ~/.local/bin/wx-cli server run --host 127.0.0.1 --port 9100
-uv run wechat-agent start
+DEEPSEEK_PROXY=http://127.0.0.1:7897 uv run wechat-agent start
 ```
 
-访问 http://127.0.0.1:8765，登录口令通过 `uv run wechat-agent token` 查看。在设置确认工作账号、配置 DeepSeek key 和预算、开启自动整理即可。不要同时运行旧的 collect／worker；start 已统一管理后台。
+访问 http://127.0.0.1:8765，登录口令通过 `uv run wechat-agent token` 查看。在设置确认工作账号、配置 DeepSeek key 和预算、开启自动整理，并在“客户跟进白名单”选中要分析的私信／群聊。新会话默认只归档，建议先选1–2个验证。不要同时运行旧的 collect／worker；start 已统一管理后台。
 
-首次接入和故障排查见 [部署与使用 SOP](docs/DEPLOYMENT_SOP.md)。旧数据保留，数据库升级至 v6 前自动备份；不需要重新导入现有记录。
+首次接入和故障排查见 [部署与使用 SOP](docs/DEPLOYMENT_SOP.md)。旧数据保留，数据库升级至 v7 前自动备份；不需要重新导入现有记录。
 
 ## 本轮模型执行改造方案
 
-[完整 Harness 方案（待审阅，尚未实施）](docs/MODEL_HARNESS_DESIGN.md)：解决群内身份、客户维度确认、跨会话上下文、人工决策复用和模型响应回放。当前业务代码保持已发布版本。
+[完整 Harness 方案（待审阅，尚未实施）](docs/MODEL_HARNESS_DESIGN.md)：解决群内身份、客户维度确认、跨会话上下文、人工决策复用和模型响应回放。当前先交付白名单与现有直接调用链路，Harness 暂缓；身份、客户级确认和上下文重构按该方案后续推进。
 
 ## 当前能力与边界
 
-- 自动发现工作私信与群聊，增量采集和历史断点补齐；授权后分批分析，近期优先。
+- 自动发现工作私信与群聊，增量采集和历史断点补齐；仅白名单内且已授权的会话分批分析，近期优先。
 - 按稳定联系人身份贯通私信与群聊，生成需求事实、机会与计划；自动新增／更新／等待／关闭事项。
 - 今日到期行动、原文证据、按需话术、人工结果记录、改期保护、暂停联系和少量关键确认。
 - 消息保守过滤空文本和简短寒暄／确认，可切回全部；原文与模型上下文不删除。

@@ -8,6 +8,7 @@ from .crm import TZ
 from .db import now
 from .diagnostics import snapshot
 from .planning import DAYS, PLANNER, gate, inventory
+from .source_scope import counts as source_counts
 
 
 def overview(db):
@@ -28,7 +29,11 @@ def overview(db):
         if not json.loads(r["payload"])["enabled"]
     }
     eligible = [
-        r for r in rows if r["allowlisted"] and r["conversation_id"] not in excluded
+        r
+        for r in rows
+        if r["allowlisted"]
+        and r["followup_source"]
+        and r["conversation_id"] not in excluded
     ]
     scopes = {}
     for scope in ("recent", "history"):
@@ -46,10 +51,15 @@ def overview(db):
             if selected
             else 0,
         }
+    selected_chats = {r["conversation_id"] for r in eligible}
     states = {}
     for job in jobs:
         p = json.loads(job["payload"])
-        if p.get("planner") == PLANNER and job["status"] != "superseded":
+        if (
+            p.get("planner") == PLANNER
+            and job["status"] != "superseded"
+            and p.get("conversation_id") in selected_chats
+        ):
             states[job["status"]] = states.get(job["status"], 0) + 1
     today = datetime.now(TZ).date()
     daily = [
@@ -61,7 +71,7 @@ def overview(db):
         (account, (datetime.now(UTC) - timedelta(days=7)).isoformat()),
     )
     failures = db.rows(
-        "SELECT j.error,COUNT(*) n FROM jobs j JOIN conversations v ON v.id=json_extract(j.payload,'$.conversation_id') WHERE v.account_id=? AND j.status IN ('failed','retry_wait','blocked_credentials','blocked_budget','blocked_context_limit','waiting_history_budget') AND COALESCE(json_extract(j.payload,'$.planner'),0)=? GROUP BY j.error",
+        "SELECT j.error,COUNT(*) n FROM jobs j JOIN conversations v ON v.id=json_extract(j.payload,'$.conversation_id') WHERE v.account_id=? AND v.followup_source=1 AND j.status IN ('failed','retry_wait','blocked_credentials','blocked_budget','blocked_context_limit','waiting_history_budget') AND COALESCE(json_extract(j.payload,'$.planner'),0)=? GROUP BY j.error",
         (account, PLANNER),
     )
     totals = db.rows(
@@ -103,6 +113,7 @@ def overview(db):
         ],
         "enabled": bool(policy and policy[0]["enabled"]),
         "history_reserve_percent": 20,
+        "source_scope": source_counts(db),
     }
 
 
@@ -117,6 +128,7 @@ def job_page(db, scope="all", status="all", page=1):
         "v.account_id=?",
         "json_extract(j.payload,'$.planner')=?",
         "j.status<>'superseded'",
+        "v.followup_source=1",
     ]
     args = [db.settings.source_account, PLANNER]
     if scope != "all":

@@ -142,6 +142,14 @@ fs.mkdirSync(screenshots, { recursive: true });
       fullPage: true,
     });
 
+    await page.locator("nav [data-page=settings]").click();
+    await page.locator("#source-list .source-option").waitFor();
+    await page.locator("#source-select-page").click();
+    await page.locator("#source-remove").click();
+    await page.waitForFunction(() => document.querySelector("#source-counts").textContent.includes("客户跟进 0 个"));
+    await page.locator("#source-select-page").click();
+    await page.locator("#source-add").click();
+    await page.waitForFunction(() => document.querySelector("#source-counts").textContent.includes("客户跟进 1 个"));
     await page.screenshot({
       animations: "disabled",
       path: path.join(screenshots, "crm-settings.png"),
@@ -173,6 +181,11 @@ fs.mkdirSync(screenshots, { recursive: true });
       )
     )
       throw Error("analysis mobile overflow");
+    await page.locator("nav [data-page=settings]").click();
+    await page.locator("#source-list .source-option").waitFor();
+    if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1))
+      throw Error("whitelist settings mobile overflow");
+    await page.locator("nav [data-page=analysis]").click();
     await page.emulateMedia({ reducedMotion: "reduce" });
     if (
       await page
@@ -182,7 +195,7 @@ fs.mkdirSync(screenshots, { recursive: true });
       throw Error("reduced motion ignored");
     if (errors.length) throw Error(errors.join("\n"));
     console.log(
-      "Browser passed: login, auto-created action, evidence, profile, value filter, image, reschedule, reviews, single import entry, source probe, mobile",
+      "Browser passed: login, auto-created action, evidence, profile, value filter, image, reschedule, reviews, single import entry, source probe, follow-up whitelist, mobile",
     );
   } finally {
     await browser.close();
