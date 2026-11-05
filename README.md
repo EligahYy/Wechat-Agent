@@ -20,9 +20,9 @@ DEEPSEEK_PROXY=http://127.0.0.1:7897 uv run wechat-agent start
 
 首次接入和故障排查见 [部署与使用 SOP](docs/DEPLOYMENT_SOP.md)。旧数据保留，数据库升级至 v8 前自动备份；不需要重新导入现有记录。
 
-## 本轮模型执行改造方案
+## 本轮整体评审与改造方案
 
-[完整 Harness 方案（待审阅，尚未实施）](docs/MODEL_HARNESS_DESIGN.md)：解决群内身份、客户维度确认、跨会话上下文、人工决策复用和模型响应回放。当前先交付免跟进白名单与现有直接调用链路，Harness 暂缓；身份、客户级确认和上下文重构按该方案后续推进。
+[极简 Agent 整体评审（设计稿，尚未实施）](docs/MODEL_HARNESS_DESIGN.md)：包含源码审计、wx-cli 昵称丢失复现、人物／会话排除、已发货与新批次判断、上下文与恢复、工作台交互、存量修复和验收门槛。按最新 PersonalAI 极简方向保留 Python + SQLite + DeepSeek；当前运行版本仍为 v0.5.4。
 
 ## 本次更新（v0.5.4）
 
