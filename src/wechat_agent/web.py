@@ -175,7 +175,7 @@ def create_app(settings=None, source_factory=None, background=False):
     def health():
         return {
             "database": "ok",
-            "schema": 7,
+            "schema": 8,
             "runtime": db.rows("SELECT * FROM runtime"),
             "gaps": db.rows("SELECT COUNT(*) n FROM sync_windows WHERE status='gap'")[
                 0
@@ -940,6 +940,29 @@ def create_app(settings=None, source_factory=None, background=False):
         schedule(db)
         return {"ok": True}
 
+    @app.get("/api/monitor")
+    def monitor():
+        from .monitoring import snapshot
+
+        return snapshot(
+            db, source_factory, bool(getattr(app.state, "background", False))
+        )
+
+    @app.get("/api/crm/exemptions")
+    def exemptions(q: str = "", kind: str = "all", scope: str = "all", page: int = 1):
+        from .source_scope import list_sources
+
+        return list_sources(db, q, kind, scope, page)
+
+    @app.post("/api/crm/exemptions")
+    async def update_exemptions(request: Request):
+        from .source_scope import set_sources
+
+        body = await request.json()
+        if type(body.get("enabled")) is not bool:
+            raise ValueError("请指定是否免跟进")
+        return set_sources(db, body.get("conversation_ids"), not body["enabled"])
+
     @app.get("/api/crm/followup-sources")
     def followup_sources(
         q: str = "", kind: str = "all", scope: str = "all", page: int = 1
@@ -1121,6 +1144,17 @@ def create_app(settings=None, source_factory=None, background=False):
                 (db.settings.source_account,),
             )
         ]
+
+    @app.post("/api/crm/reviews/clear")
+    def clear_reviews():
+        with db.tx() as c:
+            result = c.execute(
+                "UPDATE crm_reviews SET status='cleared' WHERE account_id=? AND status='pending'",
+                (db.settings.source_account,),
+            )
+            count = result.rowcount
+            db.event(c, db.settings.source_account, "reviews_cleared", {"count": count})
+        return {"ok": True, "cleared": count}
 
     @app.post("/api/crm/reviews/{review_id}")
     async def crm_review(review_id: str, request: Request):

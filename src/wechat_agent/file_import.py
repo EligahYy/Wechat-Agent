@@ -97,7 +97,7 @@ def import_file(db, text, filename, account=None, write=False):
                     bool(policy and policy["enabled"] and policy["include_new"])
                 )
                 c.execute(
-                    "INSERT INTO conversations(id,source,account_id,source_id,title,kind,allowlisted,egress) VALUES(?,?,?,?,?,?,1,?)",
+                    "INSERT INTO conversations(id,source,account_id,source_id,title,kind,allowlisted,egress,followup_source) VALUES(?,?,?,?,?,?,1,?,1)",
                     (
                         uid(),
                         m["source"],

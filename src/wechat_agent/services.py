@@ -79,7 +79,7 @@ def allow_conversation(
                 int(
                     old["followup_source"]
                     if old and followup_source is None
-                    else bool(followup_source)
+                    else (True if followup_source is None else bool(followup_source))
                 ),
             ),
         )

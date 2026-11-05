@@ -1,4 +1,4 @@
-"""Explicit conversation whitelist for customer follow-up, separate from archive."""
+"""Customer follow-up eligibility; exemptions retain local archive."""
 
 import json
 
@@ -52,7 +52,7 @@ def list_sources(db, q="", kind="all", scope="all", page=1):
     rows = db.rows(
         "SELECT v.id,v.title,v.kind,v.source_id,v.followup_source,(SELECT COUNT(*) FROM messages m WHERE m.conversation_id=v.id) messages FROM conversations v WHERE "
         + where
-        + " ORDER BY v.followup_source DESC,v.title,v.id LIMIT 50 OFFSET ?",
+        + " ORDER BY v.followup_source ASC,v.title,v.id LIMIT 50 OFFSET ?",
         [*args, (page - 1) * 50],
     )
     return {
@@ -97,7 +97,7 @@ def set_sources(db, ids, enabled):
         )
         if not enabled:
             c.execute(
-                "UPDATE jobs SET status='excluded_source',lease_until=NULL,error='not_in_followup_whitelist' WHERE json_extract(payload,'$.conversation_id') IN ("
+                "UPDATE jobs SET status='excluded_source',lease_until=NULL,error='followup_exempted' WHERE json_extract(payload,'$.conversation_id') IN ("
                 + marks
                 + ") AND status NOT IN ('succeeded','filtered_noise','superseded','excluded_source')",
                 ids,
@@ -114,7 +114,7 @@ def set_sources(db, ids, enabled):
         db.event(
             c,
             db.settings.source_account,
-            "followup_whitelist_updated",
+            "followup_scope_updated",
             {"conversation_ids": ids, "enabled": enabled},
         )
     from .crm import schedule

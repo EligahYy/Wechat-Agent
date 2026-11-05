@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 7:
+            if version > 8:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -122,12 +122,41 @@ class DB:
                     }
                     if "followup_source" not in columns:
                         connection.execute(
-                            "ALTER TABLE conversations ADD COLUMN followup_source INTEGER NOT NULL DEFAULT 0"
+                            "ALTER TABLE conversations ADD COLUMN followup_source INTEGER NOT NULL DEFAULT 1"
                         )
                     connection.execute(
                         "UPDATE jobs SET status='excluded_source',lease_until=NULL,error='not_in_followup_whitelist' WHERE json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE followup_source=0) AND status NOT IN ('succeeded','filtered_noise','superseded','excluded_source')"
                     )
                     connection.execute("PRAGMA user_version=7")
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
+            if version < 8:
+                if version:
+                    target = settings.data_dir / (
+                        "pre-v8-"
+                        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                        + ".sqlite3"
+                    )
+                    backup = sqlite3.connect(target)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    target.chmod(0o600)
+                connection.execute("BEGIN IMMEDIATE")
+                try:
+                    # v7 selected analysis sources; v8 starts an empty exemption list.
+                    connection.execute("UPDATE conversations SET followup_source=1")
+                    connection.execute(
+                        "UPDATE jobs SET status='deferred_'||COALESCE(json_extract(payload,'$.scope'),'recent'),attempts=0,error=NULL WHERE status='excluded_source' AND json_extract(payload,'$.planner')=3"
+                    )
+                    connection.execute(
+                        "UPDATE crm_reviews SET status='cleared' WHERE account_id=? AND status='pending'",
+                        (settings.source_account,),
+                    )
+                    connection.execute("PRAGMA user_version=8")
                     connection.commit()
                 except BaseException:
                     connection.rollback()

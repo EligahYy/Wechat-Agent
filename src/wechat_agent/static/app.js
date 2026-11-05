@@ -110,7 +110,7 @@ function go(page) {
   if (page === "customers")
     loadCustomers().catch((e) => notice(e.message, true));
   if (page === "reviews") loadReviews().catch((e) => notice(e.message, true));
-  if (page === "settings") { renderSettings(); loadSources().catch((e) => notice(e.message, true)); }
+  if (page === "settings") { renderSettings(); loadSources().catch((e) => notice(e.message, true)); loadMonitor(); }
   if (page === "analysis") loadAnalysis().catch((e) => notice(e.message, true));
 }
 function renderToday() {
@@ -127,7 +127,7 @@ function renderToday() {
     banner =
       "<strong>聊天已归档，开启自动整理</strong><p>确认 DeepSeek 分析范围后，自动建立客户档案和跟进计划。</p>";
   else if (!state.source_scope?.selected)
-    banner = "<strong>选择客户跟进白名单</strong><p>聊天继续归档；先选择 1–2 个客户私信或群聊，才会开始分析。</p>";
+    banner = "<strong>当前没有可跟进会话</strong><p>检查免跟进白名单或等待新会话；聊天继续归档。</p>";
   else if (!state.key_configured)
     banner =
       "<strong>还需要连接 DeepSeek</strong><p>消息采集继续，配置 API key 后才能分析。</p>";
@@ -153,7 +153,7 @@ function renderToday() {
     ? actions
         .map(
           (a) =>
-            `<article class="action-card"><div class="avatar">${esc(a.customer_name.slice(0, 1))}</div><div><div class="card-heading"><h3>${esc(a.customer_name)}</h3><span class="tag ${a.due_date < state.today && a.state === "open" ? "amber" : ""}">${esc(statusNames[a.state] || a.state)}</span></div><div class="card-meta">${esc(a.opportunity || "客户跟进")} · ${esc(a.due_date || "时间待定")}${a.date_kind === "suggested" ? "（建议）" : ""} · 联系 ${esc(a.contact_name || a.customer_name)}</div><h2>${esc(a.summary)}</h2><div class="reason">为什么：${esc(a.reason)}${!a.source_eligible ? " · 来源不在客户跟进白名单，保留历史记录" : !a.evidence_valid ? " · 原始依据已变化，等待重算" : ""}</div><div class="card-actions"><button data-evidence="${esc(a.id)}">查看依据</button><button data-draft="${esc(a.id)}" ${a.do_not_contact || !a.source_eligible || !a.evidence_valid || ["done", "cancelled", "historical_unresolved"].includes(a.state) ? "disabled" : ""}>查看话术</button><button data-result="${esc(a.id)}">记录结果</button><button data-postpone="${esc(a.id)}">改期</button><button class="quiet" data-customer="${esc(a.customer_id)}">客户档案 ↗</button></div></div></article>`,
+            `<article class="action-card"><div class="avatar">${esc(a.customer_name.slice(0, 1))}</div><div><div class="card-heading"><h3>${esc(a.customer_name)}</h3><span class="tag ${a.due_date < state.today && a.state === "open" ? "amber" : ""}">${esc(statusNames[a.state] || a.state)}</span></div><div class="card-meta">${esc(a.opportunity || "客户跟进")} · ${esc(a.due_date || "时间待定")}${a.date_kind === "suggested" ? "（建议）" : ""} · 联系 ${esc(a.contact_name || a.customer_name)}</div><h2>${esc(a.summary)}</h2><div class="reason">为什么：${esc(a.reason)}${!a.source_eligible ? " · 来源已免跟进或暂停分析，保留历史记录" : !a.evidence_valid ? " · 原始依据已变化，等待重算" : ""}</div><div class="card-actions"><button data-evidence="${esc(a.id)}">查看依据</button><button data-draft="${esc(a.id)}" ${a.do_not_contact || !a.source_eligible || !a.evidence_valid || ["done", "cancelled", "historical_unresolved"].includes(a.state) ? "disabled" : ""}>查看话术</button><button data-result="${esc(a.id)}">记录结果</button><button data-postpone="${esc(a.id)}">改期</button><button class="quiet" data-customer="${esc(a.customer_id)}">客户档案 ↗</button></div></div></article>`,
         )
         .join("")
     : empty(
@@ -654,7 +654,7 @@ async function loadAnalysis() {
       : "前往设置启用";
     $("#analysis-pause").disabled = !d.enabled;
     $("#analysis-status").innerHTML =
-      `<span class="live-dot ${!d.enabled || d.gate ? "paused" : ""}"></span><div><strong>${!d.enabled ? "分析已暂停" : !d.source_scope?.selected ? "尚未选择客户跟进会话，请前往设置加入白名单" : d.gate ? esc(gateNames[d.gate.reason] || d.gate.reason) : r.pending ? "优先整理近 15 天的客户需求" : h.pending ? "近期已处理，历史按余量继续" : "本轮文本已处理，等待新消息"}</strong><p>${esc(d.account_name || "尚未连接工作账号")} · 更新于 ${esc(dateLabel(d.updated_at))}${d.gate ? " · 自动复查 " + esc(dateLabel(d.gate.until)) : ""}</p></div>`;
+      `<span class="live-dot ${!d.enabled || d.gate ? "paused" : ""}"></span><div><strong>${!d.enabled ? "分析已暂停" : !d.source_scope?.selected ? "没有可分析的跟进会话，可在设置查看免跟进白名单" : d.gate ? esc(gateNames[d.gate.reason] || d.gate.reason) : r.pending ? "优先整理近 15 天的客户需求" : h.pending ? "近期已处理，历史按余量继续" : "本轮文本已处理，等待新消息"}</strong><p>${esc(d.account_name || "尚未连接工作账号")} · 更新于 ${esc(dateLabel(d.updated_at))}${d.gate ? " · 自动复查 " + esc(dateLabel(d.gate.until)) : ""}</p></div>`;
     if (d.gate && d.diagnostics?.recent_errors?.length) {
       const problem = d.diagnostics.recent_errors[0];
       $("#analysis-status").insertAdjacentHTML(
@@ -666,7 +666,7 @@ async function loadAnalysis() {
       metric(
         d.messages.total || 0,
         "已归档消息",
-        `白名单 ${d.source_scope?.selected || 0} / ${d.source_scope?.total || 0} 个会话 · 媒体 ${d.messages.media || 0} 条`,
+        `正常跟进 ${d.source_scope?.selected || 0} / ${d.source_scope?.total || 0} 个会话 · 媒体 ${d.messages.media || 0} 条`,
       ) +
       metric(r.analyzed, "近期已分析", `近15天共 ${r.total} 条完整文本`) +
       metric(d.customers, "客户档案", "根据聊天证据自动整理") +
@@ -809,10 +809,10 @@ function renderSourceSelection() {
 async function loadSources() {
   const f = new FormData($("#source-search"));
   const params = new URLSearchParams({q: f.get("q"), kind: f.get("kind"), scope: f.get("scope"), page: sourcePage});
-  const d = await api("/api/crm/followup-sources?" + params);
+  const d = await api("/api/crm/exemptions?" + params);
   sourceRows = d.items; sourceHasMore = d.has_more;
-  $("#source-counts").textContent = `已归档 ${d.counts.total} 个会话 · 客户跟进 ${d.counts.selected} 个 · 仅归档 ${d.counts.archive_only} 个`;
-  $("#source-list").innerHTML = d.items.length ? d.items.map(v => `<label class="source-option"><input type="checkbox" data-followup-source="${esc(v.id)}" ${sourceSelection.has(v.id) ? "checked" : ""}><span><strong>${esc(v.title || v.source_id)}</strong><small>${v.kind === "group" ? "群聊" : "私信"} · ${esc(v.messages)} 条 · ${v.followup_source ? "客户跟进" : "仅归档"}</small><small>${esc(v.source_id)}</small></span></label>`).join("") : empty("没有匹配会话", "先完成微信采集，或调整搜索条件。");
+  $("#source-counts").textContent = `已归档 ${d.counts.total} 个会话 · 正常跟进 ${d.counts.selected} 个 · 白名单免跟进 ${d.counts.archive_only} 个`;
+  $("#source-list").innerHTML = d.items.length ? d.items.map(v => `<label class="source-option"><input type="checkbox" data-followup-source="${esc(v.id)}" ${sourceSelection.has(v.id) ? "checked" : ""}><span><strong>${esc(v.title || v.source_id)}</strong><small>${v.kind === "group" ? "群聊" : "私信"} · ${esc(v.messages)} 条 · ${v.followup_source ? "正常跟进" : "白名单 · 免跟进"}</small><small>${esc(v.source_id)}</small></span></label>`).join("") : empty("没有匹配会话", "先完成微信采集，或调整搜索条件。");
   $("#source-prev").disabled = sourcePage <= 1;
   $("#source-next").disabled = !sourceHasMore;
   $("#source-page").textContent = `第 ${d.page} 页 · 匹配 ${d.total} 个`;
@@ -833,10 +833,94 @@ async function saveSources(enabled) {
   if (!sourceSelection.size) return;
   const ids = [...sourceSelection];
   if (ids.length > 500) throw Error("单次最多更改500个会话，请分批操作。");
-  await api("/api/crm/followup-sources", {conversation_ids: ids, enabled});
+  await api("/api/crm/exemptions", {conversation_ids: ids, enabled});
   sourceSelection.clear();
   await load(); await loadSources();
-  notice(enabled ? "已加入客户跟进白名单；账号分析开启后会按近期优先整理。" : "已改为仅归档，历史记录保留。正在发送的模型请求无法撤回。");
+  notice(enabled ? "已加入免跟进白名单，停止分析和今日推荐，保留历史。" : "已移出白名单，恢复已授权的客户分析。");
 }
 $("#source-add").onclick = safe(() => saveSources(true));
 $("#source-remove").onclick = safe(() => saveSources(false));
+
+$("#manage-exemptions").onclick = () => {
+  $("#followup-sources").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start"});
+  $("#source-search [name=scope]").value = "archive";
+  $("#source-search [name=scope]").dispatchEvent(new Event("change"));
+  sourcePage = 1; loadSources().catch(e => notice(e.message, true));
+};
+$("#clear-reviews").onclick = safe(async () => {
+  $("#clear-reviews").disabled = true;
+  try {
+    const d = await api("/api/crm/reviews/clear", {});
+    await load(); await loadReviews();
+    notice(`已清空 ${d.cleared} 条待确认，客户和跟进记录保留。`);
+  } finally { $("#clear-reviews").disabled = false; }
+});
+let monitorLoading = false;
+async function loadMonitor() {
+  if (monitorLoading) return;
+  monitorLoading = true;
+  $("#refresh-monitor").disabled = true;
+  $("#monitor-note").textContent = "正在检测本机服务…";
+  try {
+    const d = await api("/api/monitor");
+    $("#monitor-checks").innerHTML = d.checks.map(c => `<article class="monitor-item ${esc(c.state)}"><div><span class="monitor-dot"></span><strong>${esc(c.name)}</strong><span class="tag">${c.state === "ok" ? "正常" : c.state === "error" ? "异常" : "需留意"}</span></div><p>${esc(c.detail)}</p>${c.updated_at ? `<small>状态更新 ${esc(dateLabel(c.updated_at))}</small>` : ""}</article>`).join("");
+    $("#monitor-note").textContent = `检测于 ${dateLabel(d.checked_at)} · ${d.note}`;
+  } catch(e) { $("#monitor-note").textContent = "检测失败：" + e.message; }
+  finally { monitorLoading = false; $("#refresh-monitor").disabled = false; }
+}
+$("#refresh-monitor").onclick = loadMonitor;
+// Keep native values/forms, with one consistent accessible popover interaction.
+let selectSequence = 0;
+function enhanceSelects() {
+  document.querySelectorAll("select:not([data-enhanced])").forEach(select => {
+    select.dataset.enhanced = "true";
+    select.tabIndex = -1;
+    select.setAttribute("aria-hidden", "true");
+    const wrapper = document.createElement("span"); wrapper.className = "select-control";
+    select.before(wrapper); wrapper.append(select);
+    const trigger = document.createElement("button"); trigger.type = "button"; trigger.className = "select-trigger";
+    trigger.setAttribute("aria-haspopup", "listbox"); trigger.setAttribute("aria-expanded", "false");
+    trigger.setAttribute("aria-label", select.getAttribute("aria-label") || "选择选项");
+    const menu = document.createElement("div"); menu.className = "select-options hidden"; menu.id = `select-menu-${++selectSequence}`; menu.setAttribute("role", "listbox"); menu.setAttribute("aria-label", trigger.getAttribute("aria-label"));
+    trigger.setAttribute("aria-controls", menu.id);
+    wrapper.append(trigger, menu);
+    const close = () => { menu.classList.add("hidden"); trigger.setAttribute("aria-expanded", "false"); };
+    const sync = () => {
+      trigger.textContent = select.selectedOptions[0]?.textContent || "请选择"; trigger.disabled = select.disabled;
+      menu.replaceChildren();
+      [...select.options].forEach(option => {
+        const button = document.createElement("button"); button.type = "button"; button.textContent = option.textContent; button.disabled = option.disabled;
+        button.setAttribute("role", "option"); button.setAttribute("aria-selected", String(option.selected));
+        button.onclick = () => { select.value = option.value; select.dispatchEvent(new Event("change", {bubbles: true})); close(); trigger.focus(); };
+        menu.append(button);
+      });
+    };
+    select.addEventListener("change", sync); sync();
+    const open = () => {
+      document.querySelectorAll('.select-trigger[aria-expanded="true"]').forEach(other => { if (other !== trigger) other.click(); });
+      sync(); menu.classList.remove("hidden"); trigger.setAttribute("aria-expanded", "true");
+      menu.querySelector('[aria-selected="true"]:not(:disabled)')?.focus();
+    };
+    trigger.onclick = () => trigger.getAttribute("aria-expanded") === "true" ? close() : open();
+    wrapper.addEventListener("keydown", e => {
+      if (e.key === "Escape") { close(); trigger.focus(); e.preventDefault(); }
+      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+        e.preventDefault();
+        if (menu.classList.contains("hidden")) return open();
+        const options = [...menu.querySelectorAll("button:not(:disabled)")];
+        const index = options.indexOf(document.activeElement);
+        const next = e.key === "Home" ? 0 : e.key === "End" ? options.length - 1 : (index + (e.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
+        options[next]?.focus();
+      }
+      if (e.key === "Tab") close();
+    });
+    wrapper.addEventListener("focusout", e => { if (!wrapper.contains(e.relatedTarget)) close(); });
+  });
+}
+document.addEventListener("pointerdown", e => {
+  document.querySelectorAll('.select-trigger[aria-expanded="true"]').forEach(trigger => { if (!trigger.parentElement.contains(e.target)) trigger.click(); });
+});
+enhanceSelects();
+new MutationObserver(enhanceSelects).observe(document.body, {childList: true, subtree: true});
+
+$("#source-search").addEventListener("change", safe(async e => { if (e.target.tagName === "SELECT") { sourcePage = 1; await loadSources(); } }));

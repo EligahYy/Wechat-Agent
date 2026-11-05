@@ -1,4 +1,4 @@
-"""Follow-up eligibility never implicitly follows archive or model consent."""
+"""Exemptions suppress follow-up without disabling archive."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +13,7 @@ from wechat_agent.source_scope import counts, list_sources, set_sources
 from wechat_agent.web import create_app
 
 
-def test_archive_and_account_consent_do_not_select_new_chats(db, record):
+def test_exemption_is_preserved_but_new_chats_default_to_followup(db, record):
     cid, row = setup_work_chat(db, record)
     with db.tx() as c:
         c.execute("UPDATE conversations SET followup_source=0")
@@ -25,7 +25,14 @@ def test_archive_and_account_consent_do_not_select_new_chats(db, record):
     assert not run_once(db)
     assert len(db.rows("SELECT * FROM messages")) == 1
     other = allow_conversation(
-        db, "wx_cli", "account", "coworker", "同事", "private", egress=True
+        db,
+        "wx_cli",
+        "account",
+        "coworker",
+        "同事",
+        "private",
+        egress=True,
+        followup_source=False,
     )
     ingest(
         db,
@@ -126,17 +133,17 @@ def test_batch_selection_is_atomic_and_account_scoped(db, record):
         list_sources(db, page=0)
 
 
-def test_migration_preserves_archive_and_requires_explicit_whitelist(db, record):
+def test_migration_preserves_archive_and_starts_empty_exemption_list(db, record):
     setup_work_chat(db, record)
     configure(db, True)
     with db.tx() as c:
         c.execute("ALTER TABLE conversations DROP COLUMN followup_source")
         c.execute("PRAGMA user_version=6")
     migrated = DB(db.settings)
-    assert counts(migrated)["selected"] == 0
-    assert migrated.rows("SELECT status FROM jobs")[0]["status"] == "excluded_source"
+    assert counts(migrated)["selected"] == 1
+    assert migrated.rows("PRAGMA user_version")[0]["user_version"] == 8
     assert len(migrated.rows("SELECT * FROM messages")) == 1
-    backups = list(db.settings.data_dir.glob("pre-v7-*.sqlite3"))
+    backups = list(db.settings.data_dir.glob("pre-v8-*.sqlite3"))
     assert len(backups) == 1 and backups[0].stat().st_mode & 0o777 == 0o600
 
 
@@ -144,23 +151,24 @@ def test_whitelist_api_requires_auth_and_does_not_leak_messages(db, record):
     cid, _ = setup_work_chat(db, record)
     app = create_app(db.settings)
     with TestClient(app) as client:
-        assert client.get("/api/crm/followup-sources").status_code == 401
+        assert client.get("/api/crm/exemptions").status_code == 401
         headers = {"Authorization": "Bearer " + db.token}
-        data = client.get("/api/crm/followup-sources", headers=headers).json()
+        data = client.get("/api/crm/exemptions", headers=headers).json()
         assert "附加费" not in str(data)
         r = client.post(
-            "/api/crm/followup-sources",
-            json={"conversation_ids": [cid], "enabled": False},
+            "/api/crm/exemptions",
+            json={"conversation_ids": [cid], "enabled": True},
             headers=headers,
         )
         assert r.status_code == 200 and r.json()["counts"]["selected"] == 0
 
 
-def test_rediscovery_preserves_selection_and_new_sessions_stay_archive_only(db, record):
+def test_rediscovery_preserves_exemption_and_new_sessions_followup(db, record):
     from wechat_agent.archive import register
 
     cid, _ = setup_work_chat(db, record)
     configure(db, True)
+    set_sources(db, [cid], False)
     register(
         db,
         [
@@ -185,5 +193,5 @@ def test_rediscovery_preserves_selection_and_new_sessions_stay_archive_only(db, 
         == "更新昵称"
     )
     with pytest.raises(Blocked):
-        other = list_sources(db, kind="group")["items"][0]["id"]
-        context(db, other)
+        context(db, cid)
+    assert list_sources(db, kind="group")["items"][0]["followup_source"] == 1

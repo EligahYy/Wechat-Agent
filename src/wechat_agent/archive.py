@@ -98,7 +98,7 @@ def register(db, sessions, until, rescan=False, preserve_paused=False):
                 continue
             cid = row["id"] if row else uid()
             c.execute(
-                "INSERT INTO conversations(id,source,account_id,source_id,title,kind,allowlisted,egress) VALUES(?,'wx_cli',?,?,?,?,1,?) ON CONFLICT(source,account_id,source_id) DO UPDATE SET title=excluded.title,allowlisted=1",
+                "INSERT INTO conversations(id,source,account_id,source_id,title,kind,allowlisted,egress,followup_source) VALUES(?,'wx_cli',?,?,?,?,1,?,1) ON CONFLICT(source,account_id,source_id) DO UPDATE SET title=excluded.title,allowlisted=1",
                 (
                     cid,
                     db.settings.source_account,

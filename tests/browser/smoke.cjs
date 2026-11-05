@@ -145,11 +145,31 @@ fs.mkdirSync(screenshots, { recursive: true });
     await page.locator("nav [data-page=settings]").click();
     await page.locator("#source-list .source-option").waitFor();
     await page.locator("#source-select-page").click();
-    await page.locator("#source-remove").click();
-    await page.waitForFunction(() => document.querySelector("#source-counts").textContent.includes("客户跟进 0 个"));
-    await page.locator("#source-select-page").click();
     await page.locator("#source-add").click();
-    await page.waitForFunction(() => document.querySelector("#source-counts").textContent.includes("客户跟进 1 个"));
+    await page.waitForFunction(() => document.querySelector("#source-counts").textContent.includes("白名单免跟进 1 个"));
+    await page.locator("#source-select-page").click();
+    await page.locator("#source-remove").click();
+    await page.waitForFunction(() => document.querySelector("#source-counts").textContent.includes("白名单免跟进 0 个"));
+    await page.locator("#refresh-monitor").click();
+    await page.locator("#monitor-checks .monitor-item").nth(3).waitFor();
+    await page.locator('#source-search .select-trigger').first().click();
+    await page.getByRole('option', {name: '群聊', exact: true}).click();
+    await page.locator('#source-search [name=kind]').selectOption('all');
+    const picker = page.locator('#source-search .select-trigger').first();
+    await picker.focus();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    if (await page.locator('#source-search [name=kind]').inputValue() !== 'private') throw Error('keyboard selection failed');
+    await picker.click();
+    await page.keyboard.press('Escape');
+    if (await picker.getAttribute('aria-expanded') !== 'false') throw Error('picker escape failed');
+    await page.locator('#source-search [name=kind]').selectOption('all');
+
+    await page.locator("nav [data-page=reviews]").click();
+    await page.locator("#clear-reviews").click();
+    await page.locator("#review-list .review-card").waitFor({state: "detached"});
+    await page.locator("nav [data-page=settings]").click();
     await page.screenshot({
       animations: "disabled",
       path: path.join(screenshots, "crm-settings.png"),

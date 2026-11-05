@@ -86,7 +86,7 @@
             <p>身份归属与业务歧义才需要你，其余由助手整理。</p>
           </div>
         </div>
-        <div id="review-list"></div>
+        <div class="button-row"><button id="clear-reviews" type="button">一键清空待确认</button><span class="hint">仅清除待处理问题，不修改客户档案和跟进计划。</span></div><div id="review-list"></div>
       </section>
       <section id="page-analysis" class="page hidden">
         <div class="heading">
@@ -147,8 +147,13 @@
           <div>
             <span class="eyebrow">工作空间</span>
             <h1>连接一次，持续整理</h1>
-            <p>采集全部工作会话，选择客户跟进白名单，无需先建立商家或项目。</p>
+            <p>默认整理工作会话，将同事与纯服务商加入免跟进白名单即可。</p>
           </div>
+        </div>
+        <div class="panel monitor-panel">
+          <div class="section-line"><div><span class="step-label">本机运行监控</span><h2>连接与后台状态</h2></div><button id="refresh-monitor" type="button">检测全部状态</button></div>
+          <div id="monitor-checks" class="monitor-grid" aria-live="polite"><p class="hint">进入设置后检查本机连接。</p></div>
+          <p id="monitor-note" class="hint">不读取聊天正文，不调用模型。</p>
         </div>
         <div class="settings-grid">
           <div class="panel">
@@ -156,7 +161,7 @@
             <h2>连接工作微信</h2>
             <p>通过本机 wx-cli 接入全部可读私信与群聊，自动补齐历史。</p>
             <div id="account-status" class="inset"></div>
-            <button id="probe" class="primary">检测本机连接</button>
+            <div class="button-row"><button id="probe" class="primary">检测本机连接</button><button id="manage-exemptions" type="button">管理免跟进白名单</button></div>
             <div id="source-result"></div>
             <p class="hint">
               源服务需先运行在 127.0.0.1:9100。已归档的数据无需重新导入。
@@ -207,14 +212,14 @@
           </div>
         </div>
         <div class="panel" id="followup-sources">
-          <span class="step-label">03 · 客户跟进白名单</span>
-          <h2>哪些会话需要整理客户？</h2>
-          <p>默认只归档。加入白名单的私信／群聊才会调用模型、建立客户和生成跟进；同事、纯服务商会话可保持只归档。建议先选 1–2 个客户会话验证。</p>
+          <span class="step-label">03 · 免跟进白名单</span>
+          <h2>白名单内，不做客户跟进</h2>
+          <p>已授权的工作会话默认整理客户。将同事、纯服务商的私信／群聊加入白名单后，仅保留归档，不触发客户建档和跟进。名单以整个会话为单位。</p>
           <p id="source-counts" class="hint" aria-live="polite"></p>
           <form id="source-search" class="button-row">
             <input name="q" placeholder="搜索会话名称或微信 ID" aria-label="搜索跟进会话" />
             <select name="kind" aria-label="会话类型"><option value="all">私信与群聊</option><option value="private">私信</option><option value="group">群聊</option></select>
-            <select name="scope" aria-label="白名单状态"><option value="all">全部状态</option><option value="customer">客户跟进</option><option value="archive">仅归档</option></select>
+            <select name="scope" aria-label="白名单状态"><option value="all">全部会话</option><option value="archive">白名单 · 免跟进</option><option value="customer">正常跟进</option></select>
             <button>搜索</button>
           </form>
           <div class="button-row">
@@ -224,13 +229,13 @@
           </div>
           <div id="source-list" class="source-list"></div>
           <div class="button-row"><button id="source-prev" type="button">上一页</button><span id="source-page" class="hint"></span><button id="source-next" type="button">下一页</button></div>
-          <div class="button-row"><button id="source-add" class="primary" type="button">加入客户跟进白名单</button><button id="source-remove" type="button">移出白名单</button></div>
-          <p class="hint">加入即将所选会话纳入已授权的 DeepSeek 分析范围；账号分析暂停时不会调用。新发现的会话仍默认只归档。移出后保留历史，停止后续分析和今日推荐，已发出的请求无法撤回。</p>
+          <div class="button-row"><button id="source-add" class="primary" type="button">加入免跟进白名单</button><button id="source-remove" type="button">移出白名单</button></div>
+          <p class="hint">加入后暂停该会话分析并停止今日推荐，保留历史。移出后恢复账号已授权的正常分析；已发出的请求无法撤回。新会话默认正常跟进，账号分析开关和预算仍生效。</p>
         </div>
         <details class="panel">
           <summary>备用：手动导入文件</summary>
           <p>
-            仅保留一个文件入口，使用标准消息字段；不需要旧导出项目。导入后仍需加入客户跟进白名单，并受账号分析授权控制。
+            仅保留一个文件入口，使用标准消息字段；不需要旧导出项目。导入后仍需加入免跟进白名单，并受账号分析授权控制。
           </p>
           <form id="file-import">
             <input
