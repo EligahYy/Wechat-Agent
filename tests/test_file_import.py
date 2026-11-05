@@ -11,23 +11,20 @@ from wechat_agent.web import create_app
 
 def exported(sid=1, kind="direct", chat="person"):
     return {
-        "time": "2026-11-04 09:00:00",
-        "conversation": "客户甲",
-        "conversation_username": chat,
-        "conversation_type": kind,
-        "sender": "客户",
-        "sender_username": "person",
+        "source": "wx_cli",
+        "account_id": "account",
+        "conversation_id": chat,
+        "conversation_type": "group" if kind == "group" else "private",
+        "source_id": str(sid),
+        "sender_id": "person",
         "direction": "incoming",
-        "type_name": "文本",
-        "content": "请核实附加费",
-        "server_id": sid,
-        "local_id": sid,
-        "db": "message_0.db",
-        "table": "Msg_example",
+        "event_time": "2026-11-04T09:00:00+08:00",
+        "message_type": "text",
+        "text": "请核实附加费",
     }
 
 
-def test_legacy_csv_json_share_native_identity_and_no_ai(db):
+def test_standard_csv_json_share_native_identity_and_no_ai(db):
     db.settings.source_account = db.settings.self_id = "account"
     buffer = io.StringIO()
     row = exported()
@@ -71,7 +68,7 @@ def test_legacy_csv_json_share_native_identity_and_no_ai(db):
 
 
 def test_invalid_file_is_previewed_and_no_partial_write(db):
-    rows = [exported(), exported() | {"conversation_username": ""}]
+    rows = [exported(), exported() | {"conversation_id": ""}]
     assert (
         import_file(db, json.dumps(rows), "all_messages.json", "account")["rejected"]
         == 1
@@ -90,7 +87,7 @@ def test_personal_and_group_timeline_unified_but_same_name_distinct(db):
     rows = [
         exported(1),
         exported(2, "group", "room@chatroom"),
-        exported(3, "direct", "another") | {"sender_username": "another"},
+        exported(3, "direct", "another") | {"sender_id": "another"},
     ]
     import_file(db, json.dumps(rows), "all_messages.json", "account", True)
     app = create_app(db.settings)

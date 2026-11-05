@@ -3,6 +3,7 @@ import hmac
 import json
 import secrets
 import sqlite3
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,9 +23,29 @@ from .db import DB, now, uid
 from .ingestion import enqueue, ingest
 
 
-def create_app(settings=None, source_factory=None):
+def create_app(settings=None, source_factory=None, background=False):
     db = DB(settings or Settings())
-    app = FastAPI(title="Wechat-Agent", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        runtime = None
+        if background:
+            from .runtime import Runtime
+
+            runtime = Runtime(db, source_factory or Collector)
+            runtime.start()
+        app.state.background = background
+        yield
+        if runtime:
+            await run_in_threadpool(runtime.close)
+
+    app = FastAPI(
+        title="Wechat-Agent",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+    )
     app.state.db = db
     source_factory = source_factory or Collector
     app.mount(
@@ -116,6 +137,12 @@ def create_app(settings=None, source_factory=None):
             {"error": message}, 409 if isinstance(exc, services.Conflict) else 422
         )
 
+    @app.exception_handler(httpx.HTTPError)
+    async def remote_error(request, exc):
+        return JSONResponse(
+            {"error": "接口请求未完成，请检查服务连接、模型权限或稍后重试"}, 502
+        )
+
     @app.exception_handler(KeyError)
     async def missing_field(request, exc):
         return JSONResponse({"error": "缺少必填字段"}, 422)
@@ -148,7 +175,7 @@ def create_app(settings=None, source_factory=None):
     def health():
         return {
             "database": "ok",
-            "schema": 5,
+            "schema": 6,
             "runtime": db.rows("SELECT * FROM runtime"),
             "gaps": db.rows("SELECT COUNT(*) n FROM sync_windows WHERE status='gap'")[
                 0
@@ -445,12 +472,17 @@ def create_app(settings=None, source_factory=None):
 
     @app.get("/api/messages/{cid}")
     def messages(cid: str, page: int = 1):
+        from .message_value import classify
+
         if not 1 <= page <= 100000:
             raise ValueError("页码无效")
-        return db.rows(
-            "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time DESC,id DESC LIMIT 100 OFFSET ?",
-            (cid, (page - 1) * 100),
-        )
+        return [
+            r | classify(r)
+            for r in db.rows(
+                "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time DESC,id DESC LIMIT 100 OFFSET ?",
+                (cid, (page - 1) * 100),
+            )
+        ]
 
     @app.get("/api/messages/{mid}/image")
     def message_image(mid: str):
@@ -779,5 +811,252 @@ def create_app(settings=None, source_factory=None):
         return result.model_dump() | {
             "notice": "草稿未发送；先核对事实、价格与称呼。复制不代表已联系。"
         }
+
+    # Simplified CRM is the primary product. Older business endpoints remain
+    # for existing local integrations while their stored data is retained.
+    @app.get("/api/crm")
+    def crm_state():
+        from .crm import overview
+
+        return overview(db) | {"background": background}
+
+    @app.post("/api/crm/configure")
+    async def crm_configure(request: Request):
+        from .crm import configure
+
+        body = await request.json()
+        await run_in_threadpool(
+            configure,
+            db,
+            body["enabled"],
+            body.get("daily_budget", 100000),
+            body.get("include_new", True),
+        )
+        return {"ok": True}
+
+    @app.post("/api/crm/retry")
+    def crm_retry():
+        from .crm import schedule
+
+        return {"queued": schedule(db, retry=True)}
+
+    @app.post("/api/crm/credentials")
+    async def crm_credentials(request: Request):
+        import keyring
+
+        body = await request.json()
+        key = body.get("key")
+        if (
+            not isinstance(key, str)
+            or not 10 <= len(key) <= 500
+            or any(ch.isspace() for ch in key)
+        ):
+            raise ValueError("API key 格式无效")
+        try:
+            await run_in_threadpool(
+                keyring.set_password, "Wechat-Agent", "DEEPSEEK_API_KEY", key
+            )
+        except Exception:
+            raise ValueError(
+                "系统凭据存储不可用，请使用本机环境变量或 credentials 命令"
+            ) from None
+        return {"ok": True}
+
+    @app.post("/api/crm/conversations/{cid}/policy")
+    async def crm_conversation_policy(cid: str, request: Request):
+        body = await request.json()
+        if type(body.get("enabled")) is not bool:
+            raise ValueError("会话授权无效")
+        with db.tx() as c:
+            policy = c.execute(
+                "SELECT enabled FROM crm_policies WHERE account_id=?",
+                (db.settings.source_account,),
+            ).fetchone()
+            if body["enabled"] and (not policy or not policy["enabled"]):
+                raise ValueError("请先确认工作账号的分析授权")
+            changed = c.execute(
+                "UPDATE conversations SET egress=? WHERE id=? AND account_id=?",
+                (int(body["enabled"]), cid, db.settings.source_account),
+            )
+            if not changed.rowcount:
+                raise ValueError("会话不存在")
+            db.event(c, cid, "crm_scope_change", {"enabled": body["enabled"]})
+        from .crm import schedule
+
+        schedule(db)
+        return {"ok": True}
+
+    @app.get("/api/crm/customers")
+    def crm_customers(q: str = "", page: int = 1):
+        if len(q) > 200 or not 1 <= page <= 100000:
+            raise ValueError("查询无效")
+        return db.rows(
+            "SELECT c.*, (SELECT value FROM crm_facts f WHERE f.customer_id=c.id AND field='summary' ORDER BY event_time DESC LIMIT 1) summary FROM crm_customers c WHERE c.account_id=? AND instr(c.name,?)>0 ORDER BY c.created_at DESC LIMIT 50 OFFSET ?",
+            (db.settings.source_account, q, (page - 1) * 50),
+        )
+
+    @app.get("/api/crm/customers/{customer_id}")
+    def crm_customer(customer_id: str):
+        from .crm import customer_details
+
+        return customer_details(db, customer_id)
+
+    @app.post("/api/crm/facts/{fact_id}")
+    async def crm_correct_fact(fact_id: str, request: Request):
+        body = await request.json()
+        value = body.get("value")
+        if not isinstance(value, str) or not 1 <= len(value.strip()) <= 500:
+            raise ValueError("请填写需要保留的事实（最多500字）")
+        with db.tx() as c:
+            fact = c.execute(
+                "SELECT f.* FROM crm_facts f JOIN crm_customers u ON u.id=f.customer_id WHERE f.id=? AND u.account_id=?",
+                (fact_id, db.settings.source_account),
+            ).fetchone()
+            if not fact:
+                raise ValueError("事实不存在")
+            c.execute(
+                "UPDATE crm_facts SET value=?,locked=1 WHERE id=?",
+                (value.strip(), fact_id),
+            )
+            db.event(
+                c,
+                fact_id,
+                "crm_fact_correction",
+                {"previous": fact["value"], "value": value.strip()},
+            )
+        from .crm import schedule
+
+        schedule(db)
+        return {"ok": True}
+
+    @app.post("/api/crm/customers/{customer_id}/preferences")
+    async def crm_customer_preference(customer_id: str, request: Request):
+        body = await request.json()
+        if type(body.get("do_not_contact")) is not bool:
+            raise ValueError("联系设置无效")
+        with db.tx() as c:
+            cur = c.execute(
+                "UPDATE crm_customers SET do_not_contact=? WHERE id=? AND account_id=?",
+                (int(body["do_not_contact"]), customer_id, db.settings.source_account),
+            )
+            if not cur.rowcount:
+                raise ValueError("客户不存在")
+        return {"ok": True}
+
+    @app.get("/api/crm/actions/{action_id}/evidence")
+    def crm_evidence(action_id: str):
+        from .crm import valid_evidence
+
+        actions = db.rows(
+            "SELECT a.* FROM crm_actions a JOIN crm_customers c ON c.id=a.customer_id WHERE a.id=? AND c.account_id=?",
+            (action_id, db.settings.source_account),
+        )
+        if not actions:
+            raise ValueError("事项不存在")
+        return {
+            "action": actions[0],
+            "messages": valid_evidence(db, actions[0]["evidence"]),
+        }
+
+    @app.post("/api/crm/actions/{action_id}/transition")
+    async def crm_transition(action_id: str, request: Request):
+        from .crm import transition
+
+        body = await request.json()
+        return transition(
+            db,
+            action_id,
+            body["state"],
+            body["version"],
+            body.get("due_date"),
+            body.get("note", ""),
+        )
+
+    @app.post("/api/crm/actions/{action_id}/draft")
+    def crm_draft(action_id: str):
+        from .crm import valid_evidence
+
+        action = db.rows(
+            "SELECT a.*,u.do_not_contact FROM crm_actions a JOIN crm_customers u ON u.id=a.customer_id WHERE a.id=? AND u.account_id=?",
+            (action_id, db.settings.source_account),
+        )
+        if (
+            not action
+            or action[0]["do_not_contact"]
+            or action[0]["state"] not in {"open", "waiting_external", "snoozed"}
+        ):
+            raise ValueError("此事项不可生成联系话术")
+        refs = valid_evidence(db, action[0]["evidence"])
+        if not refs:
+            raise ValueError("消息依据已变化，请重新分析")
+        # Drafts use only same-conversation evidence; multi-source evidence is
+        # retained in the profile but must not be silently omitted in a draft.
+        if len({m["conversation_id"] for m in refs}) != 1:
+            raise ValueError("跨会话依据需先核对，暂不自动起草")
+        cid = refs[0]["conversation_id"]
+        ids = [m["id"] for m in refs]
+        _, _, payload, fingerprint = context(db, cid, ids)
+        payload["action"] = {
+            "summary": action[0]["summary"],
+            "reason": action[0]["reason"],
+        }
+        cached = db.rows(
+            "SELECT payload FROM events WHERE entity_id=? AND kind='crm_draft_cache' ORDER BY created_at DESC LIMIT 1",
+            (action_id,),
+        )
+        if cached:
+            value = json.loads(cached[0]["payload"])
+            if (
+                value.get("fingerprint") == fingerprint
+                and value.get("version") == action[0]["version"]
+                and value.get("model") == db.settings.model
+            ):
+                return value["result"] | {
+                    "notice": "草稿未发送；复制不会记录联系或完成。"
+                }
+        result = call_model(db, payload, draft=True)
+        current_action = db.rows(
+            "SELECT a.version,u.do_not_contact FROM crm_actions a JOIN crm_customers u ON u.id=a.customer_id WHERE a.id=?",
+            (action_id,),
+        )
+        if (
+            not current_action
+            or current_action[0]["do_not_contact"]
+            or current_action[0]["version"] != action[0]["version"]
+        ):
+            raise services.Conflict("任务或联系设置已变化")
+        if context(db, cid, ids)[3] != fingerprint:
+            raise services.Conflict("依据或授权已变化")
+        with db.tx() as c:
+            db.event(
+                c,
+                action_id,
+                "crm_draft_cache",
+                {
+                    "version": action[0]["version"],
+                    "fingerprint": fingerprint,
+                    "model": db.settings.model,
+                    "result": result.model_dump(),
+                },
+            )
+        return result.model_dump() | {"notice": "草稿未发送；复制不会记录联系或完成。"}
+
+    @app.get("/api/crm/reviews")
+    def crm_reviews():
+        from .crm import valid_evidence
+
+        return [
+            r | {"sources": valid_evidence(db, r["evidence"])}
+            for r in db.rows(
+                "SELECT * FROM crm_reviews WHERE account_id=? AND status='pending' ORDER BY created_at DESC LIMIT 50",
+                (db.settings.source_account,),
+            )
+        ]
+
+    @app.post("/api/crm/reviews/{review_id}")
+    async def crm_review(review_id: str, request: Request):
+        from .crm import resolve_review
+
+        return resolve_review(db, review_id, (await request.json())["resolution"])
 
     return app

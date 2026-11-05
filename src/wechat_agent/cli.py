@@ -26,6 +26,8 @@ def parser():
         "--rotate", action="store_true", help="轮换本地口令并使旧会话失效"
     )
     s.add_parser("demo")
+    start = s.add_parser("start", help="启动工作台及采集、历史补齐和分析后台")
+    start.add_argument("--port", type=int, default=8765)
     archive = s.add_parser("archive", help="全量私信与群聊本地初始化，不依赖导出文件")
     archive.add_argument(
         "action", choices=["discover", "init-all", "resume", "repair", "status"]
@@ -45,7 +47,7 @@ def parser():
     imp = s.add_parser("import")
     imp.add_argument("file", type=Path)
     imp.add_argument("--preview", action="store_true")
-    imp.add_argument("--account", help="旧导出文件所属本机微信账号 wxid")
+    imp.add_argument("--account", help="文件所属工作微信账号 wxid")
     serve = s.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1"])
     serve.add_argument("--port", type=int, default=8765)
@@ -176,13 +178,16 @@ def main():
                     )
                 )
             )
-        elif args.command == "serve":
+        elif args.command in {"serve", "start"}:
             import uvicorn
 
             from .web import create_app
 
             uvicorn.run(
-                create_app(settings), host=args.host, port=args.port, access_log=False
+                create_app(settings, background=True),
+                host="127.0.0.1",
+                port=args.port,
+                access_log=False,
             )
         elif args.command == "archive":
             from .archive import (

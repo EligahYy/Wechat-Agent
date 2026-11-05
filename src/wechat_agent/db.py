@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 5:
+            if version > 6:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -77,6 +77,30 @@ class DB:
                 connection.executescript(
                     "BEGIN IMMEDIATE; CREATE TABLE archive_quarantine(conversation_id TEXT NOT NULL REFERENCES conversations(id),row_hash TEXT NOT NULL,payload TEXT NOT NULL,error TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(conversation_id,row_hash)); PRAGMA user_version=5; COMMIT;"
                 )
+            if version < 6:
+                from .crm import SCHEMA as CRM_SCHEMA
+                from .crm import migrate_legacy
+
+                if version:
+                    backup_path = self.settings.data_dir / (
+                        "pre-v6-"
+                        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                        + ".sqlite3"
+                    )
+                    backup = sqlite3.connect(backup_path)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    backup_path.chmod(0o600)
+                connection.executescript("BEGIN IMMEDIATE;" + CRM_SCHEMA)
+                try:
+                    migrate_legacy(connection)
+                    connection.execute("PRAGMA user_version=6")
+                    connection.commit()
+                except BaseException:
+                    connection.rollback()
+                    raise
         finally:
             connection.close()
         self.path.chmod(0o600)

@@ -1,48 +1,215 @@
-{% macro select(name, source, label, optional=false) -%}
-<label>{{label}}<select name="{{name}}" data-options="{{source}}" {% if optional %}data-optional{% endif %}></select></label>
-{%- endmacro %}
-{% macro text(name, label, placeholder='', required=true) -%}
-<label>{{label}}<input name="{{name}}" placeholder="{{placeholder}}" {% if required %}required{% endif %}></label>
-{%- endmacro %}
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="csrf-token" content="{{csrf}}"><title>商家备货助手 · 工作台</title><link rel="stylesheet" href="/static/app.css"></head><body>
-<aside class="sidebar"><div class="brand"><span class="brand-mark">↗</span><div>商家备货助手<small>MERCHANT WORKSPACE</small></div></div><div class="nav-label">工作空间</div><nav>
-<button class="nav-item active" data-tab="today"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>今日工作台</button>
-<button class="nav-item" data-tab="projects"><svg viewBox="0 0 24 24"><path d="M3 7h18v14H3zM7 7V3h10v4M3 12h18M10 12v3h4v-3"/></svg>商家与备货项目</button>
-<button class="nav-item" data-tab="materials"><svg viewBox="0 0 24 24"><path d="M5 3h10l4 4v14H5zM14 3v5h5M8 12h8M8 16h6"/></svg>价卡与服务商</button>
-<button class="nav-item" data-tab="customers">◎ 客户全景档案</button>
-<button class="nav-item" data-tab="archive">▤ 全量消息档案</button>
-<button class="nav-item" data-tab="sources"><svg viewBox="0 0 24 24"><path d="M21 11a8 8 0 0 1-8 8H8l-5 3v-7a8 8 0 1 1 18-4Z"/><path d="M7 10h1m4 0h1m4 0h1"/></svg>微信接入与分析</button></nav><div class="sidebar-foot"><span class="dot"></span>本机私有工作空间<p>消息只读采集<br>对外沟通由你确认</p><span class="pill">LOCAL · v0.4</span></div></aside>
-<div class="app-shell"><header class="topbar"><div class="breadcrumb">工作空间 <span style="margin:0 10px">/</span> <strong id="breadcrumb">今日工作台</strong></div><div class="top-actions"><span id="today-date" class="desktop"></span><button id="refresh" class="subtle">↻ 刷新</button><span class="avatar">我</span></div></header>
-<main><div class="page-heading"><div><div class="eyebrow">MERCHANT OPERATIONS</div><h1 id="page-title">把每一次沟通，推进成备货进展</h1><p id="page-description">聚焦今天该跟进的商家、需要协调的服务商，以及下一步。</p></div><button class="primary" id="heading-action">＋ 新建待办</button></div>
-<div class="metrics" id="metrics"></div>
-<section id="today"><div class="banner" id="onboarding-banner"><div><strong>先接入 1–2 个群，建立真实业务时间线</strong><p>检测本机微信采集服务 → 选择试点群 → 核对消息。默认不向 DeepSeek 外发。</p></div><button data-tab="sources" class="primary">开始接入 →</button></div>
-<div class="grid"><div><div class="panel"><div class="panel-head"><h2>跟进事项</h2><div class="filter-row" id="task-filters"><button data-filter="active" class="active">进行中</button><button data-filter="all">全部</button><button data-filter="done">已完成</button></div></div><div id="tasks"></div></div><div class="panel"><div class="panel-head"><h2>待确认的 AI 建议</h2><span class="pill">审核后才生成任务</span></div><div id="suggestions"></div></div></div>
-<div><div class="panel"><div class="panel-head"><h2>值得重新联系</h2><span class="badge amber">最多 5 项</span></div><div id="activation"></div></div><div class="panel"><div class="panel-head"><h2>协同推进路径</h2></div><div class="panel-body"><div class="workflow"><span>需求确认</span><span>三方对接</span><span>方案确认</span><span>备货计划</span><span>发货 / 入仓</span><span>结果核验</span></div><p class="hint" style="margin-top:16px">建群、发出价卡和客户说“收到”，均不等于备货完成。每个批次单独跟进，责任明确到商家、服务商或我方。</p></div></div><div class="panel"><div class="panel-head"><h2>连接概览</h2><button class="subtle" data-tab="sources">管理 →</button></div><div class="panel-body" id="overview-status"></div></div></div></div></section>
-<section id="projects" class="hidden"><div class="grid"><div class="panel"><div class="panel-head"><h2>备货项目</h2><span id="project-count" class="pill"></span></div><div id="project-list"></div></div><div>
-<details open><summary>＋ 新增商家与备货批次</summary><div class="detail-body"><form data-api="/api/merchants">{{text('name','商家名称','例如：某某贸易')}}<button>保存商家</button></form><div class="divider"></div><form data-api="/api/projects">{{select('merchant_id','merchants','所属商家')}}{{text('name','备货批次','例如：美国普通货 · 11 月首批')}}{{text('market','目标市场','例如：美国')}}<button class="primary">创建备货项目</button></form></div></details>
-<details><summary>记录一次人工联系</summary><div class="detail-body"><form data-api="/api/touchpoints">{{select('merchant_id','merchants','商家')}}{{select('project_id','projects','项目（可选）',true)}}<label>实际沟通结果<textarea name="outcome" placeholder="联系了谁、得到什么反馈、接下来做什么" required></textarea></label><button>确认已联系</button><p class="hint">仅在你已实际沟通后记录。复制草稿不计为已联系。</p></form></div></details>
-<details><summary>记录备货节点 / 核验结果</summary><div class="detail-body"><form data-api="/api/milestones">{{select('project_id','projects','项目')}}<label>节点<select name="kind"><option value="dispatch">实际发货</option><option value="arrival">到仓</option><option value="stocking_result">平台备货结果</option></select></label>{{text('planned_at','计划时间','含时区 ISO 时间，可空',false)}}{{text('actual_at','实际时间','含时区 ISO 时间，可空',false)}}<label>依据类型<select name="evidence_type"><option value="chat_report">对方聊天反馈（未核验）</option><option value="manual_verification">人工核验</option><option value="platform_record">平台记录</option><option value="document">单据</option></select></label><label>核验说明<textarea name="note" placeholder="记录依据，以及平台备货完成口径"></textarea></label><label>人工核验状态<select name="verified" data-bool><option value="false">尚未核验</option><option value="true">已人工核验</option></select></label><button>保存节点</button></form></div></details></div></div></section>
-<section id="customers" class="hidden"><div class="panel"><div class="panel-head"><h2>客户全景档案</h2><span class="badge">私信 + 群内发言</span></div><div class="panel-body"><p class="hint">按当前工作账号下的稳定微信 ID 汇总联系人；同名不自动合并，公司与商家归属仍需确认。此视图涵盖已归档数据，不保证完整通讯录。</p><form id="customer-search"><label>搜索联系人<input name="q" placeholder="显示名或微信 ID"></label><button>查询</button></form></div><div id="customer-list"></div><div class="panel-body row"><button id="customer-prev">上一页</button><span id="customer-page"></span><button id="customer-next">下一页</button></div></div></section>
-<section id="archive" class="hidden"><div class="panel"><div class="panel-head"><h2>本地消息档案</h2><span class="badge green">默认不外发</span></div><div class="panel-body"><p class="hint">这里显示当前账号的私信和群聊；不需要先创建商家。初始化命令：<code>uv run wechat-agent archive init-all --account 你的wxid</code>，中断后使用 <code>archive resume</code>。</p><form id="archive-search"><div class="form-grid"><label>搜索会话<input name="q" placeholder="名称或精确会话 ID"></label><label>会话类型<select name="kind"><option value="all">全部私信与群聊</option><option value="private">私信</option><option value="group">群聊</option></select></label></div><button>查询</button></form><p id="archive-progress" class="hint"></p></div><details><summary>手动导入：旧导出项目 / CSV / JSON / JSONL</summary><div class="detail-body"><form id="file-import"><label>文件<input type="file" name="file" accept=".csv,.json,.jsonl,.ndjson" required></label><label>所属微信账号（旧文件无账号字段时必填）<input name="account_id" placeholder="源服务 current_account.wxid；留空使用本机绑定账号"></label><p class="hint">先预览再导入；不会调用旧项目、读取其密钥或触发模型分析。网页文件上限 1.5 MB，更大文件用 CLI import。标准文件需使用约定字段。</p><button id="preview-file">校验预览</button><button id="write-file" type="button" class="primary" disabled>确认导入</button><pre id="file-report" class="hidden"></pre></form></div></details><div id="archive-list"></div><div class="panel-body row"><button id="archive-prev">上一页</button><span id="archive-page" class="hint"></span><button id="archive-next">下一页</button></div></div></section>
-<section id="sources" class="hidden"><div class="grid"><div>
-<div class="panel"><div class="panel-head"><h2>真实微信接入</h2><span class="badge green">只读 · 小范围试采</span></div><div class="panel-body"><div class="steps"><div class="step active" data-step="1"><b>1</b>检测服务</div><div class="step" data-step="2"><b>2</b>确认账号</div><div class="step" data-step="3"><b>3</b>选择群聊</div><div class="step" data-step="4"><b>4</b>核对消息</div></div>
-<div class="connection"><div class="connection-icon">◉</div><div><strong id="source-status-title">等待检测本机采集服务</strong><p id="source-status-detail">微信登录本身还不够，需要本机 wx-cli 提供只读数据服务。</p></div></div><div id="source-error" class="warn hidden"></div><button id="probe-source" class="primary">检测连接</button><span class="hint"> 不读取全部聊天，不调用 DeepSeek</span>
-<div id="account-confirm" class="source-check hidden"><p>检测到账号：<strong id="account-name"></strong></p><p class="hint" id="account-id"></p><button id="bind-source" class="primary">确认这是我的工作账号</button></div>
-<div id="group-picker" class="hidden"><div class="divider"></div><div class="row"><h3>选择 1–2 个试点群</h3><span id="selected-count" class="pill">已选 0 / 2</span></div><p class="hint">只读取会话名称供选择，私信不会显示；仅所选群会导入消息。</p><input id="group-search" placeholder="搜索已加载的群名"><div id="group-options"></div><button id="more-groups" class="subtle hidden">加载更多群聊</button><div class="form-grid" style="margin-top:16px">{{select('pilot_merchant','merchants','关联商家（可后补）',true)}}{{select('pilot_project','projects','关联备货项目（可后补）',true)}}</div><p class="hint">两个群若属于不同商家，先不关联，试采后分别配置。混合商家群先仅归档。</p><button id="start-pilot" class="primary">读取所选群最近 15 分钟</button><p class="hint">本次试采会关闭所选群已有分析授权。若没有消息，可在微信里正常产生一条业务消息后重新试采。</p></div><div id="pilot-results"></div></div></div>
-<div class="panel"><div class="panel-head"><h2>已接入会话</h2><span id="conversation-count" class="pill"></span></div><div id="conversations"></div></div>
-<details><summary>高级设置：消息导入与运行诊断</summary><div class="detail-body"><form id="import"><label>标准 JSONL<textarea name="records" placeholder="每行一条标准消息；先配置会话白名单" required></textarea></label><button>导入本地消息</button></form><pre id="runtime"></pre><p class="hint">scanned 仅表示完成查询；gap 是待核查的覆盖缺口，不代表完整历史已获取。</p></div></details></div>
-<div><div class="panel"><div class="panel-head"><h2>接入前，你需要准备什么？</h2></div><div class="panel-body"><ol class="instruction-list"><li>在这台 Mac 上登录工作微信。</li><li>安装并验证 <a href="https://github.com/pandorafuture/wx-cli" target="_blank" rel="noreferrer">wx-cli</a> 的设备兼容与密钥条件。</li><li>启动只监听本机的采集服务（默认 9100 端口）。</li><li>回到这里检测连接，确认账号后只选试点群。</li></ol><p class="warn">macOS 27.0 / 微信 4.1.15.55 尚未实测兼容。应用不会自动修改微信签名或关闭系统保护；如果工具要求这些变更，请先停在该步骤核对。</p><details><summary>服务已装好？查看启动参考</summary><div class="detail-body"><pre>wx-cli --version
-wx-cli doctor
-wx-cli status
-wx-cli server run --host 127.0.0.1 --port 9100</pre><p class="hint">以上以所选 wx-cli 版本实际支持为准。没有有效数据库密钥时，仅启动 server 不能完成采集。密钥不要粘贴到本页面或聊天。</p></div></details></div></div>
-<details><summary>手动配置会话 / DeepSeek 外发</summary><div class="detail-body"><form data-api="/api/conversations"><label>来源<select name="source"><option value="wx_cli">真实微信采集</option><option value="manual">人工导入</option><option value="fixture">虚构样例</option></select></label>{{text('account_id','账号 ID','source current_account.wxid')}}{{text('source_id','精确会话 ID','wxid 或 @chatroom 群 ID')}}{{text('title','显示名称','本地会话名称',false)}}<label>会话类型<select name="kind"><option value="group">群聊</option><option value="private">私信</option></select></label>{{select('merchant_id','merchants','商家（可选）',true)}}{{select('project_id','projects','备货项目（可选）',true)}}<label>DeepSeek 分析授权<select name="egress" data-bool><option value="false">仅本地归档，禁止外发</option><option value="true">已核对正文并确认有权外发</option></select></label><p class="warn">开启后，worker 可以自动分析该会话文本。请先核对原文；正则脱敏不等于机密识别。</p><button>保存设置</button></form></div></details>
-<details><summary>确认群成员的业务角色</summary><div class="detail-body"><form data-api="/api/roles">{{select('conversation_id','conversations','会话')}}{{text('sender_id','发送者 ID','从本地消息详情中复制')}}{{text('display_name','本地称呼','用于脱敏替换',false)}}<label>角色<select name="role"><option value="merchant">商家</option><option value="service_provider">头程服务商</option><option value="self">平台运营（我）</option><option value="unknown">待确认</option></select></label><button>确认角色</button></form></div></details>
-<div class="panel"><div class="panel-head"><h2>分析连接说明</h2></div><div class="panel-body"><p class="small">先核对采集，再开启 DeepSeek。</p><p class="hint">本地口令不是 DeepSeek API key。配置 key 后另开终端运行 worker，采集与分析相互独立。</p><pre>uv run wechat-agent credentials DEEPSEEK_API_KEY
-uv run wechat-agent worker</pre></div></div></div></div></section>
-<section id="materials" class="hidden"><div class="grid"><div class="panel"><div class="panel-head"><h2>可用素材与价卡版本</h2><span class="pill">条件人工审核</span></div><div id="material-list"></div></div><div><details open><summary>＋ 录入价卡 / 海报说明</summary><div class="detail-body"><form data-api="/api/materials">{{text('name','素材名称','例如：美国普通货海运价卡')}}<div class="form-grid">{{text('version','版本','v2026-11')}}{{text('market','市场','美国')}}</div><label>素材类型<select name="kind"><option value="rate_card">结构化价卡</option><option value="poster">海报说明</option></select></label><label>已核对的条件<textarea name="terms" placeholder="币种、计费单位、货型、税费、附加费与时效；不自动读取图片" required></textarea></label>{{text('valid_until','有效至','含时区 ISO 时间；未知不作推荐',false)}}<div class="form-grid"><label>使用范围<select name="scope"><option value="internal">仅内部</option><option value="external">获准对外</option></select></label><label>审核状态<select name="status"><option value="pending">待审核</option><option value="approved">已人工审核</option></select></label></div><button class="primary">保存素材版本</button></form></div></details>
-<details><summary>＋ 新增头程服务商</summary><div class="detail-body"><form data-api="/api/providers">{{text('name','服务商名称')}}<label>能力与依据<textarea name="capabilities" placeholder="已核实线路、货型与核实日期"></textarea></label><button>保存服务商</button></form></div></details>
-<details><summary>记录项目确认报价</summary><div class="detail-body"><form data-api="/api/quotes">{{select('project_id','projects','项目')}}{{select('provider_id','providers','服务商')}}{{select('material_id','materials','参考素材（可选）',true)}}<label>本批具体报价条件<textarea name="terms" placeholder="包含全部已确认条件；未知项写待确认" required></textarea></label><label>确认状态<select name="confirmed" data-bool><option value="false">待服务商确认</option><option value="true">已人工确认</option></select></label><button>保存报价快照</button></form></div></details></div></div></section>
-</main></div>
-<dialog id="task-dialog"><div class="dialog-header"><h2>新建跟进事项</h2><button data-close="task-dialog" class="subtle">✕</button></div><div class="dialog-body"><form data-api="/api/tasks">{{select('merchant_id','merchants','商家')}}{{select('project_id','projects','备货项目（可选）',true)}}{{text('summary','要推进什么？','例如：向服务商确认本批附加费')}}<label>下一步责任方<select name="party"><option value="self">我协调 / 处理</option><option value="merchant">商家</option><option value="service_provider">头程服务商</option><option value="unknown">待确认</option></select></label><button class="primary">创建待办</button></form></div></dialog>
-<dialog id="preview-dialog"><div class="dialog-header"><h2 id="preview-title">消息预览</h2><button data-close="preview-dialog" class="subtle">✕</button></div><div class="dialog-body"><div id="message-preview"></div><div class="row hidden" id="message-pagination"><button id="messages-prev">更近的消息</button><span id="messages-page"></span><button id="messages-next">更早的消息</button></div><pre id="preview" class="hidden"></pre><button id="copy-draft" class="primary hidden">复制已核对的草稿</button><p class="hint">复制不会发送微信，也不会自动记录为已联系。</p></div></dialog>
-<div id="notice" class="toast hidden" role="status"></div><script nonce="{{nonce}}" src="/static/app.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="csrf-token" content="{{csrf}}" />
+    <title>微信客户助手 · 今日跟进</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <a class="brand" href="#today"
+        ><span class="brand-mark">W</span
+        ><span>微信客户助手<small>把沟通变成下一步</small></span></a
+      >
+      <nav aria-label="主导航">
+        <button data-page="today" class="active">◷ <span>今日跟进</span></button
+        ><button data-page="customers">◎ <span>客户</span></button
+        ><button data-page="reviews">
+          ◇ <span>待确认</span><b id="review-count"></b></button
+        ><button data-page="settings">⚙ <span>设置</span></button>
+      </nav>
+      <div class="sidebar-note">
+        你的本地工作空间<br />消息只读接入 · 人工发送
+      </div>
+    </aside>
+    <main>
+      <header>
+        <div id="date-label"></div>
+        <button id="refresh" class="quiet">刷新状态 ↻</button>
+      </header>
+      <section id="page-today" class="page">
+        <div class="heading">
+          <div>
+            <span class="eyebrow">YOUR NEXT MOVE</span>
+            <h1>今天，联系谁？</h1>
+            <p>从聊天里的需求与约定，找到值得推进的下一步。</p>
+          </div>
+          <div class="status" id="sync-status">读取工作区…</div>
+        </div>
+        <div id="setup-banner" class="banner hidden"></div>
+        <div id="progress" class="progress hidden"></div>
+        <div class="section-line">
+          <div class="filters">
+            <button data-filter="today" class="active">
+              今日行动 <b id="today-count">0</b></button
+            ><button data-filter="waiting">
+              等待回复 <b id="waiting-count">0</b></button
+            ><button data-filter="all">全部计划</button>
+          </div>
+          <span id="customer-count" class="muted"></span>
+        </div>
+        <div id="action-list" class="action-list"></div>
+      </section>
+      <section id="page-customers" class="page hidden">
+        <div class="heading">
+          <div>
+            <span class="eyebrow">CUSTOMER MEMORY</span>
+            <h1>客户，不再从零了解</h1>
+            <p>自动归拢私信与群聊中的需求、顾虑和跟进依据。</p>
+          </div>
+        </div>
+        <form id="customer-search" class="search">
+          <input
+            name="q"
+            placeholder="搜索客户称呼"
+            aria-label="搜索客户"
+          /><button>搜索</button>
+        </form>
+        <div id="customer-list" class="customer-grid"></div>
+        <div class="pagination">
+          <button id="customers-prev">上一页</button
+          ><span id="customers-page">1</span
+          ><button id="customers-next">下一页</button>
+        </div>
+      </section>
+      <section id="page-reviews" class="page hidden">
+        <div class="heading">
+          <div>
+            <span class="eyebrow">ONLY WHAT NEEDS YOU</span>
+            <h1>只确认关键问题</h1>
+            <p>身份归属与业务歧义才需要你，其余由助手整理。</p>
+          </div>
+        </div>
+        <div id="review-list"></div>
+      </section>
+      <section id="page-settings" class="page hidden">
+        <div class="heading">
+          <div>
+            <span class="eyebrow">WORKSPACE</span>
+            <h1>连接一次，持续整理</h1>
+            <p>日常无需逐群配置，也无需先建立商家或项目。</p>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <div class="panel">
+            <span class="step-label">01 · 微信数据</span>
+            <h2>连接工作微信</h2>
+            <p>通过本机 wx-cli 接入全部可读私信与群聊，自动补齐历史。</p>
+            <div id="account-status" class="inset"></div>
+            <button id="probe" class="primary">检测本机连接</button>
+            <div id="source-result"></div>
+            <p class="hint">
+              源服务需先运行在 127.0.0.1:9100。已归档的数据无需重新导入。
+            </p>
+          </div>
+          <div class="panel">
+            <span class="step-label">02 · 分析服务</span>
+            <h2>让 DeepSeek 整理客户</h2>
+            <p id="key-status"></p>
+            <button id="change-key" class="quiet" type="button">
+              更新 API key
+            </button>
+            <form id="key-form">
+              <label
+                >DeepSeek API key<input
+                  name="key"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="保存到本机系统凭据存储"
+                  required /></label
+              ><button>安全保存</button>
+            </form>
+            <form id="policy-form">
+              <label
+                >每日 token 预算<input
+                  name="daily_budget"
+                  type="number"
+                  min="1000"
+                  max="10000000"
+                  value="100000"
+                  required /></label
+              ><label class="checkbox"
+                ><input
+                  name="include_new"
+                  type="checkbox"
+                  checked
+                />自动纳入新发现的工作会话</label
+              ><label class="checkbox"
+                ><input
+                  name="consent"
+                  type="checkbox"
+                />我确认此为工作账号，允许脱敏聊天文本发往 DeepSeek 分析</label
+              >
+              <div class="button-row">
+                <button class="primary">开始自动整理</button
+                ><button type="button" id="pause-analysis" class="quiet">
+                  暂停分析
+                </button>
+              </div>
+              <p class="hint">
+                预算覆盖输入、输出及重试；历史分批续跑，不保证当天完成。采集与分析进度分别显示。
+              </p>
+            </form>
+          </div>
+        </div>
+        <details class="panel">
+          <summary>备用：手动导入文件</summary>
+          <p>
+            仅保留一个文件入口，使用标准消息字段；不需要旧导出项目。导入后仍受账号分析授权控制。
+          </p>
+          <form id="file-import">
+            <input
+              type="file"
+              name="file"
+              accept=".csv,.json,.jsonl,.ndjson"
+              required
+              aria-label="消息文件"
+            />
+            <div class="button-row">
+              <button>预览文件</button
+              ><button type="button" id="write-file" disabled>确认导入</button>
+            </div>
+            <p id="file-report" class="hint"></p>
+          </form>
+          <details>
+            <summary>查看标准格式</summary>
+            <pre>
+[{"source":"manual","account_id":"工作账号","conversation_id":"对方ID","conversation_type":"private","source_id":"稳定消息ID","sender_id":"对方ID","direction":"incoming","event_time":"2026-11-05T09:00:00+08:00","message_type":"text","text":"请确认这批货的费用"}]</pre
+            >
+            <p class="hint">
+              CSV 使用相同列名；时间必须含时区。网页上限 1.5 MB；大文件可用 CLI
+              import。
+            </p>
+          </details>
+        </details>
+        <details class="panel">
+          <summary>消息档案与运行诊断</summary>
+          <p class="hint">
+            消息默认折叠空文本、简短寒暄和确认；原文始终保留。附件未自动识别不代表没有业务价值。
+          </p>
+          <button id="load-archive">浏览消息档案</button>
+          <div id="archive-list"></div>
+          <div class="pagination">
+            <button id="archive-prev">上一页</button
+            ><span id="archive-page">1</span
+            ><button id="archive-next">下一页</button>
+          </div>
+          <div id="diagnostics"></div>
+          <button id="retry">重试失败分析</button>
+        </details>
+      </section>
+      <footer>微信客户助手 · 基于聊天证据整理，重要业务事实仍需核实</footer>
+    </main>
+    <dialog id="detail">
+      <div class="dialog-head">
+        <h2 id="detail-title"></h2>
+        <button id="close-detail" class="quiet" aria-label="关闭">✕</button>
+      </div>
+      <div id="detail-body"></div>
+    </dialog>
+    <div id="notice" role="status" class="notice hidden"></div>
+    <script nonce="{{nonce}}" src="/static/app.js"></script>
+  </body>
+</html>

@@ -1,62 +1,108 @@
-const {chromium}=require('playwright');
-const fs=require('fs');
-const path=require('path');
-const base=process.env.WA_BROWSER_URL||'http://127.0.0.1:8767';
-const dataDir=process.env.WA_BROWSER_DATA_DIR;
-const screenshots=process.env.WA_BROWSER_SCREENSHOTS||'/tmp/wechat-agent-browser';
-if(!dataDir)throw Error('Set WA_BROWSER_DATA_DIR to the isolated browser test data directory');
-if(!['127.0.0.1','localhost'].includes(new URL(base).hostname))throw Error('Browser smoke only targets a local test service');
-fs.mkdirSync(screenshots,{recursive:true});
-(async()=>{
- const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH || (fs.existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined),headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
- try {
-  const page=await browser.newPage({viewport:{width:1440,height:1050}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(base);
-  await page.locator('#token').fill(fs.readFileSync(path.join(dataDir,'session-token'),'utf8').trim());
-  await page.getByRole('button',{name:'进入工作台'}).click();
-  await page.locator('#metrics .metric').first().waitFor();
-  await page.screenshot({path:path.join(screenshots,'today.png'),fullPage:true});
-  await page.locator('#heading-action').click();
-  await page.locator('#task-dialog [name=summary]').fill('虚构：向头程服务商确认本批附加费');
-  await page.locator('#task-dialog [name=party]').selectOption('service_provider');
-  await page.locator('#task-dialog button.primary').click();
-  await page.locator('#tasks h3').filter({hasText:'虚构：向头程服务商确认本批附加费'}).waitFor();
-  await page.locator('.nav-item[data-tab=sources]').click();
-  await page.locator('#probe-source').click();
-  await page.locator('#account-confirm:visible').waitFor();
-  await page.locator('#bind-source').click();
-  await page.locator('#group-options input').first().waitFor();
-  if(await page.locator('#group-options input').count()!==2)throw Error('group filtering failed');
-  await page.locator('#group-options input').nth(0).check();
-  await page.locator('#group-options input').nth(1).check();
-  await page.locator('#start-pilot').click();
-  await page.locator('#pilot-results .trial-result').nth(1).waitFor();
-  if((await page.locator('#pilot-results').innerText()).includes('需检查'))throw Error('pilot failed');
-  await page.locator('#pilot-results [data-action=evidence]').first().click();
-  await page.locator('#preview-dialog[open] .message').first().waitFor();
-  await page.locator('#preview-dialog [data-action=load-image]').click();
-  await page.locator('#preview-dialog img.archived-image').waitFor();
-  if(!(await page.locator('#preview-dialog .image-preview').innerText()).includes('缩略图'))throw Error('image quality not shown');
-  if(!await page.locator('#preview-dialog img.archived-image').evaluate(img=>img.complete && img.naturalWidth>0))throw Error('image decode failed');
-  await page.locator('#preview-dialog [data-close]').click();
-  await page.screenshot({path:path.join(screenshots,'source.png'),fullPage:true});
-  await page.locator('.nav-item[data-tab=archive]').click();
-  await page.locator('#file-import').locator('xpath=ancestor::details').evaluate(d=>d.open=true);
-  const manual=[{time:'2026-11-04 09:00:00',conversation:'客户甲（虚构）',conversation_username:'customer-manual',conversation_type:'direct',sender:'客户甲',sender_username:'customer-manual',direction:'incoming',type_name:'文本',content:'请核对明天的备货计划',server_id:'200'}];
-  await page.locator('#file-import input[type=file]').setInputFiles({name:'all_messages.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(manual))});
-  await page.locator('#preview-file').click();
-  await page.waitForFunction(()=>!document.querySelector('#write-file').disabled);
-  await page.locator('#write-file').click();
-  await page.locator('#archive-list h3').filter({hasText:'客户甲（虚构）'}).waitFor();
-  await page.locator('.nav-item[data-tab=customers]').click();
-  await page.locator('#customer-list button[data-customer="customer-manual"]').click();
-  await page.locator('#preview-dialog[open] .message').filter({hasText:'请核对明天的备货计划'}).waitFor();
-  await page.locator('#preview-dialog [data-close]').click();
-  await page.setViewportSize({width:390,height:844});
-  await page.locator('.nav-item[data-tab=today]').click();
-  if(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth))throw Error('mobile horizontal overflow');
-  await page.screenshot({path:path.join(screenshots,'mobile.png'),fullPage:true});
-  if(errors.length)throw Error(errors.join(';'));
-  console.log('Browser smoke passed: login, dashboard, manual task, account binding, two-group local pilot, message/image preview, thumbnail quality, manual file preview/import, customer timeline, mobile width; no JavaScript exceptions.');
- } finally {await browser.close();}
-})().catch(e=>{console.error(e.message);process.exit(1)});
+const { chromium } = require("playwright");
+const fs = require("fs");
+const path = require("path");
+const base = process.env.WA_BROWSER_URL || "http://127.0.0.1:8767";
+const directory = process.env.WA_BROWSER_DATA_DIR;
+const screenshots =
+  process.env.WA_BROWSER_SCREENSHOTS || "/tmp/wechat-agent-browser";
+if (!directory || !["127.0.0.1", "localhost"].includes(new URL(base).hostname))
+  throw Error("Use an isolated local test service");
+fs.mkdirSync(screenshots, { recursive: true });
+(async () => {
+  const browser = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
+    headless: true,
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
+  try {
+    const page = await browser.newPage({
+        viewport: { width: 1440, height: 1050 },
+      }),
+      errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    await page.goto(base);
+    await page
+      .locator("#token")
+      .fill(
+        fs.readFileSync(path.join(directory, "session-token"), "utf8").trim(),
+      );
+    await page.getByRole("button", { name: "进入工作台" }).click();
+    await page.getByRole("heading", { name: "今天，联系谁？" }).waitFor();
+    await page.locator(".action-card").waitFor();
+    await page.screenshot({
+      path: path.join(screenshots, "crm-today.png"),
+      fullPage: true,
+    });
+    await page
+      .getByRole("button", { name: "查看依据", exact: true })
+      .first()
+      .click();
+    await page.locator("#detail[open] .message").waitFor();
+    if (!(await page.locator("#detail-body").innerText()).includes("3方"))
+      throw Error("evidence missing");
+    await page.locator("#close-detail").click();
+    await page.locator("nav [data-page=customers]").click();
+    await page.locator(".customer-card").click();
+    await page.locator("#message-items").waitFor();
+    if ((await page.locator("#message-items").innerText()).includes("收到"))
+      throw Error("noise not collapsed");
+    await page.locator("#message-filter").click();
+    if (!(await page.locator("#message-items").innerText()).includes("收到"))
+      throw Error("original message not retained");
+    await page.locator("#detail [data-image]").click();
+    await page.locator("#detail img").waitFor();
+    if (
+      !(await page
+        .locator("#detail img")
+        .evaluate((i) => i.complete && i.naturalWidth > 0))
+    )
+      throw Error("image invalid");
+    await page.screenshot({
+      path: path.join(screenshots, "crm-customer.png"),
+      fullPage: true,
+    });
+    await page.locator("#close-detail").click();
+    await page.locator("nav [data-page=today]").click();
+    await page
+      .getByRole("button", { name: "改期", exact: true })
+      .first()
+      .click();
+    await page.locator("#result-form input[type=date]").fill("2030-01-01");
+    await page.locator("#result-form .primary").click();
+    await page.getByRole("heading", { name: "今天暂无到期行动" }).waitFor();
+    await page.locator("nav [data-page=reviews]").click();
+    await page
+      .getByRole("heading", { name: "暂时没有需要你确认的事" })
+      .waitFor();
+    await page.locator("nav [data-page=settings]").click();
+    if ((await page.locator("input[type=file]").count()) !== 1)
+      throw Error("more than one manual entry");
+    await page.locator("#probe").click();
+    await page.locator("#bind-account").waitFor();
+    await page.screenshot({
+      path: path.join(screenshots, "crm-settings.png"),
+      fullPage: true,
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.locator("nav [data-page=today]").click();
+    await page.screenshot({
+      path: path.join(screenshots, "crm-mobile.png"),
+      fullPage: true,
+    });
+    if (
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth + 1,
+      )
+    )
+      throw Error("mobile overflow");
+    if (errors.length) throw Error(errors.join("\n"));
+    console.log(
+      "Browser passed: login, auto-created action, evidence, profile, value filter, image, reschedule, reviews, single import entry, source probe, mobile",
+    );
+  } finally {
+    await browser.close();
+  }
+})().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

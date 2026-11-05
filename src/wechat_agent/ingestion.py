@@ -171,5 +171,14 @@ def ingest(
                 )
                 if r["source_id"] in changed[chat_id]
             ]
-            enqueue(c, chat_id, ids)
+            policy = c.execute(
+                "SELECT enabled FROM crm_policies WHERE account_id=(SELECT account_id FROM conversations WHERE id=?)",
+                (chat_id,),
+            ).fetchone()
+            if not policy:
+                enqueue(c, chat_id, ids)
+    if connection is None and analyze and not preview and changed:
+        from .crm import schedule
+
+        schedule(db)
     return counts

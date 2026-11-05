@@ -79,29 +79,33 @@ def discover(source):
     return list(found.values())
 
 
-def register(db, sessions, until, rescan=False):
-    """One explicit local scope grant; never create merchants or grant egress."""
+def register(db, sessions, until, rescan=False, preserve_paused=False):
+    """Discover locally; inherit only an explicitly authorized account policy."""
     with db.tx() as c:
-        c.execute(
-            "UPDATE conversations SET egress=0 WHERE source='wx_cli' AND account_id=?",
+        policy = c.execute(
+            "SELECT * FROM crm_policies WHERE account_id=?",
             (db.settings.source_account,),
-        )
+        ).fetchone()
+        grant = int(bool(policy and policy["enabled"] and policy["include_new"]))
         for item in sessions:
             if item["excluded"]:
                 continue
             row = c.execute(
-                "SELECT id FROM conversations WHERE source='wx_cli' AND account_id=? AND source_id=?",
+                "SELECT id,allowlisted FROM conversations WHERE source='wx_cli' AND account_id=? AND source_id=?",
                 (db.settings.source_account, item["source_id"]),
             ).fetchone()
+            if row and preserve_paused and not row["allowlisted"]:
+                continue
             cid = row["id"] if row else uid()
             c.execute(
-                "INSERT INTO conversations(id,source,account_id,source_id,title,kind,allowlisted,egress) VALUES(?,'wx_cli',?,?,?,?,1,0) ON CONFLICT(source,account_id,source_id) DO UPDATE SET title=excluded.title,allowlisted=1,egress=0",
+                "INSERT INTO conversations(id,source,account_id,source_id,title,kind,allowlisted,egress) VALUES(?,'wx_cli',?,?,?,?,1,?) ON CONFLICT(source,account_id,source_id) DO UPDATE SET title=excluded.title,allowlisted=1",
                 (
                     cid,
                     db.settings.source_account,
                     item["source_id"],
                     item["title"],
                     item["kind"],
+                    grant,
                 ),
             )
             c.execute(
@@ -130,7 +134,9 @@ def register(db, sessions, until, rescan=False):
         )
 
 
-def import_history(db, source, emit=lambda event: None, delay=0.1):
+def import_history(
+    db, source, emit=lambda event: None, delay=0.1, max_pages=None, stop=None
+):
     source.validate()
     chats = db.rows(
         "SELECT c.* FROM conversations c JOIN archive_progress p ON p.conversation_id=c.id WHERE c.source='wx_cli' AND c.account_id=? AND c.allowlisted=1 AND p.status NOT IN ('scanned','scanned_with_gaps') ORDER BY c.id",
@@ -138,7 +144,9 @@ def import_history(db, source, emit=lambda event: None, delay=0.1):
     )
     for chat in chats:
         try:
-            for _ in range(100000):
+            for _ in range(max_pages or 100000):
+                if stop and stop.is_set():
+                    return status_report(db)
                 source.validate()
                 progress = db.rows(
                     "SELECT * FROM archive_progress WHERE conversation_id=?",
@@ -217,8 +225,6 @@ def import_history(db, source, emit=lambda event: None, delay=0.1):
                     ).fetchone()
                     if not current or not current["allowlisted"]:
                         raise SourceError("archive_conversation_paused")
-                    if current["egress"]:
-                        raise SourceError("archive_egress_policy_changed")
                     result = ingest(db, records, analyze=False, connection=c)
                     for row_hash, code in issues:
                         c.execute(
@@ -263,7 +269,8 @@ def import_history(db, source, emit=lambda event: None, delay=0.1):
                 if delay:
                     time.sleep(delay)
             else:
-                raise SourceError("history_page_limit")
+                if max_pages is None:
+                    raise SourceError("history_page_limit")
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
             error = (
                 str(exc)

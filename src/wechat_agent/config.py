@@ -35,7 +35,7 @@ class Settings:
         default_factory=lambda: os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
     )
     daily_token_limit: int = 100000
-    max_output_tokens: int = 2000
+    max_output_tokens: int = 4000
 
     def prepare(self):
         self.data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
