@@ -21,6 +21,7 @@ def parser():
     )
     s = p.add_subparsers(dest="command", required=True)
     s.add_parser("init")
+    s.add_parser("diagnose", help="输出安全的模型失败诊断，不调用API、不输出聊天或凭据")
     token = s.add_parser("token")
     token.add_argument(
         "--rotate", action="store_true", help="轮换本地口令并使旧会话失效"
@@ -148,6 +149,10 @@ def main():
     try:
         if args.command == "init":
             print("已初始化本地数据库；查看登录口令：wechat-agent token")
+        elif args.command == "diagnose":
+            from .diagnostics import snapshot
+
+            print(dumps(snapshot(db)))
         elif args.command == "token":
             if args.rotate:
                 db.rotate_token()

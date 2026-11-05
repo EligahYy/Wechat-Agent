@@ -331,3 +331,39 @@ def test_history_budget_hold_preserves_capacity_for_new_recent_messages(
     )
     assert run_once(db, empty_model(sent.append))
     assert len(sent) == 1
+
+
+def test_safe_diagnostics_uses_recorded_failure_and_excludes_sensitive_data(
+    db, record, monkeypatch
+):
+    from wechat_agent.diagnostics import snapshot
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "must-not-print-secret")
+    corpus(db, record, recent=1, history=0)
+    configure(db, True)
+    assert run_once(db, empty_model(status=402))
+    job = db.rows("SELECT id FROM jobs WHERE status='retry_wait'")[0]
+    # A subsequent retry can replace the job's error; historical diagnoses must
+    # still reflect the recorded failed request rather than the mutable job row.
+    with db.tx() as c:
+        c.execute("UPDATE jobs SET error=NULL WHERE id=?", (job["id"],))
+    result = snapshot(db)
+    assert result["recent_errors"][0]["code"] == "HTTP_402"
+    assert "余额不足" in result["recent_errors"][0]["title"]
+    encoded = json.dumps(result, ensure_ascii=False)
+    assert "must-not-print-secret" not in encoded
+    assert "商家昵称" not in encoded and "请确认欧洲备货" not in encoded
+    assert "account_id" not in encoded
+
+
+def test_diagnose_command_is_local_only(db, record, monkeypatch, capsys):
+    from wechat_agent.cli import main
+
+    corpus(db, record, recent=1, history=0)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["wechat-agent", "--data-dir", str(db.settings.data_dir), "diagnose"],
+    )
+    main()
+    report = json.loads(capsys.readouterr().out)
+    assert report["model"] and report["recent_errors"] == []

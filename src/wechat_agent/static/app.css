@@ -1141,3 +1141,26 @@ dialog[open]::backdrop {
     transform: none;
   }
 }
+
+.failure-reason {
+  border-left: 2px solid #b79769;
+  padding-left: 15px;
+  margin-left: auto;
+  max-width: 420px;
+}
+.failure-reason strong {
+  font-size: 12px;
+}
+.failure-reason p {
+  font-size: 11px;
+  line-height: 1.7;
+}
+@media (max-width: 800px) {
+  .analysis-status {
+    flex-wrap: wrap;
+  }
+  .failure-reason {
+    margin-left: 20px;
+    width: 100%;
+  }
+}

@@ -355,6 +355,13 @@ document.addEventListener(
     const b = e.target.closest("button");
     if (!b) return;
     const d = b.dataset;
+    if (d.copyDiagnostics) {
+      const result = await api("/api/analysis/progress");
+      await navigator.clipboard.writeText(
+        JSON.stringify(result.diagnostics, null, 2),
+      );
+      return notice("诊断已复制，不含聊天正文、账号ID或API key。");
+    }
     if (d.page) return go(d.page);
     if (d.go) return go(d.go);
     if (d.filter) {
@@ -644,6 +651,13 @@ async function loadAnalysis() {
     $("#analysis-pause").disabled = !d.enabled;
     $("#analysis-status").innerHTML =
       `<span class="live-dot ${!d.enabled || d.gate ? "paused" : ""}"></span><div><strong>${!d.enabled ? "分析已暂停" : d.gate ? esc(gateNames[d.gate.reason] || d.gate.reason) : r.pending ? "优先整理近 15 天的客户需求" : h.pending ? "近期已处理，历史按余量继续" : "本轮文本已处理，等待新消息"}</strong><p>${esc(d.account_name || "尚未连接工作账号")} · 更新于 ${esc(dateLabel(d.updated_at))}${d.gate ? " · 自动复查 " + esc(dateLabel(d.gate.until)) : ""}</p></div>`;
+    if (d.gate && d.diagnostics?.recent_errors?.length) {
+      const problem = d.diagnostics.recent_errors[0];
+      $("#analysis-status").insertAdjacentHTML(
+        "beforeend",
+        `<div class="failure-reason"><strong>${esc(problem.title)} · ${esc(problem.code)}</strong><p>${esc(problem.action)}</p><button data-copy-diagnostics="true" class="quiet">复制诊断信息</button></div>`,
+      );
+    }
     $("#analysis-metrics").innerHTML =
       metric(
         d.messages.total || 0,

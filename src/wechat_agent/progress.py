@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from .analysis import budget_state
 from .crm import TZ
 from .db import now
+from .diagnostics import snapshot
 from .planning import DAYS, PLANNER, gate, inventory
 
 
@@ -85,6 +86,7 @@ def overview(db):
         "scope": scopes,
         "queue": states,
         "gate": gate(db),
+        "diagnostics": snapshot(db),
         "budget": budget_state(db),
         "daily_usage": daily,
         "outcomes": outcomes,
