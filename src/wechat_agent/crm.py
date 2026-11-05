@@ -52,6 +52,15 @@ def index_contacts(c, account):
             if role
             else "群聊联系人 · " + source_id[-6:]
         )
+        previous = c.execute(
+            "SELECT name FROM crm_contacts WHERE id=?",
+            (stable_actor(account, source_id),),
+        ).fetchone()
+        if previous and previous["name"] != name:
+            c.execute(
+                "UPDATE crm_customers SET name=? WHERE contact_id=? AND name=?",
+                (name, stable_actor(account, source_id), previous["name"]),
+            )
         c.execute(
             "INSERT INTO crm_contacts(id,account_id,source_id,name) VALUES(?,?,?,?) ON CONFLICT(account_id,source_id) DO UPDATE SET name=excluded.name",
             (stable_actor(account, source_id), account, source_id, name),
@@ -107,96 +116,9 @@ def configure(db, enabled, budget=100000, include_new=True):
 
 
 def schedule(db, retry=False):
-    """30-message overlapping units, near history first, persistent fingerprint dedup."""
-    account = db.settings.source_account
-    policy = db.rows(
-        "SELECT * FROM crm_policies WHERE account_id=? AND enabled=1", (account,)
-    )
-    if not policy:
-        return 0
-    count = 0
-    with db.tx() as c:
-        index_contacts(c, account)
-        index_touchpoints(c, account)
-        corrections = {}
-        for correction in c.execute(
-            "SELECT id,resolution,evidence FROM crm_reviews WHERE account_id=? AND status='resolved'",
-            (account,),
-        ):
-            for ref in json.loads(correction["evidence"]):
-                corrections.setdefault(ref["id"], []).append(
-                    (correction["id"], correction["resolution"])
-                )
-        for fact in c.execute(
-            "SELECT f.* FROM crm_facts f JOIN crm_customers u ON u.id=f.customer_id WHERE u.account_id=? AND f.locked=1",
-            (account,),
-        ):
-            for ref in json.loads(fact["evidence"]):
-                corrections.setdefault(ref["id"], []).append(
-                    (fact["id"], fact["value"])
-                )
-        chats = c.execute(
-            "SELECT * FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1",
-            (account,),
-        ).fetchall()
-        for chat in chats:
-            rows = c.execute(
-                "SELECT id,revision,event_time,length(text) size FROM messages WHERE conversation_id=? AND type='text' AND completeness='full' ORDER BY event_time,id",
-                (chat["id"],),
-            ).fetchall()
-            # Bound by both message count and characters. Oversized individual
-            # messages remain visible as an explicit blocked_context_limit unit.
-            chunks, chunk, size = [], [], 0
-            for row in rows:
-                if chunk and (len(chunk) >= 30 or size + row["size"] > 10000):
-                    chunks.append(chunk)
-                    chunk = chunk[-3:]
-                    size = sum(r["size"] for r in chunk)
-                chunk.append(row)
-                size += row["size"]
-            if chunk:
-                chunks.append(chunk)
-            cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
-            chunks.sort(
-                key=lambda ch: (ch[-1]["event_time"] < cutoff, ch[0]["event_time"])
-            )
-            for ch in chunks:
-                key = hashlib.sha256(
-                    dumps(
-                        [
-                            "crm-v2",
-                            [corrections.get(r["id"], []) for r in ch],
-                            chat["id"],
-                            [(r["id"], r["revision"]) for r in ch],
-                            policy[0]["version"],
-                        ]
-                    ).encode()
-                ).hexdigest()
-                cur = c.execute(
-                    "INSERT OR IGNORE INTO jobs(id,dedup_key,payload,available_at,created_at) VALUES(?,?,?,?,?)",
-                    (
-                        uid(),
-                        key,
-                        dumps(
-                            {
-                                "engine": "crm_v2",
-                                "conversation_id": chat["id"],
-                                "message_ids": [r["id"] for r in ch],
-                                "policy_version": policy[0]["version"],
-                                "priority": int(ch[-1]["event_time"] < cutoff),
-                            }
-                        ),
-                        now(),
-                        now(),
-                    ),
-                )
-                count += cur.rowcount
-        if retry:
-            c.execute(
-                "UPDATE jobs SET status='queued',attempts=0,error=NULL,available_at=? WHERE json_extract(payload,'$.engine')='crm_v2' AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1) AND status IN ('blocked_credentials','blocked_budget','failed')",
-                (now(), account),
-            )
-    return count
+    from .planning import schedule as plan
+
+    return plan(db, retry=retry)
 
 
 def evidence_for(refs, evidence):
@@ -505,6 +427,7 @@ def overview(db):
     )
     return {
         "account_id": account,
+        "account_name": db.settings.source_name or account,
         "policy": policy[0] if policy else None,
         "key_configured": bool(secret("DEEPSEEK_API_KEY")),
         "today": today,

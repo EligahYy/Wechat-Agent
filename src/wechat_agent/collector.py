@@ -43,9 +43,23 @@ class Collector:
             raise SourceError("source_not_ready")
         if not isinstance(identity, str) or not identity:
             raise SourceError("source_account_unavailable")
+        name = (
+            account.get("name")
+            or account.get("nickname")
+            or account.get("display_name")
+            or identity
+        )
+        if not isinstance(name, str):
+            name = identity
+        if (
+            identity == self.db.settings.source_account
+            and name != identity
+            and name != self.db.settings.source_name
+        ):
+            self.db.settings.bind_source(identity, name)
         return {
             "account_id": identity,
-            "account_name": account.get("name") or identity,
+            "account_name": name,
             "source_version": data.get("cli_version"),
             "ready": True,
             "bound": identity

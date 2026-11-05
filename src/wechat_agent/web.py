@@ -4,7 +4,7 @@ import json
 import secrets
 import sqlite3
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -263,7 +263,7 @@ def create_app(settings=None, source_factory=None, background=False):
             account = source.probe()
             if account["account_id"] != b["account_id"]:
                 raise SourceError("当前微信账号已变化，请重新检测并确认")
-            db.settings.bind_source(account["account_id"])
+            db.settings.bind_source(account["account_id"], account.get("account_name"))
             with db.tx() as c:
                 db.event(c, account["account_id"], "source_bound", {})
             return {"ok": True, "account_id": account["account_id"]}
@@ -820,17 +820,71 @@ def create_app(settings=None, source_factory=None, background=False):
 
         return overview(db) | {"background": background}
 
+    @app.get("/api/analysis/progress")
+    def analysis_progress():
+        from .progress import overview
+
+        return overview(db)
+
+    @app.post("/api/analysis/budget/reconcile")
+    async def reconcile_budget(request: Request):
+        from .analysis import budget_state
+        from .crm import schedule
+
+        body = await request.json()
+        value = body.get("confirmed_tokens")
+        if (
+            body.get("confirm_billing") is not True
+            or type(value) is not int
+            or not 0 <= value <= 100000000
+        ):
+            raise ValueError("请先核对DeepSeek账单，填写今天已确认的总token用量")
+        day = budget_state(db)["day"]
+        with db.tx() as c:
+            running = c.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status='running' AND lease_until>?",
+                (now(),),
+            ).fetchone()[0]
+            reserved = c.execute(
+                "SELECT COUNT(*) FROM usage WHERE day=? AND status='reserved' AND created_at>?",
+                (day, (datetime.now(UTC) - timedelta(minutes=10)).isoformat()),
+            ).fetchone()[0]
+            if running or reserved:
+                raise ValueError("仍有请求在进行，请暂停分析并等待请求结束后再校正")
+            through = c.execute(
+                "SELECT COALESCE(MAX(rowid),0) FROM usage WHERE day=?", (day,)
+            ).fetchone()[0]
+            db.event(
+                c,
+                "local-budget:" + day,
+                "budget_reconciled",
+                {"confirmed_tokens": value, "through_rowid": through},
+            )
+        schedule(db, retry=True)
+        return {"ok": True}
+
+    @app.get("/api/analysis/jobs")
+    def analysis_jobs(scope: str = "all", status: str = "all", page: int = 1):
+        from .progress import job_page
+
+        return job_page(db, scope, status, page)
+
     @app.post("/api/crm/configure")
     async def crm_configure(request: Request):
         from .crm import configure
 
         body = await request.json()
+        existing = db.rows(
+            "SELECT * FROM crm_policies WHERE account_id=?",
+            (db.settings.source_account,),
+        )
+        previous = existing[0] if existing else {}
         await run_in_threadpool(
             configure,
             db,
             body["enabled"],
-            body.get("daily_budget", 100000),
-            body.get("include_new", True),
+            body.get("daily_budget", previous.get("daily_budget", 100000)),
+            body.get("include_new", bool(previous.get("include_new", True))),
         )
         return {"ok": True}
 

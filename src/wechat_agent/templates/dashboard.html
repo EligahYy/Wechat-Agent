@@ -4,20 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="csrf-token" content="{{csrf}}" />
-    <title>微信客户助手 · 今日跟进</title>
+    <title>半托管欧区备货用户助手 · 今日跟进</title>
     <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
     <aside class="sidebar">
       <a class="brand" href="#today"
-        ><span class="brand-mark">W</span
-        ><span>微信客户助手<small>把沟通变成下一步</small></span></a
+        ><span class="brand-mark">半</span
+        ><span>半托管欧区备货用户助手<small>客户跟进工作空间</small></span></a
       >
       <nav aria-label="主导航">
         <button data-page="today" class="active">◷ <span>今日跟进</span></button
         ><button data-page="customers">◎ <span>客户</span></button
         ><button data-page="reviews">
           ◇ <span>待确认</span><b id="review-count"></b></button
+        ><button data-page="analysis">◴ <span>分析概览</span></button
         ><button data-page="settings">⚙ <span>设置</span></button>
       </nav>
       <div class="sidebar-note">
@@ -32,14 +33,17 @@
       <section id="page-today" class="page">
         <div class="heading">
           <div>
-            <span class="eyebrow">YOUR NEXT MOVE</span>
+            <span class="eyebrow">今日跟进</span>
             <h1>今天，联系谁？</h1>
             <p>从聊天里的需求与约定，找到值得推进的下一步。</p>
           </div>
           <div class="status" id="sync-status">读取工作区…</div>
         </div>
         <div id="setup-banner" class="banner hidden"></div>
-        <div id="progress" class="progress hidden"></div>
+        <div class="analysis-entry">
+          <div id="progress" class="progress hidden"></div>
+          <button data-go="analysis" class="quiet">查看分析进度 ↗</button>
+        </div>
         <div class="section-line">
           <div class="filters">
             <button data-filter="today" class="active">
@@ -55,7 +59,7 @@
       <section id="page-customers" class="page hidden">
         <div class="heading">
           <div>
-            <span class="eyebrow">CUSTOMER MEMORY</span>
+            <span class="eyebrow">客户档案</span>
             <h1>客户，不再从零了解</h1>
             <p>自动归拢私信与群聊中的需求、顾虑和跟进依据。</p>
           </div>
@@ -77,17 +81,71 @@
       <section id="page-reviews" class="page hidden">
         <div class="heading">
           <div>
-            <span class="eyebrow">ONLY WHAT NEEDS YOU</span>
+            <span class="eyebrow">关键确认</span>
             <h1>只确认关键问题</h1>
             <p>身份归属与业务歧义才需要你，其余由助手整理。</p>
           </div>
         </div>
         <div id="review-list"></div>
       </section>
+      <section id="page-analysis" class="page hidden">
+        <div class="heading">
+          <div>
+            <span class="eyebrow">分析概览</span>
+            <h1>分析概览</h1>
+            <p>先处理近 15 天，持续产出客户档案和跟进计划。</p>
+          </div>
+          <div class="button-row">
+            <button id="analysis-refresh" class="quiet">刷新进度</button
+            ><button id="analysis-retry">恢复／重试分析</button
+            ><button id="analysis-pause" class="quiet">暂停</button>
+          </div>
+        </div>
+        <div id="analysis-status" class="analysis-status" role="status"></div>
+        <div id="analysis-metrics" class="analysis-metrics"></div>
+        <div class="analysis-grid">
+          <div class="panel" id="analysis-scopes"></div>
+          <div class="panel" id="analysis-budget"></div>
+        </div>
+        <div class="analysis-grid">
+          <div class="panel">
+            <h2>近 7 天请求用量</h2>
+            <div id="analysis-trend" class="usage-trend"></div>
+          </div>
+          <div class="panel">
+            <h2>运行与产出</h2>
+            <div id="analysis-output"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="section-line">
+            <h2>分析队列</h2>
+            <div class="queue-filters">
+              <select id="analysis-scope" aria-label="分析范围">
+                <option value="all">全部范围</option>
+                <option value="recent">近15天</option>
+                <option value="history">更早历史</option></select
+              ><select id="analysis-filter" aria-label="分片状态">
+                <option value="all">全部状态</option>
+                <option value="pending">等待处理</option>
+                <option value="running">运行中</option>
+                <option value="issues">需要关注</option>
+                <option value="complete">已完成</option>
+              </select>
+            </div>
+          </div>
+          <div id="analysis-jobs" class="queue-list"></div>
+          <div class="pagination">
+            <button id="analysis-prev">上一页</button
+            ><span id="analysis-page">1</span
+            ><button id="analysis-next">下一页</button>
+          </div>
+        </div>
+      </section>
       <section id="page-settings" class="page hidden">
         <div class="heading">
           <div>
-            <span class="eyebrow">WORKSPACE</span>
+            <span class="eyebrow">工作空间</span>
             <h1>连接一次，持续整理</h1>
             <p>日常无需逐群配置，也无需先建立商家或项目。</p>
           </div>
@@ -149,7 +207,7 @@
                 </button>
               </div>
               <p class="hint">
-                预算覆盖输入、输出及重试；历史分批续跑，不保证当天完成。采集与分析进度分别显示。
+                预算覆盖输入、输出及重试；近15天优先小批处理；更早历史使用剩余预算渐进续跑。采集与分析进度分别显示。
               </p>
             </form>
           </div>
@@ -200,7 +258,9 @@
           <button id="retry">重试失败分析</button>
         </details>
       </section>
-      <footer>微信客户助手 · 基于聊天证据整理，重要业务事实仍需核实</footer>
+      <footer>
+        半托管欧区备货用户助手 · 基于聊天证据整理，重要业务事实仍需核实
+      </footer>
     </main>
     <dialog id="detail">
       <div class="dialog-head">

@@ -99,17 +99,19 @@ function go(page) {
     .querySelectorAll("[data-page]")
     .forEach((el) => el.classList.toggle("active", el.dataset.page === page));
   document.title =
-    "微信客户助手 · " +
+    "半托管欧区备货用户助手 · " +
     {
       today: "今日跟进",
       customers: "客户",
       reviews: "待确认",
       settings: "设置",
+      analysis: "分析概览",
     }[page];
   if (page === "customers")
     loadCustomers().catch((e) => notice(e.message, true));
   if (page === "reviews") loadReviews().catch((e) => notice(e.message, true));
   if (page === "settings") renderSettings();
+  if (page === "analysis") loadAnalysis().catch((e) => notice(e.message, true));
 }
 function renderToday() {
   $("#today-count").textContent = state.due_count || 0;
@@ -134,15 +136,11 @@ function renderToday() {
   const jobs = Object.fromEntries(
     (state.jobs || []).map((j) => [j.status, j.n]),
   );
-  const complete = jobs.succeeded || 0,
-    total = (state.jobs || []).reduce((n, j) => n + j.n, 0);
-  $("#progress").classList.toggle("hidden", !total);
+  $("#progress").classList.toggle("hidden", !state.messages);
   $("#progress").textContent =
-    `聊天 ${state.messages || 0} 条 · 分析分片 ${complete} / ${total} 完成` +
-    (jobs.blocked_budget ? " · 已到今日预算，可调整预算或次日续跑" : "") +
-    (jobs.failed ? " · 部分分析失败，可在设置重试" : "") +
-    (jobs.blocked_credentials ? " · API 凭据需检查" : "") +
-    " · 媒体尚未自动识别";
+    `已归档 ${state.messages || 0} 条 · 近15天优先分析 · 已产出 ${state.customers_count || 0} 位客户` +
+    (jobs.blocked_budget ? " · 查看用量与预算原因" : "") +
+    " · 媒体待识别";
   let actions =
     actionFilter === "today"
       ? state.actions || []
@@ -169,7 +167,11 @@ function renderToday() {
 }
 function renderSettings() {
   $("#account-status").textContent = state.account_id
-    ? "已绑定工作账号：" + state.account_id
+    ? "已绑定：" +
+      (state.account_name || state.account_id) +
+      (state.account_name && state.account_name !== state.account_id
+        ? "（" + state.account_id + "）"
+        : "")
     : "尚未确认工作账号";
   $("#key-status").textContent = state.key_configured
     ? "已检测到本机 API key；实际可用性以请求结果为准。"
@@ -202,6 +204,7 @@ async function load() {
     ? `采集 ${collector.status === "running" ? "运行中" : collector.status} · ${dateLabel(collector.updated_at)}`
     : "本地归档 " + (state.messages || 0) + " 条";
   if (currentPage === "today") renderToday();
+  if (currentPage === "analysis") await loadAnalysis();
 }
 async function loadCustomers() {
   const q = $("#customer-search [name=q]").value;
@@ -454,6 +457,16 @@ document.addEventListener(
       await showCustomer(e.target.dataset.owner);
       notice("已保存，后续分析保留你的判断。");
     }
+    if (e.target.id === "budget-reconcile") {
+      e.preventDefault();
+      const form = new FormData(e.target);
+      await api("/api/analysis/budget/reconcile", {
+        confirmed_tokens: Number(form.get("confirmed_tokens")),
+        confirm_billing: form.has("confirm_billing"),
+      });
+      await loadAnalysis();
+      notice("预算已按你确认的账单校正，原始请求记录保留。");
+    }
     if (e.target.id === "result-form") {
       e.preventDefault();
       const f = new FormData(e.target);
@@ -499,7 +512,7 @@ $("#customers-next").onclick = safe(async () => {
 $("#probe").onclick = safe(async () => {
   const d = await api("/api/source/probe", {});
   $("#source-result").innerHTML =
-    `<div class="inset">检测到 ${esc(d.display_name || d.account_id)}<p class="hint">${esc(d.account_id)}</p><button id="bind-account" data-account="${esc(d.account_id)}">确认这是我的工作账号</button></div>`;
+    `<div class="inset">检测到 ${esc(d.account_name || d.account_id)}<p class="hint">${esc(d.account_id)}</p><button id="bind-account" data-account="${esc(d.account_id)}">确认这是我的工作账号</button></div>`;
 });
 $("#change-key").onclick = () => $("#key-form").classList.toggle("hidden");
 $("#key-form").onsubmit = safe(async (e) => {
@@ -586,3 +599,155 @@ $("#date-label").textContent = new Date().toLocaleDateString("zh-CN", {
 });
 load().catch((e) => notice(e.message, true));
 setInterval(() => load().catch(() => {}), 15000);
+
+let analysisEnabled = false;
+let analysisPage = 1,
+  analysisHasMore = false,
+  analysisLoading = false;
+const queueStatus = {
+  queued: "已入队",
+  running: "分析中",
+  succeeded: "已完成",
+  filtered_noise: "无需模型分析",
+  deferred_recent: "近期待调度",
+  deferred_history: "历史后台待调度",
+  waiting_history_budget: "为近期保留预算",
+  blocked_budget: "等待预算",
+  blocked_credentials: "需检查API凭据",
+  retry_wait: "等待重试",
+  failed: "分析失败",
+  blocked_context_limit: "单条上下文超限",
+  superseded: "已由新分片替代",
+  stale_input: "输入已变化",
+};
+const gateNames = {
+  blocked_budget: "今日可用预算不足",
+  blocked_credentials: "请检查 DeepSeek API key 或模型权限",
+  rate_limited: "接口限流，等待后自动恢复",
+  consecutive_errors: "连续请求未成功，已暂缓调用，避免继续消耗预算",
+};
+function metric(value, label, note = "") {
+  return `<div class="analysis-metric"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(note)}</small></div>`;
+}
+async function loadAnalysis() {
+  if (analysisLoading) return;
+  analysisLoading = true;
+  try {
+    const d = await api("/api/analysis/progress"),
+      b = d.budget,
+      r = d.scope.recent,
+      h = d.scope.history;
+    analysisEnabled = d.enabled;
+    $("#analysis-retry").textContent = d.enabled
+      ? "恢复／重试分析"
+      : "前往设置启用";
+    $("#analysis-pause").disabled = !d.enabled;
+    $("#analysis-status").innerHTML =
+      `<span class="live-dot ${!d.enabled || d.gate ? "paused" : ""}"></span><div><strong>${!d.enabled ? "分析已暂停" : d.gate ? esc(gateNames[d.gate.reason] || d.gate.reason) : r.pending ? "优先整理近 15 天的客户需求" : h.pending ? "近期已处理，历史按余量继续" : "本轮文本已处理，等待新消息"}</strong><p>${esc(d.account_name || "尚未连接工作账号")} · 更新于 ${esc(dateLabel(d.updated_at))}${d.gate ? " · 自动复查 " + esc(dateLabel(d.gate.until)) : ""}</p></div>`;
+    $("#analysis-metrics").innerHTML =
+      metric(
+        d.messages.total || 0,
+        "已归档消息",
+        `媒体 ${d.messages.media || 0} 条 · 残缺文本 ${d.messages.partial || 0} 条`,
+      ) +
+      metric(r.analyzed, "近期已分析", `近15天共 ${r.total} 条完整文本`) +
+      metric(d.customers, "客户档案", "根据聊天证据自动整理") +
+      metric(d.actions, "跟进事项", "包含历史状态，非全部今日待办");
+    $("#analysis-scopes").innerHTML =
+      "<h2>处理范围</h2>" +
+      [
+        ["近 15 天 · 优先", r],
+        ["更早历史 · 后台", h],
+      ]
+        .map(
+          ([label, v]) =>
+            `<div class="scope-progress"><div class="row"><strong>${label}</strong><span>${v.percent}%</span></div><div class="progress-track"><i style="width:${Math.max(0, Math.min(100, v.percent))}%"></i></div><p>已分析 ${v.analyzed} · 简短无效文本 ${v.filtered} · 待处理 ${v.pending} / 共 ${v.total} 条</p></div>`,
+        )
+        .join("") +
+      '<p class="hint">每轮最多8个近期分片；近期未完成前不推进历史。更早历史保留20%日预算给新增消息与话术。媒体单独计数，未纳入文本完成率。</p>';
+    const used = Math.min(
+      100,
+      Math.round(((b.reported + b.uncertain) * 100) / b.limit),
+    );
+    $("#analysis-budget").innerHTML =
+      `<h2>今日预算 <small>${esc(b.day)} · 北京时间</small></h2><div class="budget-number">${Number(b.reported).toLocaleString()} <span>/ ${Number(b.limit).toLocaleString()} token</span></div><div class="progress-track"><i style="width:${used}%"></i></div><div class="budget-breakdown"><span>已返回／已核对用量 <b>${b.reported}</b></span><span>未确认预留 <b>${b.uncertain}</b></span><span>剩余可调度 <b>${b.remaining}</b></span><span>请求记录 <b>${b.calls}</b></span></div><p class="hint">预留是估算，并非实际扣费；响应后以API用量替换。超时等未确认请求暂保留额度，明确拒绝或连接未建立的请求不占用预算。</p><button data-go="settings" class="quiet">调整预算 →</button>${b.uncertain ? '<details><summary class="hint">未确认预留与账单不一致？</summary><p class="hint">仅在核对 DeepSeek 今日账单后填写总 token 用量。这只校正本机预算，不修改账单；原始请求记录保留。</p><form id="budget-reconcile"><label>今日已确认总 token<input name="confirmed_tokens" type="number" min="0" max="100000000" required></label><label class="checkbox"><input name="confirm_billing" type="checkbox" required>已核对今日账单，包含截至现在的全部请求</label><button>按账单校正并恢复</button></form></details>' : ""}`;
+    const maximum = Math.max(
+      1,
+      ...d.daily_usage.map((v) => Number(v.reported) + Number(v.uncertain)),
+    );
+    $("#analysis-trend").innerHTML = d.daily_usage.length
+      ? d.daily_usage
+          .map(
+            (v) =>
+              `<div class="trend-day"><div class="trend-column" title="${esc(v.day)}：已报告 ${v.reported}，未确认 ${v.uncertain}"><i style="height:${Math.max(2, (Number(v.reported) * 100) / maximum)}%"></i><b style="height:${(Number(v.uncertain) * 100) / maximum}%"></b></div><small>${esc(v.day.slice(5))}</small><span>${Number(v.reported).toLocaleString()}</span></div>`,
+          )
+          .join("")
+      : '<p class="hint">尚无模型请求记录；入队本身不会产生费用。</p>';
+    $("#analysis-output").innerHTML =
+      `<div class="budget-breakdown"><span>关键确认 <b>${d.reviews}</b></span><span>运行中 <b>${d.queue.running || 0}</b></span><span>待调度／入队 <b>${(d.queue.deferred_recent || 0) + (d.queue.deferred_history || 0) + (d.queue.queued || 0)}</b></span></div>` +
+      d.runtime
+        .map(
+          (v) =>
+            `<p class="hint">${esc(v.name)} · ${esc(v.status)} · ${esc(dateLabel(v.updated_at))}</p>`,
+        )
+        .join("") +
+      d.failures
+        .map(
+          (v) =>
+            `<p class="error-note">${esc(v.error || "等待处理")} · ${v.n} 个分片</p>`,
+        )
+        .join("") +
+      '<p class="hint">重试只针对未完成分片；成功结果和原始消息保留。队列不显示原始聊天正文。</p>';
+    await loadAnalysisJobs();
+  } finally {
+    analysisLoading = false;
+  }
+}
+async function loadAnalysisJobs() {
+  const scope = $("#analysis-scope").value,
+    status = $("#analysis-filter").value;
+  const d = await api(
+    `/api/analysis/jobs?scope=${scope}&status=${status}&page=${analysisPage}`,
+  );
+  analysisHasMore = d.has_more;
+  $("#analysis-jobs").innerHTML = d.items.length
+    ? d.items
+        .map(
+          (j) =>
+            `<div class="queue-item"><div><strong>${esc(j.conversation_title)}</strong><p>${j.scope === "recent" ? "近15天" : "更早历史"} · ${j.message_count} 条 · ${esc(dateLabel(j.range_start))} — ${esc(dateLabel(j.range_end))}</p></div><div><span class="tag ${j.status === "failed" || j.error ? "amber" : ""}">${esc(queueStatus[j.status] || j.status)}</span><p>尝试 ${j.attempts} 次 · 已报告 ${j.reported_tokens || 0} token${j.uncertain_tokens ? " · 未确认 " + j.uncertain_tokens : ""}</p>${j.error ? `<small>${esc(j.error)}</small>` : ""}</div></div>`,
+        )
+        .join("")
+    : empty("此范围暂无分片", "新消息按需分批入队；无需重新导入聊天记录。");
+  $("#analysis-page").textContent = `第 ${analysisPage} 页 · ${d.total} 个分片`;
+  $("#analysis-prev").disabled = analysisPage === 1;
+  $("#analysis-next").disabled = !d.has_more;
+}
+$("#analysis-refresh").onclick = safe(loadAnalysis);
+$("#analysis-retry").onclick = safe(async () => {
+  if (!analysisEnabled) return go("settings");
+  await api("/api/crm/retry", {});
+  await loadAnalysis();
+  notice("已恢复近期优先调度；预算仍按当前额度控制。");
+});
+$("#analysis-pause").onclick = safe(async () => {
+  await api("/api/crm/configure", { enabled: false });
+  await load();
+  notice("分析已暂停，采集继续。");
+});
+for (const id of ["analysis-scope", "analysis-filter"])
+  $("#" + id).onchange = safe(async () => {
+    analysisPage = 1;
+    await loadAnalysisJobs();
+  });
+$("#analysis-prev").onclick = safe(async () => {
+  if (analysisPage > 1) {
+    analysisPage--;
+    await loadAnalysisJobs();
+  }
+});
+$("#analysis-next").onclick = safe(async () => {
+  if (analysisHasMore) {
+    analysisPage++;
+    await loadAnalysisJobs();
+  }
+});

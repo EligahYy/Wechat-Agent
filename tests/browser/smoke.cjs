@@ -30,6 +30,7 @@ fs.mkdirSync(screenshots, { recursive: true });
     await page.getByRole("heading", { name: "今天，联系谁？" }).waitFor();
     await page.locator(".action-card").waitFor();
     await page.screenshot({
+      animations: "disabled",
       path: path.join(screenshots, "crm-today.png"),
       fullPage: true,
     });
@@ -58,6 +59,7 @@ fs.mkdirSync(screenshots, { recursive: true });
     )
       throw Error("image invalid");
     await page.screenshot({
+      animations: "disabled",
       path: path.join(screenshots, "crm-customer.png"),
       fullPage: true,
     });
@@ -79,13 +81,41 @@ fs.mkdirSync(screenshots, { recursive: true });
       throw Error("more than one manual entry");
     await page.locator("#probe").click();
     await page.locator("#bind-account").waitFor();
+    if (
+      !(await page.locator("#source-result").innerText()).includes("工作小号")
+    )
+      throw Error("source nickname missing");
+    if (
+      !(await page.locator(".brand").innerText()).includes(
+        "半托管欧区备货用户助手",
+      )
+    )
+      throw Error("project display name missing");
+    await page.locator("nav [data-page=analysis]").click();
+    await page.locator("#analysis-metrics .analysis-metric").nth(3).waitFor();
+    await page.locator("#analysis-jobs .queue-item").waitFor();
+    if (
+      !(await page.locator("#analysis-scopes").innerText()).includes("近 15 天")
+    )
+      throw Error("recent analysis scope missing");
+    await page.locator("#analysis-scope").selectOption("recent");
+    await page.locator("#analysis-filter").selectOption("complete");
+    await page.locator("#analysis-jobs .queue-item").waitFor();
     await page.screenshot({
+      animations: "disabled",
+      path: path.join(screenshots, "analysis-overview.png"),
+      fullPage: true,
+    });
+
+    await page.screenshot({
+      animations: "disabled",
       path: path.join(screenshots, "crm-settings.png"),
       fullPage: true,
     });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.locator("nav [data-page=today]").click();
     await page.screenshot({
+      animations: "disabled",
       path: path.join(screenshots, "crm-mobile.png"),
       fullPage: true,
     });
@@ -95,6 +125,26 @@ fs.mkdirSync(screenshots, { recursive: true });
       )
     )
       throw Error("mobile overflow");
+    await page.locator("nav [data-page=analysis]").click();
+    await page.locator("#analysis-metrics .analysis-metric").nth(3).waitFor();
+    await page.screenshot({
+      animations: "disabled",
+      path: path.join(screenshots, "analysis-mobile.png"),
+      fullPage: true,
+    });
+    if (
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth + 1,
+      )
+    )
+      throw Error("analysis mobile overflow");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    if (
+      await page
+        .locator("#page-analysis")
+        .evaluate((el) => getComputedStyle(el).animationName !== "none")
+    )
+      throw Error("reduced motion ignored");
     if (errors.length) throw Error(errors.join("\n"));
     console.log(
       "Browser passed: login, auto-created action, evidence, profile, value filter, image, reschedule, reviews, single import entry, source probe, mobile",

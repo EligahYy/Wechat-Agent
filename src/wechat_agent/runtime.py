@@ -89,7 +89,7 @@ class Runtime:
                     from .db import now
 
                     c.execute(
-                        "UPDATE jobs SET status='queued',attempts=0 WHERE status='blocked_budget' AND available_at<=?",
+                        "UPDATE jobs SET status='queued',attempts=0 WHERE status IN ('blocked_budget','waiting_history_budget') AND available_at<=?",
                         (now(),),
                     )
                 schedule(self.db)

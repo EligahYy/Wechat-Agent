@@ -30,6 +30,7 @@ class Settings:
     source_account: str = field(
         default_factory=lambda: os.environ.get("WX_ACCOUNT_ID", "")
     )
+    source_name: str = ""
     self_id: str = field(default_factory=lambda: os.environ.get("WX_SELF_ID", ""))
     model: str = field(
         default_factory=lambda: os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
@@ -47,9 +48,11 @@ class Settings:
                 self.source_account = binding["account_id"]
             if not os.environ.get("WX_SELF_ID"):
                 self.self_id = binding["account_id"]
+            if binding["account_id"] == self.source_account:
+                self.source_name = binding.get("account_name", "")
         return self
 
-    def bind_source(self, account_id):
+    def bind_source(self, account_id, account_name=None):
         if not isinstance(account_id, str) or not account_id.strip():
             raise ValueError("账号标识不能为空")
         for name in ("WX_ACCOUNT_ID", "WX_SELF_ID"):
@@ -58,7 +61,16 @@ class Settings:
         fd, name = tempfile.mkstemp(prefix=".source-", dir=self.data_dir)
         try:
             with os.fdopen(fd, "w") as f:
-                json.dump({"account_id": account_id}, f)
+                display_name = (
+                    account_name
+                    if isinstance(account_name, str)
+                    else self.source_name
+                    if self.source_account == account_id
+                    else ""
+                )
+                json.dump(
+                    {"account_id": account_id, "account_name": display_name[:200]}, f
+                )
                 f.flush()
                 os.fsync(f.fileno())
             os.replace(name, self.data_dir / "source-binding.json")
@@ -66,6 +78,7 @@ class Settings:
             if os.path.exists(name):
                 os.unlink(name)
         self.source_account = self.self_id = account_id
+        self.source_name = display_name[:200]
 
     def source_endpoint(self):
         parsed = urlparse(self.source_url)
