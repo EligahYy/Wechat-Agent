@@ -175,7 +175,7 @@ def create_app(settings=None, source_factory=None, background=False):
     def health():
         return {
             "database": "ok",
-            "schema": 8,
+            "schema": 9,
             "runtime": db.rows("SELECT * FROM runtime"),
             "gaps": db.rows("SELECT COUNT(*) n FROM sync_windows WHERE status='gap'")[
                 0
@@ -940,6 +940,40 @@ def create_app(settings=None, source_factory=None, background=False):
         schedule(db)
         return {"ok": True}
 
+    @app.get("/api/crm/people")
+    def people(q: str = ""):
+        if len(q) > 200:
+            raise ValueError("搜索内容过长")
+        return db.rows(
+            "SELECT n.*,EXISTS(SELECT 1 FROM actor_exclusions x WHERE x.account_id=n.account_id AND x.source_id=n.source_id) excluded FROM crm_contacts n WHERE n.account_id=? AND (instr(n.name,?)>0 OR instr(n.source_id,?)>0) ORDER BY excluded DESC,n.name LIMIT 100",
+            (db.settings.source_account, q, q),
+        )
+
+    @app.post("/api/identity/sync")
+    def sync_identity():
+        from .crm import index_contacts
+        from .identity import sync_contacts
+
+        result = source_operation(lambda source: sync_contacts(db, source))
+        with db.tx() as c:
+            index_contacts(c, db.settings.source_account)
+        return result
+
+    @app.get("/api/identity/audit")
+    def identity_audit():
+        from .identity import audit
+
+        return audit(db)
+
+    @app.post("/api/crm/people/{actor_id}/exclusion")
+    async def exclude_person(actor_id: str, request: Request):
+        from .identity import set_excluded
+
+        body = await request.json()
+        return set_excluded(
+            db, actor_id, body.get("enabled"), body.get("reason", "人工免跟进")
+        )
+
     @app.get("/api/monitor")
     def monitor():
         from .monitoring import snapshot
@@ -947,6 +981,12 @@ def create_app(settings=None, source_factory=None, background=False):
         return snapshot(
             db, source_factory, bool(getattr(app.state, "background", False))
         )
+
+    @app.post("/api/crm/exemptions/undo")
+    async def undo_scope(request: Request):
+        from .source_scope import undo_sources
+
+        return undo_sources(db, (await request.json()).get("event_id"))
 
     @app.get("/api/crm/exemptions")
     def exemptions(q: str = "", kind: str = "all", scope: str = "all", page: int = 1):

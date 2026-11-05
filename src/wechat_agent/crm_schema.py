@@ -66,6 +66,8 @@ class Person(Strict):
 
 class Action(Strict):
     customer_ref: str
+    followup_required: bool = True
+    plan_ref: str | None = None
     contact_ref: str | None = None
     action_key: str = Field(min_length=1, max_length=100)
     operation: Literal["create", "update", "complete", "cancel", "wait"]
@@ -105,8 +107,21 @@ class Ambiguity(Strict):
     evidence_refs: list[str] = Field(min_length=1, max_length=10)
 
 
+class BusinessEvent(Strict):
+    customer_ref: str
+    opportunity: str = Field(min_length=1, max_length=150)
+    kind: Literal[
+        "demand_raised", "reply_received", "shipment_reported", "cancelled", "new_batch"
+    ]
+    evidence_refs: list[str] = Field(min_length=1, max_length=15)
+
+
 class CRMResult(Strict):
     schema_version: Literal[2]
+    conversation_type: Literal[
+        "merchant", "internal", "buyer", "provider", "announcement", "unknown"
+    ] = "unknown"
+    business_events: list[BusinessEvent] = Field(default_factory=list, max_length=20)
     people: list[Person] = Field(default_factory=list, max_length=20)
     actions: list[Action] = Field(default_factory=list, max_length=20)
     ambiguities: list[Ambiguity] = Field(default_factory=list, max_length=10)

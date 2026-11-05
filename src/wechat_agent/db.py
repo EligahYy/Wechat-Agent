@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 8:
+            if version > 9:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -161,6 +161,26 @@ class DB:
                 except BaseException:
                     connection.rollback()
                     raise
+            if version < 9:
+                if version:
+                    target = settings.data_dir / (
+                        "pre-v9-"
+                        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                        + ".sqlite3"
+                    )
+                    backup = sqlite3.connect(target)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    target.chmod(0o600)
+                connection.executescript("""BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS identity_metadata(account_id TEXT NOT NULL,source_id TEXT NOT NULL,remark TEXT NOT NULL DEFAULT '',nickname TEXT NOT NULL DEFAULT '',alias TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL,PRIMARY KEY(account_id,source_id));
+                CREATE TABLE IF NOT EXISTS actor_exclusions(account_id TEXT NOT NULL,source_id TEXT NOT NULL,reason TEXT NOT NULL,PRIMARY KEY(account_id,source_id));
+                CREATE TABLE IF NOT EXISTS model_responses(cache_key TEXT PRIMARY KEY,model TEXT NOT NULL,response TEXT NOT NULL,created_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS business_events(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,actor_ref TEXT NOT NULL,opportunity TEXT NOT NULL,kind TEXT NOT NULL,evidence TEXT NOT NULL,event_time TEXT NOT NULL,UNIQUE(account_id,actor_ref,opportunity,kind,evidence));
+                CREATE TABLE IF NOT EXISTS conversation_classifications(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),kind TEXT NOT NULL,evidence TEXT NOT NULL,updated_at TEXT NOT NULL);
+                PRAGMA user_version=9; COMMIT;""")
         finally:
             connection.close()
         self.path.chmod(0o600)

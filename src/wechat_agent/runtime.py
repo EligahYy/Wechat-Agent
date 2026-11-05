@@ -6,6 +6,8 @@ import threading
 import time
 from datetime import UTC, datetime
 
+import httpx
+
 from .analysis import run_once
 from .archive import discover, import_history, register
 from .collector import Collector
@@ -56,6 +58,12 @@ class Runtime:
                     continue
                 source = self.source_factory(self.db)
                 if time.monotonic() - discovered > 300:
+                    from .identity import sync_contacts
+
+                    try:
+                        sync_contacts(self.db, source)
+                    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                        self.db.heartbeat("identity", "unavailable")
                     register(
                         self.db,
                         discover(source),

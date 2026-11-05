@@ -52,6 +52,12 @@ def index_contacts(c, account):
             if role
             else "群聊联系人 · " + source_id[-6:]
         )
+        metadata = c.execute(
+            "SELECT remark,nickname FROM identity_metadata WHERE account_id=? AND source_id=?",
+            (account, source_id),
+        ).fetchone()
+        if metadata and (metadata["remark"] or metadata["nickname"]):
+            name = metadata["remark"] or metadata["nickname"]
         previous = c.execute(
             "SELECT name FROM crm_contacts WHERE id=?",
             (stable_actor(account, source_id),),
@@ -157,16 +163,50 @@ def apply(c, db, chat, evidence, result, participants):
         + [f.evidence_refs for p in result.people for f in p.facts]
         + [a.evidence_refs for a in result.actions]
         + [a.evidence_refs for a in result.ambiguities]
+        + [v.evidence_refs for v in result.business_events]
     )
     if any(not set(r) <= evidence.keys() for r in refs):
         raise ValueError("model_unknown_evidence")
+    if any(v.customer_ref not in actors for v in result.business_events):
+        raise ValueError("model_unknown_actor")
     if any(p.actor_ref not in actors for p in result.people) or any(
         a.customer_ref not in actors or (a.contact_ref and a.contact_ref not in actors)
         for a in result.actions
     ):
         raise ValueError("model_unknown_actor")
     index_contacts(c, account)
+    excluded = {
+        stable_actor(account, r[0])
+        for r in c.execute(
+            "SELECT source_id FROM actor_exclusions WHERE account_id=?", (account,)
+        )
+    }
+    private_excluded = (
+        chat["kind"] == "private"
+        and stable_actor(account, chat["source_id"]) in excluded
+    )
+    if private_excluded:
+        return
+    if result.conversation_type != "unknown":
+        c.execute(
+            "INSERT INTO conversation_classifications VALUES(?,?,?,?) ON CONFLICT(conversation_id) DO UPDATE SET kind=excluded.kind,evidence=excluded.evidence,updated_at=excluded.updated_at",
+            (
+                chat["id"],
+                result.conversation_type,
+                dumps(
+                    [
+                        {"id": m["id"], "revision": m["revision"]}
+                        for m in evidence.values()
+                    ]
+                ),
+                now(),
+            ),
+        )
+    if result.conversation_type in {"internal", "buyer", "provider", "announcement"}:
+        return
     for person in result.people:
+        if person.actor_ref in excluded:
+            continue
         person_evidence = evidence_for(person.evidence_refs, evidence)
         contact = c.execute(
             "SELECT * FROM crm_contacts WHERE id=?", (person.actor_ref,)
@@ -229,7 +269,69 @@ def apply(c, db, chat, evidence, result, participants):
                 "INSERT INTO crm_facts(id,customer_id,field,value,evidence,event_time) VALUES(?,?,?,?,?,?) ON CONFLICT(customer_id,field,value) DO UPDATE SET evidence=excluded.evidence,event_time=excluded.event_time WHERE crm_facts.locked=0 AND crm_facts.event_time<=excluded.event_time",
                 (uid(), customer["id"], fact.field, fact.value, dumps(evid), when),
             )
+    for event in result.business_events:
+        if event.kind == "shipment_reported":
+            statements = [evidence[r]["text"] for r in event.evidence_refs]
+            explicit = any(
+                re.search(
+                    r"(?:已|已经).{0,8}(?:发货|发出|出运|装柜|提货)|(?:发货|发出|出运|装柜|提货)了",
+                    t,
+                )
+                and not re.search(r"还没|尚未|未发|没发|如果|预计|准备|计划", t)
+                for t in statements
+            )
+            if not explicit:
+                continue
+        if event.customer_ref in excluded:
+            continue
+        refs = evidence_for(event.evidence_refs, evidence)
+        when = max(evidence[r]["event_time"] for r in event.evidence_refs)
+        c.execute(
+            "INSERT OR IGNORE INTO business_events VALUES(?,?,?,?,?,?,?)",
+            (
+                uid(),
+                account,
+                event.customer_ref,
+                event.opportunity,
+                event.kind,
+                dumps(refs),
+                when,
+            ),
+        )
+        if event.kind in {"shipment_reported", "cancelled"}:
+            state = (
+                "reported_complete" if event.kind == "shipment_reported" else "paused"
+            )
+            c.execute(
+                "UPDATE crm_plans SET stage=?,evidence=?,updated_at=? WHERE name=? AND customer_id IN (SELECT id FROM crm_customers WHERE account_id=? AND contact_id=?) AND updated_at<=?",
+                (
+                    state,
+                    dumps(refs),
+                    when,
+                    event.opportunity,
+                    account,
+                    event.customer_ref,
+                    when,
+                ),
+            )
+            c.execute(
+                "UPDATE crm_actions SET state=?,version=version+1 WHERE locked=0 AND event_time<=? AND plan_id IN (SELECT p.id FROM crm_plans p JOIN crm_customers u ON u.id=p.customer_id WHERE p.name=? AND u.account_id=? AND u.contact_id=?)",
+                (
+                    "done" if event.kind == "shipment_reported" else "cancelled",
+                    when,
+                    event.opportunity,
+                    account,
+                    event.customer_ref,
+                ),
+            )
     for item in result.actions:
+        if item.customer_ref in excluded or item.contact_ref in excluded:
+            continue
+        if item.operation in {"create", "update", "wait"} and (
+            not item.followup_required
+            or item.stage in {"shipping", "reported_complete", "paused"}
+        ):
+            continue
         customer = c.execute(
             "SELECT * FROM crm_customers WHERE contact_id=?", (item.customer_ref,)
         ).fetchone()
@@ -240,6 +342,20 @@ def apply(c, db, chat, evidence, result, participants):
                 "需求的客户归属待确认：" + item.summary,
                 evidence_for(item.evidence_refs, evidence),
             )
+            continue
+        if item.plan_ref:
+            known = c.execute(
+                "SELECT name FROM crm_plans WHERE id=? AND customer_id=?",
+                (item.plan_ref, customer["id"]),
+            ).fetchone()
+            if not known:
+                raise ValueError("model_unknown_opportunity")
+            item = item.model_copy(update={"opportunity": known["name"]})
+        ended = c.execute(
+            "SELECT event_time FROM business_events WHERE account_id=? AND actor_ref=? AND opportunity=? AND kind IN ('shipment_reported','cancelled') ORDER BY event_time DESC LIMIT 1",
+            (account, item.customer_ref, item.opportunity),
+        ).fetchone()
+        if ended and item.operation in {"create", "update", "wait"}:
             continue
         evid = evidence_for(item.evidence_refs, evidence)
         when = max(evidence[r]["event_time"] for r in item.evidence_refs)
@@ -389,11 +505,29 @@ def overview(db):
         )
     from .source_scope import allowed_evidence, counts
 
+    excluded_actors = {
+        stable_actor(account, r["source_id"])
+        for r in db.rows(
+            "SELECT source_id FROM actor_exclusions WHERE account_id=?", (account,)
+        )
+    }
+
+    excluded_customers = {
+        r["id"]
+        for r in db.rows(
+            "SELECT id FROM crm_customers WHERE contact_id IN (SELECT id FROM crm_contacts WHERE account_id=? AND source_id IN (SELECT source_id FROM actor_exclusions WHERE account_id=?))",
+            (account, account),
+        )
+    }
     for action in actions:
         action["source_eligible"] = (
-            allowed_evidence(db, action["evidence"])
-            if json.loads(action["evidence"])
-            else bool(action["locked"])
+            action["contact_id"] not in excluded_actors
+            and action["customer_id"] not in excluded_customers
+            and (
+                allowed_evidence(db, action["evidence"])
+                if json.loads(action["evidence"])
+                else bool(action["locked"])
+            )
         )
     active = [
         a
@@ -482,12 +616,22 @@ def customer_details(db, customer_id):
         f["sources"] = valid_evidence(db, f["evidence"])
         f["evidence_valid"] = bool(f["sources"]) or bool(f["locked"])
     identity = customer[0]["source_id"]
+    from .identity import location
+
+    locator = location(db, identity)
+    locator["excluded"] = bool(
+        db.rows(
+            "SELECT 1 FROM actor_exclusions WHERE account_id=? AND source_id=?",
+            (db.settings.source_account, identity),
+        )
+    )
     messages = db.rows(
         "SELECT m.*,v.title conversation_title FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE v.account_id=? AND (m.sender_id=? OR (v.kind='private' AND v.source_id=?)) ORDER BY m.event_time DESC LIMIT 300",
         (db.settings.source_account, identity, identity),
     )
     return {
         "customer": customer[0],
+        "location": locator,
         "facts": facts,
         "plans": db.rows("SELECT * FROM crm_plans WHERE customer_id=?", (customer_id,)),
         "messages": [m | classify(m) for m in messages],

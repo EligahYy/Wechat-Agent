@@ -36,11 +36,16 @@ stage只能needs/quoting/decision/preparing/shipping/reported_complete/paused。
 所有事实、动作和问题都引用输入现有证据。结果精简，只输出有依据的新变化，已知事实不要重复罗列；最多6个当前行动，不罗列整段历史所有请求。字段未知就不输出；无业务内容返回空数组。"""
 
 
+CRM_PROMPT += "\n首先判断conversation_type：merchant/internal/buyer/provider/announcement/unknown。纯内部、买手、服务商协作或通知不建立商家档案与跟进。群内含商家时按实际身份判断，不能按群名一刀切。excluded_targets中的人不能成为客户或联系对象。actions.followup_required表示是否确实需要我方行动，不把普通讨论自动安排为跟进。后续回复优先于旧提问，已发货/取消/已解决的同批不再生成备货行动；不同新批次必须有新需求证据。证据不足输出空actions。"
+
 CRM_PROMPT += (
     "\nactions.party 只能取这些责任方枚举："
     + dumps(list(PARTY_VALUES))
     + "。self=我方平台运营，merchant=商家，service_provider=头程服务商，other=明确的其他第三方，unknown=无法判断；禁止填姓名、actor_ref或多方组合。不明确时用unknown，不能默认归我方。"
 )
+
+
+CRM_PROMPT += "\n可输出business_events数组，每项customer_ref、opportunity、kind、evidence_refs。kind只取demand_raised/reply_received/shipment_reported/cancelled/new_batch。仅当事人明确说本批已发货才用shipment_reported，条件句不算；opportunity复用known_opportunities.name。actions可带plan_ref引用已知批次ID，不可引用其他客户批次。新批必须有新需求证据，不把旧批重新命名。"
 
 
 class Blocked(ValueError):
@@ -54,6 +59,11 @@ def context(db, conversation_id, message_ids=None):
         raise Blocked("blocked_policy")
     chat = chat_rows[0]
     if not chat["allowlisted"] or not chat["egress"] or not chat["followup_source"]:
+        raise Blocked("blocked_policy")
+    if chat["kind"] == "private" and db.rows(
+        "SELECT 1 FROM actor_exclusions WHERE account_id=? AND source_id=?",
+        (chat["account_id"], chat["source_id"]),
+    ):
         raise Blocked("blocked_policy")
     if message_ids is not None:
         selected = set(message_ids)
@@ -72,6 +82,20 @@ def context(db, conversation_id, message_ids=None):
             "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time,id LIMIT 81",
             (conversation_id,),
         )
+    if messages and message_ids is not None:
+        later = db.rows(
+            "SELECT * FROM messages WHERE conversation_id=? AND type='text' AND completeness='full' AND event_time>? ORDER BY event_time DESC LIMIT 6",
+            (conversation_id, messages[-1]["event_time"]),
+        )
+        existing = {m["id"] for m in messages}
+        for row in reversed(later):
+            if (
+                row["id"] not in existing
+                and sum(len(m["text"]) for m in messages) + len(row["text"]) <= 16000
+                and len(messages) < 80
+            ):
+                messages.append(row)
+        messages.sort(key=lambda m: (m["event_time"], m["id"]))
     skipped = sum(m["type"] != "text" for m in messages)
     messages = [m for m in messages if m["type"] == "text"]
     if not messages:
@@ -86,6 +110,11 @@ def context(db, conversation_id, message_ids=None):
         x["name"]
         for x in db.rows("SELECT name FROM merchants UNION SELECT name FROM providers")
     ]
+    for item in db.rows(
+        "SELECT remark,nickname,alias FROM identity_metadata WHERE account_id=?",
+        (chat["account_id"],),
+    ):
+        names.extend(v for v in item.values() if v)
     # Redact known labels and source identities; arbitrary commercial secrets still
     # require operator review before granting conversation-level egress.
     replacements = sorted(
@@ -182,8 +211,30 @@ def context(db, conversation_id, message_ids=None):
         payload.pop("merchant_ref", None)
         payload.pop("project_ref", None)
         payload["contract"] = "crm_v2"
+        payload["known_opportunities"] = db.rows(
+            "SELECT p.id plan_ref,p.name,p.stage,u.contact_id customer_ref FROM crm_plans p JOIN crm_customers u ON u.id=p.customer_id WHERE u.account_id=? AND u.contact_id IN (SELECT value FROM json_each(?)) AND p.evidence<>'[]' ORDER BY p.updated_at DESC LIMIT 15",
+            (chat["account_id"], dumps(participants)),
+        )
+        payload["known_opportunities"] = [
+            p
+            for p in payload["known_opportunities"]
+            if allowed_evidence(
+                db,
+                db.rows("SELECT evidence FROM crm_plans WHERE id=?", (p["plan_ref"],))[
+                    0
+                ]["evidence"],
+            )
+        ]
+
         payload["timezone"] = "Asia/Shanghai"
         payload["participants"] = participants
+        payload["excluded_targets"] = [
+            stable_actor(chat["account_id"], r["source_id"])
+            for r in db.rows(
+                "SELECT source_id FROM actor_exclusions WHERE account_id=?",
+                (chat["account_id"],),
+            )
+        ]
         payload["known_roles"] = {
             stable_actor(chat["account_id"], sender): row["role"]
             for sender, row in roles.items()
@@ -197,8 +248,8 @@ def context(db, conversation_id, message_ids=None):
                 "time": r["event_time"],
             }
             for r in db.rows(
-                "SELECT u.contact_id,f.* FROM crm_facts f JOIN crm_customers u ON u.id=f.customer_id WHERE u.account_id=? AND f.status='active' ORDER BY f.event_time DESC LIMIT 50",
-                (chat["account_id"],),
+                "SELECT u.contact_id,f.* FROM crm_facts f JOIN crm_customers u ON u.id=f.customer_id WHERE u.account_id=? AND u.contact_id IN (SELECT value FROM json_each(?)) AND f.status='active' ORDER BY f.event_time DESC LIMIT 50",
+                (chat["account_id"], dumps(participants)),
             )
             if r["contact_id"] in participants and allowed_evidence(db, r["evidence"])
         ]
@@ -397,28 +448,45 @@ def call_model(db, payload, job_id=None, client=None, draft=False):
     own = client is None
     client = client or create_client()
     try:
-        rid = reserve(db, job_id, input_estimate + maximum)
-        response = client.post(
-            "/chat/completions",
-            headers={"Authorization": f"Bearer {key}"},
-            json={
-                "model": db.settings.model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": content},
-                ],
-                "response_format": {"type": "json_object"},
-                "max_tokens": maximum,
-                "stream": False,
-            },
+        cache_key = hashlib.sha256(
+            dumps(["agent-v1", db.settings.model, system, payload]).encode()
+        ).hexdigest()
+        saved = db.rows(
+            "SELECT response FROM model_responses WHERE cache_key=? AND json_extract(response,'$.validated')=1",
+            (cache_key,),
         )
-        if response.status_code in (400, 401, 402, 403, 404, 422, 429):
-            release_rejected(db, rid)
-        if response.status_code in (401, 403):
-            raise Blocked("blocked_credentials")
-        response.raise_for_status()
-        data = response.json()
-        settle(db, rid, data)
+        if saved:
+            data = json.loads(saved[0]["response"])
+        else:
+            data = None
+        if data is None:
+            rid = reserve(db, job_id, input_estimate + maximum)
+            response = client.post(
+                "/chat/completions",
+                headers={"Authorization": f"Bearer {key}"},
+                json={
+                    "model": db.settings.model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": content},
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "max_tokens": maximum,
+                    "stream": False,
+                },
+            )
+            if response.status_code in (400, 401, 402, 403, 404, 422, 429):
+                release_rejected(db, rid)
+            if response.status_code in (401, 403):
+                raise Blocked("blocked_credentials")
+            response.raise_for_status()
+            data = response.json()
+            settle(db, rid, data)
+            with db.tx() as c:
+                c.execute(
+                    "INSERT OR REPLACE INTO model_responses VALUES(?,?,?,?)",
+                    (cache_key, db.settings.model, dumps(data), now()),
+                )
         choice = data["choices"][0]
         if choice.get("finish_reason") != "stop":
             raise ValueError("model_incomplete_output")
@@ -434,15 +502,23 @@ def call_model(db, payload, job_id=None, client=None, draft=False):
                 + [f.evidence_refs for p in result.people for f in p.facts]
                 + [a.evidence_refs for a in result.actions]
                 + [q.evidence_refs for q in result.ambiguities]
+                + [v.evidence_refs for v in result.business_events]
             )
             if crm_mode
             else [s.evidence_refs for s in result.suggestions]
         )
         if any(not set(x) <= valid for x in refs):
             raise ValueError("model_unknown_evidence")
+        data["validated"] = True
+        with db.tx() as c:
+            c.execute(
+                "UPDATE model_responses SET response=? WHERE cache_key=?",
+                (dumps(data), cache_key),
+            )
         return result
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError):
-        release_rejected(db, rid)
+        if "rid" in locals():
+            release_rejected(db, rid)
         raise
     finally:
         if own:

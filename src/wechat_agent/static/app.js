@@ -103,6 +103,7 @@ function go(page) {
     {
       today: "今日跟进",
       customers: "客户",
+      scope: "会话范围",
       reviews: "待确认",
       settings: "设置",
       analysis: "分析概览",
@@ -111,6 +112,7 @@ function go(page) {
     loadCustomers().catch((e) => notice(e.message, true));
   if (page === "reviews") loadReviews().catch((e) => notice(e.message, true));
   if (page === "settings") { renderSettings(); loadSources().catch((e) => notice(e.message, true)); loadMonitor(); }
+  if (page === "scope") { loadSources().catch(e=>notice(e.message,true)); loadPeople().catch(e=>notice(e.message,true)); }
   if (page === "analysis") loadAnalysis().catch((e) => notice(e.message, true));
 }
 function renderToday() {
@@ -270,7 +272,7 @@ async function showCustomer(id) {
   });
   showDetail(
     d.customer.name,
-    `<div class="button-row"><button data-dnc="${esc(id)}" data-current="${d.customer.do_not_contact}">${d.customer.do_not_contact ? "恢复联系建议" : "暂停联系此客户"}</button></div><h2>客户近况</h2>${facts.length ? facts.map((f) => `<div class="fact"><strong>${esc(fields[f.field] || f.field)} · ${f.locked ? "人工确认" : "对话提取"}</strong><p>${esc(f.value)}</p><details><summary class="hint">查看来源／纠正</summary><button data-correct-fact="${esc(f.id)}" data-value="${esc(f.value)}" data-owner="${esc(id)}">纠正此项</button>${messageHTML(f.sources.map((m) => ({ ...m, evidence_label: true })))}</details></div>`).join("") : '<p class="hint">尚无已验证的详细需求，未知字段不会要求你逐一补填。</p>'}<h2>当前机会与计划</h2>${d.plans.map((p) => `<p>${esc(p.name)} <span class="tag">${esc(p.stage)}</span></p>`).join("") || '<p class="hint">尚未识别具体业务机会。</p>'}<h2>沟通重点</h2><p class="hint">最近 300 条可见私信与此联系人的群发言；完整会话在设置中的消息档案查看。</p>${messageSection(d.messages)}`,
+    `${locationHTML(d.location)}<div class="button-row"><button data-dnc="${esc(id)}" data-current="${d.customer.do_not_contact}">${d.customer.do_not_contact ? "恢复联系建议" : "暂停联系此客户"}</button></div><h2>客户近况</h2>${facts.length ? facts.map((f) => `<div class="fact"><strong>${esc(fields[f.field] || f.field)} · ${f.locked ? "人工确认" : "对话提取"}</strong><p>${esc(f.value)}</p><details><summary class="hint">查看来源／纠正</summary><button data-correct-fact="${esc(f.id)}" data-value="${esc(f.value)}" data-owner="${esc(id)}">纠正此项</button>${messageHTML(f.sources.map((m) => ({ ...m, evidence_label: true })))}</details></div>`).join("") : '<p class="hint">尚无已验证的详细需求，未知字段不会要求你逐一补填。</p>'}<h2>当前机会与计划</h2>${d.plans.map((p) => `<p>${esc(p.name)} <span class="tag">${esc(p.stage)}</span></p>`).join("") || '<p class="hint">尚未识别具体业务机会。</p>'}<h2>沟通重点</h2><p class="hint">最近 300 条可见私信与此联系人的群发言；完整会话在设置中的消息档案查看。</p>${messageSection(d.messages)}`,
   );
   renderMessageBlock();
 }
@@ -495,7 +497,8 @@ document.addEventListener(
 );
 $("#refresh").onclick = safe(async () => {
   await load();
-  if (currentPage === "settings") renderSettings();
+  if (currentPage === "settings") { renderSettings(); loadMonitor(); }
+  if (currentPage === "scope") { await loadSources(); await loadPeople(); }
   if (currentPage === "customers") await loadCustomers();
   if (currentPage === "reviews") await loadReviews();
   notice("已刷新。");
@@ -812,7 +815,7 @@ async function loadSources() {
   const d = await api("/api/crm/exemptions?" + params);
   sourceRows = d.items; sourceHasMore = d.has_more;
   $("#source-counts").textContent = `已归档 ${d.counts.total} 个会话 · 正常跟进 ${d.counts.selected} 个 · 白名单免跟进 ${d.counts.archive_only} 个`;
-  $("#source-list").innerHTML = d.items.length ? d.items.map(v => `<label class="source-option"><input type="checkbox" data-followup-source="${esc(v.id)}" ${sourceSelection.has(v.id) ? "checked" : ""}><span><strong>${esc(v.title || v.source_id)}</strong><small>${v.kind === "group" ? "群聊" : "私信"} · ${esc(v.messages)} 条 · ${v.followup_source ? "正常跟进" : "白名单 · 免跟进"}</small><small>${esc(v.source_id)}</small></span></label>`).join("") : empty("没有匹配会话", "先完成微信采集，或调整搜索条件。");
+  $("#source-list").innerHTML = d.items.length ? d.items.map(v => `<label class="source-option"><input type="checkbox" data-followup-source="${esc(v.id)}" ${sourceSelection.has(v.id) ? "checked" : ""}><span><strong>${esc(v.title || v.source_id)}</strong><small>${v.kind === "group" ? "群聊" : "私信"} · ${esc(v.messages)} 条 · ${esc(({internal:"内部同事",buyer:"买手",provider:"纯服务商",announcement:"通知",merchant:"商家",unknown:"待识别"})[v.business_kind]||"待识别")} · ${v.followup_source ? "正常跟进" : "白名单 · 免跟进"}</small><small>${esc(v.source_id)}</small></span></label>`).join("") : empty("没有匹配会话", "先完成微信采集，或调整搜索条件。");
   $("#source-prev").disabled = sourcePage <= 1;
   $("#source-next").disabled = !sourceHasMore;
   $("#source-page").textContent = `第 ${d.page} 页 · 匹配 ${d.total} 个`;
@@ -833,15 +836,20 @@ async function saveSources(enabled) {
   if (!sourceSelection.size) return;
   const ids = [...sourceSelection];
   if (ids.length > 500) throw Error("单次最多更改500个会话，请分批操作。");
-  await api("/api/crm/exemptions", {conversation_ids: ids, enabled});
+  const updated = await api("/api/crm/exemptions", {conversation_ids: ids, enabled});
   sourceSelection.clear();
   await load(); await loadSources();
   notice(enabled ? "已加入免跟进白名单，停止分析和今日推荐，保留历史。" : "已移出白名单，恢复已授权的客户分析。");
+  const undo=document.createElement('button'); undo.textContent='撤销';
+  undo.onclick=safe(async()=>{await api('/api/crm/exemptions/undo',{event_id:updated.undo_id});await load();await loadSources();notice('已恢复先前的范围与外发授权');});
+  $('#notice').append(undo);
+
 }
 $("#source-add").onclick = safe(() => saveSources(true));
 $("#source-remove").onclick = safe(() => saveSources(false));
 
 $("#manage-exemptions").onclick = () => {
+  go("scope");
   $("#followup-sources").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start"});
   $("#source-search [name=scope]").value = "archive";
   $("#source-search [name=scope]").dispatchEvent(new Event("change"));
@@ -924,3 +932,13 @@ enhanceSelects();
 new MutationObserver(enhanceSelects).observe(document.body, {childList: true, subtree: true});
 
 $("#source-search").addEventListener("change", safe(async e => { if (e.target.tagName === "SELECT") { sourcePage = 1; await loadSources(); } }));
+
+function locationHTML(d) {
+  if(!d) return '';
+  return `<div class="location-card"><h2>回微信找到联系人</h2><p>备注：${esc(d.remark||'未提供')} · 昵称：${esc(d.nickname||'未提供')}</p><p class="hint">${d.quality==='named'?'已取得源端名称':'可从来源会话定位；微信搜索未必可用'}</p><div class="button-row">${[d.remark,d.nickname,d.alias].filter(Boolean).map(v=>`<button data-copy-location="${esc(v)}">复制 ${esc(v)}</button>`).join('')}</div>${d.conversations.map(c=>`<div class="location-row"><span>${c.kind==='group'?'群聊':'私信'} · ${esc(c.title)}</span><button data-copy-location="${esc(c.title)}">复制会话名</button><button data-conversation="${esc(c.id)}">查看原文</button></div>`).join('')}<p class="hint">复制不会发送消息或记录已联系。</p></div>`;
+}
+document.addEventListener('click',safe(async e=>{const b=e.target.closest('[data-copy-location],[data-person-exclude]');if(!b)return;if(b.dataset.copyLocation){await navigator.clipboard.writeText(b.dataset.copyLocation);notice('已复制，请在微信搜索或进入来源群定位');}else{await api('/api/crm/people/'+encodeURIComponent(b.dataset.personExclude)+'/exclusion',{enabled:b.dataset.enabled==='true'});await loadPeople();await load();notice('人物跟进范围已更新，其他群成员不受影响');}}));
+let peopleRequest=0;
+async function loadPeople(){const ticket=++peopleRequest;const d=await api('/api/crm/people?q='+encodeURIComponent($('#people-search').value));if(ticket!==peopleRequest)return;$('#people-list').innerHTML=d.map(v=>`<div class="location-row"><span><strong>${esc(v.name)}</strong><small>${esc(v.source_id)} · ${v.excluded?'已免跟进':'正常'}</small></span><button data-person-exclude="${esc(v.id)}" data-enabled="${!v.excluded}">${v.excluded?'恢复':'免跟进此人'}</button></div>`).join('')||empty('未找到联系人','先同步微信联系人或等待消息采集。');}
+$('#people-search').oninput=()=>{clearTimeout(loadPeople.timer);loadPeople.timer=setTimeout(()=>loadPeople().catch(e=>notice(e.message,true)),200);};
+$('#sync-identity').onclick=safe(async()=>{const b=$('#sync-identity');b.disabled=true;try{const d=await api('/api/identity/sync',{});const audit=await api('/api/identity/audit');$('#identity-audit').textContent=`已同步 ${d.contacts} 位联系人 · ${audit.unresolved_names} 位名称待补全`;await load();notice('联系人已更新，不需要重新导入聊天或调用模型');}finally{b.disabled=false;}});

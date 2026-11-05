@@ -16,7 +16,7 @@
       <nav aria-label="主导航">
         <button data-page="today" class="active">◷ <span>今日跟进</span></button
         ><button data-page="customers">◎ <span>客户</span></button
-        ><button data-page="reviews">
+        ><button data-page="scope">▤ <span>会话范围</span></button><button data-page="reviews">
           ◇ <span>待确认</span><b id="review-count"></b></button
         ><button data-page="analysis">◴ <span>分析概览</span></button
         ><button data-page="settings">⚙ <span>设置</span></button>
@@ -142,6 +142,28 @@
           </div>
         </div>
       </section>
+      <section id="page-scope" class="page hidden"><div class="heading"><div><span class="eyebrow">业务范围</span><h1>让有效需求进入跟进</h1><p>白名单内免跟进。人物排除不影响整个商家群。</p></div></div>        <div class="panel" id="followup-sources">
+          <span class="step-label">03 · 免跟进白名单</span>
+          <h2>白名单内，不做客户跟进</h2>
+          <p>已授权的工作会话默认整理客户。将同事、纯服务商的私信／群聊加入白名单后，仅保留归档，不触发客户建档和跟进。以下列表按整个会话排除；人物级排除见下方。</p>
+          <p id="source-counts" class="hint" aria-live="polite"></p>
+          <form id="source-search" class="button-row">
+            <input name="q" placeholder="搜索会话名称或微信 ID" aria-label="搜索跟进会话" />
+            <select name="kind" aria-label="会话类型"><option value="all">私信与群聊</option><option value="private">私信</option><option value="group">群聊</option></select>
+            <select name="scope" aria-label="白名单状态"><option value="all">全部会话</option><option value="archive">白名单 · 免跟进</option><option value="customer">正常跟进</option></select>
+            <button>搜索</button>
+          </form>
+          <div class="button-row">
+            <button id="source-select-page" type="button">勾选本页</button>
+            <button id="source-clear" type="button">清空勾选</button>
+            <span id="source-selection" class="hint" aria-live="polite"></span>
+          </div>
+          <div id="source-list" class="source-list"></div>
+          <div class="button-row"><button id="source-prev" type="button">上一页</button><span id="source-page" class="hint"></span><button id="source-next" type="button">下一页</button></div>
+          <div class="button-row"><button id="source-add" class="primary" type="button">加入免跟进白名单</button><button id="source-remove" type="button">移出白名单</button></div>
+          <p class="hint">加入后暂停该会话分析并停止今日推荐，保留历史。移出后恢复账号已授权的正常分析；已发出的请求无法撤回。新会话默认正常跟进，账号分析开关和预算仍生效。</p>
+        </div>
+<div class="panel"><h2>人物免跟进</h2><p class="hint">跨群不将该人建成目标商家或联系对象；正常商家群中的其他人继续分析。</p><input id="people-search" placeholder="搜索备注、昵称或ID" aria-label="搜索人物"><div id="people-list"></div></div></section>
       <section id="page-settings" class="page hidden">
         <div class="heading">
           <div>
@@ -161,7 +183,7 @@
             <h2>连接工作微信</h2>
             <p>通过本机 wx-cli 接入全部可读私信与群聊，自动补齐历史。</p>
             <div id="account-status" class="inset"></div>
-            <div class="button-row"><button id="probe" class="primary">检测本机连接</button><button id="manage-exemptions" type="button">管理免跟进白名单</button></div>
+            <div class="button-row"><button id="probe" class="primary">检测本机连接</button><button id="manage-exemptions" type="button">管理免跟进白名单</button><button id="sync-identity" type="button">刷新微信联系人</button><span id="identity-audit" class="hint"></span></div>
             <div id="source-result"></div>
             <p class="hint">
               源服务需先运行在 127.0.0.1:9100。已归档的数据无需重新导入。
@@ -210,27 +232,6 @@
               </p>
             </form>
           </div>
-        </div>
-        <div class="panel" id="followup-sources">
-          <span class="step-label">03 · 免跟进白名单</span>
-          <h2>白名单内，不做客户跟进</h2>
-          <p>已授权的工作会话默认整理客户。将同事、纯服务商的私信／群聊加入白名单后，仅保留归档，不触发客户建档和跟进。名单以整个会话为单位。</p>
-          <p id="source-counts" class="hint" aria-live="polite"></p>
-          <form id="source-search" class="button-row">
-            <input name="q" placeholder="搜索会话名称或微信 ID" aria-label="搜索跟进会话" />
-            <select name="kind" aria-label="会话类型"><option value="all">私信与群聊</option><option value="private">私信</option><option value="group">群聊</option></select>
-            <select name="scope" aria-label="白名单状态"><option value="all">全部会话</option><option value="archive">白名单 · 免跟进</option><option value="customer">正常跟进</option></select>
-            <button>搜索</button>
-          </form>
-          <div class="button-row">
-            <button id="source-select-page" type="button">勾选本页</button>
-            <button id="source-clear" type="button">清空勾选</button>
-            <span id="source-selection" class="hint" aria-live="polite"></span>
-          </div>
-          <div id="source-list" class="source-list"></div>
-          <div class="button-row"><button id="source-prev" type="button">上一页</button><span id="source-page" class="hint"></span><button id="source-next" type="button">下一页</button></div>
-          <div class="button-row"><button id="source-add" class="primary" type="button">加入免跟进白名单</button><button id="source-remove" type="button">移出白名单</button></div>
-          <p class="hint">加入后暂停该会话分析并停止今日推荐，保留历史。移出后恢复账号已授权的正常分析；已发出的请求无法撤回。新会话默认正常跟进，账号分析开关和预算仍生效。</p>
         </div>
         <details class="panel">
           <summary>备用：手动导入文件</summary>

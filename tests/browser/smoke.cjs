@@ -29,6 +29,8 @@ fs.mkdirSync(screenshots, { recursive: true });
     await page.getByRole("button", { name: "进入工作台" }).click();
     await page.getByRole("heading", { name: "今天，联系谁？" }).waitFor();
     await page.locator(".action-card").waitFor();
+    const badge = await page.locator('.action-card .tag').first().boundingBox();
+    if (badge.height > 30 || badge.width > 200) throw Error('badge stretched');
     await page.screenshot({
       animations: "disabled",
       path: path.join(screenshots, "crm-today.png"),
@@ -142,7 +144,7 @@ fs.mkdirSync(screenshots, { recursive: true });
       fullPage: true,
     });
 
-    await page.locator("nav [data-page=settings]").click();
+    await page.locator("nav [data-page=scope]").click();
     await page.locator("#source-list .source-option").waitFor();
     await page.locator("#source-select-page").click();
     await page.locator("#source-add").click();
@@ -150,8 +152,10 @@ fs.mkdirSync(screenshots, { recursive: true });
     await page.locator("#source-select-page").click();
     await page.locator("#source-remove").click();
     await page.waitForFunction(() => document.querySelector("#source-counts").textContent.includes("白名单免跟进 0 个"));
+    await page.locator("nav [data-page=settings]").click();
     await page.locator("#refresh-monitor").click();
     await page.locator("#monitor-checks .monitor-item").nth(3).waitFor();
+    await page.locator("nav [data-page=scope]").click();
     await page.locator('#source-search .select-trigger').first().click();
     await page.getByRole('option', {name: '群聊', exact: true}).click();
     await page.locator('#source-search [name=kind]').selectOption('all');
@@ -201,7 +205,7 @@ fs.mkdirSync(screenshots, { recursive: true });
       )
     )
       throw Error("analysis mobile overflow");
-    await page.locator("nav [data-page=settings]").click();
+    await page.locator("nav [data-page=scope]").click();
     await page.locator("#source-list .source-option").waitFor();
     if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1))
       throw Error("whitelist settings mobile overflow");

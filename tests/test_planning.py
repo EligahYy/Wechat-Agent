@@ -99,7 +99,7 @@ def test_recent_fifteen_days_is_bounded_and_history_waits(db, record, monkeypatc
     primary_times = [
         m["time"] for m in json.loads(calls[0]["messages"][1]["content"])["messages"]
     ]
-    assert len(primary_times) <= 18  # at most two earlier context messages
+    assert len(primary_times) <= 24  # two earlier and six later context messages
     assert (
         len(
             db.rows(

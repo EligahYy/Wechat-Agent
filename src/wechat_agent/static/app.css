@@ -1384,3 +1384,14 @@ dialog[open]::backdrop {
 .select-options button:hover, .select-options button:focus-visible { background: #f2f5f1; outline-offset: -2px; }
 @media(max-width: 1100px) { .monitor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media(max-width: 560px) { .monitor-grid { grid-template-columns: 1fr; } .select-control { min-width: 100px; } }
+
+/* Compact badges must never stretch with a flex/grid row. */
+.tag { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; align-self: flex-start; width: fit-content; height: fit-content; min-height: 22px; line-height: 1.25; border-radius: 999px; padding: 4px 9px; white-space: nowrap; }
+.location-card { background: var(--soft); padding: 18px; border-radius: 12px; margin: 16px 0; }
+.location-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.location-row span { flex: 1; min-width: 140px; overflow-wrap: anywhere; }
+.location-row small { display: block; color: var(--muted); }
+#detail { max-width: 680px; width: min(680px,100vw); height: 100dvh; max-height: 100dvh; margin: 0 0 0 auto; border-radius: 0; }
+#notice button { margin-left: 12px; padding: 3px 10px; }
+button:disabled { cursor: wait; }
+@media(max-width:700px) { nav { max-width: 100%; overflow-x: auto; scrollbar-width: thin; } nav button { flex: 0 0 auto; width: auto; } }

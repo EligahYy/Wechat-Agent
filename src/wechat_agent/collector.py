@@ -142,6 +142,11 @@ class Collector:
             if sender == self.db.settings.self_id
             else ("incoming" if self.db.settings.self_id else "unknown")
         )
+        from .identity import save_display
+
+        display = item.get("sender_display_name") or raw.get("sender_display_name")
+        if sender != "unknown" and isinstance(display, str):
+            save_display(self.db, chat["account_id"], sender, display)
         return dict(
             schema_version=1,
             source="wx_cli",
