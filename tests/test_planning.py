@@ -367,3 +367,34 @@ def test_diagnose_command_is_local_only(db, record, monkeypatch, capsys):
     main()
     report = json.loads(capsys.readouterr().out)
     assert report["model"] and report["recent_errors"] == []
+
+
+def test_usage_chart_has_seven_ordered_days_and_matches_reconciled_budget(db, record):
+    corpus(db, record, recent=1, history=0)
+    configure(db, True)
+    today = budget_state(db)["day"]
+    with db.tx() as c:
+        c.execute(
+            "INSERT INTO usage VALUES(?,?,?,?,?,?,?)",
+            (uid(), None, today, 98000, None, "unknown", now()),
+        )
+        rowid = c.execute("SELECT MAX(rowid) FROM usage").fetchone()[0]
+        db.event(
+            c,
+            "local-budget:" + today,
+            "budget_reconciled",
+            {"confirmed_tokens": 17000, "through_rowid": rowid},
+        )
+        c.execute(
+            "INSERT INTO usage VALUES(?,?,?,?,?,?,?)",
+            (uid(), None, today, 1000, 600, "reported", now()),
+        )
+    data = overview(db)
+    days = data["daily_usage"]
+    assert len(days) == 7 and days[-1]["day"] == today
+    assert all(days[i]["day"] < days[i + 1]["day"] for i in range(6))
+    assert all(d["reported"] == d["uncertain"] == d["calls"] == 0 for d in days[:-1])
+    assert days[-1]["reported"] == data["budget"]["reported"] == 17600
+    assert days[-1]["uncertain"] == data["budget"]["uncertain"] == 0
+    assert days[-1]["raw_uncertain"] == 98000 and days[-1]["reconciled"]
+    assert days[-1]["calls"] == 2

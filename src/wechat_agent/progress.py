@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 
-from .analysis import budget_state
+from .analysis import budget_state, usage_for_day
 from .crm import TZ
 from .db import now
 from .diagnostics import snapshot
@@ -51,10 +51,11 @@ def overview(db):
         p = json.loads(job["payload"])
         if p.get("planner") == PLANNER and job["status"] != "superseded":
             states[job["status"]] = states.get(job["status"], 0) + 1
-    daily = db.rows(
-        "SELECT day,COUNT(*) calls,SUM(COALESCE(actual,0)) reported,SUM(CASE WHEN actual IS NULL THEN reserved ELSE 0 END) uncertain FROM usage WHERE day>=? GROUP BY day ORDER BY day",
-        ((datetime.now(TZ) - timedelta(days=6)).date().isoformat(),),
-    )
+    today = datetime.now(TZ).date()
+    daily = [
+        usage_for_day(db, (today - timedelta(days=offset)).isoformat())
+        for offset in range(6, -1, -1)
+    ]
     outcomes = db.rows(
         "SELECT substr(e.created_at,1,10) day,SUM(json_extract(e.payload,'$.status')='succeeded') completed,COUNT(*) attempts FROM events e JOIN jobs j ON j.id=e.entity_id JOIN conversations v ON v.id=json_extract(j.payload,'$.conversation_id') WHERE e.kind='analysis_outcome' AND v.account_id=? AND e.created_at>=? GROUP BY substr(e.created_at,1,10) ORDER BY day",
         (account, (datetime.now(UTC) - timedelta(days=7)).isoformat()),

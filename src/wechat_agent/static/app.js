@@ -362,6 +362,10 @@ document.addEventListener(
       );
       return notice("诊断已复制，不含聊天正文、账号ID或API key。");
     }
+    if (d.usageDay) {
+      selectedUsageDay = d.usageDay;
+      return renderUsageTrend(usageDays);
+    }
     if (d.page) return go(d.page);
     if (d.go) return go(d.go);
     if (d.filter) {
@@ -685,18 +689,7 @@ async function loadAnalysis() {
     );
     $("#analysis-budget").innerHTML =
       `<h2>今日预算 <small>${esc(b.day)} · 北京时间</small></h2><div class="budget-number">${Number(b.reported).toLocaleString()} <span>/ ${Number(b.limit).toLocaleString()} token</span></div><div class="progress-track"><i style="width:${used}%"></i></div><div class="budget-breakdown"><span>已返回／已核对用量 <b>${b.reported}</b></span><span>未确认预留 <b>${b.uncertain}</b></span><span>剩余可调度 <b>${b.remaining}</b></span><span>请求记录 <b>${b.calls}</b></span></div><p class="hint">预留是估算，并非实际扣费；响应后以API用量替换。超时等未确认请求暂保留额度，明确拒绝或连接未建立的请求不占用预算。</p><button data-go="settings" class="quiet">调整预算 →</button>${b.uncertain ? '<details><summary class="hint">未确认预留与账单不一致？</summary><p class="hint">仅在核对 DeepSeek 今日账单后填写总 token 用量。这只校正本机预算，不修改账单；原始请求记录保留。</p><form id="budget-reconcile"><label>今日已确认总 token<input name="confirmed_tokens" type="number" min="0" max="100000000" required></label><label class="checkbox"><input name="confirm_billing" type="checkbox" required>已核对今日账单，包含截至现在的全部请求</label><button>按账单校正并恢复</button></form></details>' : ""}`;
-    const maximum = Math.max(
-      1,
-      ...d.daily_usage.map((v) => Number(v.reported) + Number(v.uncertain)),
-    );
-    $("#analysis-trend").innerHTML = d.daily_usage.length
-      ? d.daily_usage
-          .map(
-            (v) =>
-              `<div class="trend-day"><div class="trend-column" title="${esc(v.day)}：已报告 ${v.reported}，未确认 ${v.uncertain}"><i style="height:${Math.max(2, (Number(v.reported) * 100) / maximum)}%"></i><b style="height:${(Number(v.uncertain) * 100) / maximum}%"></b></div><small>${esc(v.day.slice(5))}</small><span>${Number(v.reported).toLocaleString()}</span></div>`,
-          )
-          .join("")
-      : '<p class="hint">尚无模型请求记录；入队本身不会产生费用。</p>';
+    renderUsageTrend(d.daily_usage);
     $("#analysis-output").innerHTML =
       `<div class="budget-breakdown"><span>关键确认 <b>${d.reviews}</b></span><span>运行中 <b>${d.queue.running || 0}</b></span><span>待调度／入队 <b>${(d.queue.deferred_recent || 0) + (d.queue.deferred_history || 0) + (d.queue.queued || 0)}</b></span></div>` +
       d.runtime
@@ -765,3 +758,43 @@ $("#analysis-next").onclick = safe(async () => {
     await loadAnalysisJobs();
   }
 });
+
+let usageDays = [],
+  selectedUsageDay = null;
+function usageNumber(value) {
+  return Math.max(0, Number(value) || 0);
+}
+function usageTick(value) {
+  return new Intl.NumberFormat("zh-CN", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+function renderUsageTrend(days) {
+  const focusedDay = document.activeElement?.dataset?.usageDay;
+  usageDays = days;
+  if (!days.some((day) => day.day === selectedUsageDay))
+    selectedUsageDay = days.at(-1)?.day;
+  const selected = days.find((day) => day.day === selectedUsageDay);
+  const sum = (key) =>
+    days.reduce((total, day) => total + usageNumber(day[key]), 0);
+  const peak = Math.max(
+    0,
+    ...days.flatMap((day) => [
+      usageNumber(day.reported),
+      usageNumber(day.uncertain),
+    ]),
+  );
+  const magnitude = 10 ** Math.floor(Math.log10(peak || 1000));
+  const scale =
+    ([1, 2, 2.5, 5, 10].find((step) => step * magnitude >= peak) || 10) *
+    magnitude;
+  const exact = (n) => usageNumber(n).toLocaleString("zh-CN");
+  $("#analysis-trend").innerHTML =
+    `<div class="usage-summary"><div><span>已报告／已核对</span><strong>${exact(sum("reported"))}</strong></div><div><span>未确认预留</span><strong>${exact(sum("uncertain"))}</strong></div></div><div class="usage-legend"><span><i class="reported-key"></i>已报告用量</span><span><i class="uncertain-key"></i>未确认预留 · 非实际扣费</span><small>单位：Token</small></div><div class="usage-chart" role="group" aria-label="近七天每日用量，点击日期查看详情"><div class="usage-axis" aria-hidden="true"><span>${usageTick(scale)}</span><span>${usageTick(scale / 2)}</span><span>0</span></div><div class="usage-plot"><div class="usage-grid" aria-hidden="true"><i></i><i></i><i></i></div><div class="usage-bars">${days.map((day) => `<button type="button" class="usage-day ${day.day === selectedUsageDay ? "selected" : ""}" data-usage-day="${esc(day.day)}" aria-pressed="${day.day === selectedUsageDay}" aria-label="${esc(day.day)}，已报告${exact(day.reported)}，未确认${exact(day.uncertain)}，请求${day.calls}次" title="${esc(day.day)}\n已报告 ${exact(day.reported)} Token\n未确认 ${exact(day.uncertain)} Token\n请求 ${day.calls} 次"><span class="usage-columns"><i class="reported-bar" style="height:${(usageNumber(day.reported) * 100) / scale}%"></i><i class="uncertain-bar" style="height:${(usageNumber(day.uncertain) * 100) / scale}%"></i></span><small>${esc(day.day.slice(5).replace("-", "/"))}</small></button>`).join("")}</div></div></div>${selected ? `<div class="usage-detail" aria-live="polite"><div class="usage-detail-heading"><strong>${esc(selected.day)}${selected === days.at(-1) ? " · 今天" : ""}</strong><span>请求 ${selected.calls} 次</span></div><div><span><i class="reported-key"></i>已报告／已核对</span><b>${exact(selected.reported)} Token</b></div><div><span><i class="uncertain-key"></i>未确认预留</span><b>${exact(selected.uncertain)} Token</b></div>${selected.reconciled ? "<p>本日已按确认账单校正，原始请求记录保留。</p>" : ""}</div>` : ""}<p class="hint usage-note">${sum("calls") ? "按北京时间统计。模型结果未通过校验，也可能产生已报告用量。" : "近7天暂无请求记录，图中空白日期代表零用量。"} 点击日期查看精确数值。</p>`;
+  if (focusedDay) {
+    [...document.querySelectorAll("[data-usage-day]")]
+      .find((button) => button.dataset.usageDay === focusedDay)
+      ?.focus({ preventScroll: true });
+  }
+}

@@ -233,7 +233,7 @@ def schedule(db, retry=False):
                 )
         if retry:
             c.execute(
-                "UPDATE jobs SET status='deferred_'||json_extract(payload,'$.scope'),attempts=0,error=NULL,available_at=? WHERE json_extract(payload,'$.planner')=? AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1) AND status IN ('blocked_credentials','blocked_budget','waiting_history_budget','failed')",
+                "UPDATE jobs SET status='deferred_'||json_extract(payload,'$.scope'),attempts=0,error=NULL,available_at=? WHERE json_extract(payload,'$.planner')=? AND json_extract(payload,'$.conversation_id') IN (SELECT id FROM conversations WHERE account_id=? AND allowlisted=1 AND egress=1) AND status IN ('blocked_credentials','blocked_budget','waiting_history_budget','failed','retry_wait')",
                 (now(), PLANNER, account),
             )
     # Gate checks happen outside the write transaction (budget_state reads SQLite).

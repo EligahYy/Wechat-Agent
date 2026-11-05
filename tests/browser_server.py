@@ -15,6 +15,7 @@ from wechat_agent.analysis import run_once
 from wechat_agent.collector import Collector
 from wechat_agent.config import Settings
 from wechat_agent.crm import configure, stable_actor
+from wechat_agent.db import now, uid
 from wechat_agent.ingestion import ingest
 from wechat_agent.services import allow_conversation
 from wechat_agent.web import create_app
@@ -114,6 +115,7 @@ def fixture(settings):
                 "operation": "create",
                 "opportunity": "美国普通货本批需求",
                 "stage": "quoting",
+                "party": "platform_operator",
                 "due_date": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat(),
                 "due_text": "今天",
                 "date_kind": "explicit",
@@ -142,6 +144,25 @@ def fixture(settings):
     while run_once(db, client):
         pass
     client.close()
+    # Synthetic usage exercises the chart's distinct reported/reserved series.
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    with db.tx() as c:
+        for offset, reported, uncertain in [
+            (6, 2300, 0),
+            (3, 5200, 12000),
+            (1, 8500, 0),
+            (0, 17555, 98680),
+        ]:
+            day = (today - timedelta(days=offset)).isoformat()
+            c.execute(
+                "INSERT INTO usage VALUES(?,?,?,?,?,?,?)",
+                (uid(), None, day, reported, reported, "reported", now()),
+            )
+            if uncertain:
+                c.execute(
+                    "INSERT INTO usage VALUES(?,?,?,?,?,?,?)",
+                    (uid(), None, day, uncertain, None, "unknown", now()),
+                )
     return app
 
 

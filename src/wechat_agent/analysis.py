@@ -10,7 +10,7 @@ import httpx
 from pydantic import ValidationError
 
 from .config import secret
-from .crm_schema import CRMResult
+from .crm_schema import PARTY_VALUES, CRMResult
 from .db import dumps, now, uid
 from .model_network import connection_code, create_client
 from .schemas import AnalysisResult, DraftResult
@@ -34,6 +34,13 @@ customer_memory 和 known_roles 辅助归属，不代替当前消息证据；use
 people.role只能merchant/service_provider/other/unknown；facts.field只能company/market/cargo/volume/timing/concern/preference/summary。
 stage只能needs/quoting/decision/preparing/shipping/reported_complete/paused。ambiguities每项question和evidence_refs，仅问影响近期行动的歧义。
 所有事实、动作和问题都引用输入现有证据。结果精简，只输出有依据的新变化，已知事实不要重复罗列；最多6个当前行动，不罗列整段历史所有请求。字段未知就不输出；无业务内容返回空数组。"""
+
+
+CRM_PROMPT += (
+    "\nactions.party 只能取这些责任方枚举："
+    + dumps(list(PARTY_VALUES))
+    + "。self=我方平台运营，merchant=商家，service_provider=头程服务商，other=明确的其他第三方，unknown=无法判断；禁止填姓名、actor_ref或多方组合。不明确时用unknown，不能默认归我方。"
+)
 
 
 class Blocked(ValueError):
@@ -251,19 +258,13 @@ def context(db, conversation_id, message_ids=None):
     return chat, evidence, payload, fingerprint
 
 
-def budget_state(db):
-    from .crm import TZ
-
-    day = datetime.now(TZ).date().isoformat()
-    policy = db.rows(
-        "SELECT daily_budget FROM crm_policies WHERE account_id=? AND enabled=1",
-        (db.settings.source_account,),
-    )
-    limit = policy[0]["daily_budget"] if policy else db.settings.daily_token_limit
+def usage_for_day(db, day):
     row = db.rows(
         "SELECT COALESCE(SUM(actual),0) reported,COALESCE(SUM(CASE WHEN actual IS NULL THEN reserved ELSE 0 END),0) uncertain,COUNT(*) calls,SUM(CASE WHEN actual IS NULL THEN 1 ELSE 0 END) uncertain_calls FROM usage WHERE day=?",
         (day,),
     )[0]
+    row["raw_reported"] = row["reported"]
+    row["raw_uncertain"] = row["uncertain"]
     corrections = db.rows(
         "SELECT payload FROM events WHERE entity_id=? AND kind='budget_reconciled' ORDER BY created_at DESC LIMIT 1",
         ("local-budget:" + day,),
@@ -279,11 +280,22 @@ def budget_state(db):
             uncertain=after["uncertain"],
             uncertain_calls=after["uncertain_calls"],
         )
-    return row | {
-        "day": day,
+    return row | {"day": day, "reconciled": bool(corrections)}
+
+
+def budget_state(db):
+    from .crm import TZ
+
+    day = datetime.now(TZ).date().isoformat()
+    policy = db.rows(
+        "SELECT daily_budget FROM crm_policies WHERE account_id=? AND enabled=1",
+        (db.settings.source_account,),
+    )
+    limit = policy[0]["daily_budget"] if policy else db.settings.daily_token_limit
+    totals = usage_for_day(db, day)
+    return totals | {
         "limit": limit,
-        "remaining": max(0, limit - row["reported"] - row["uncertain"]),
-        "reconciled": bool(corrections),
+        "remaining": max(0, limit - totals["reported"] - totals["uncertain"]),
     }
 
 

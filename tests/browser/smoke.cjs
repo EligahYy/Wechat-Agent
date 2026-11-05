@@ -101,6 +101,41 @@ fs.mkdirSync(screenshots, { recursive: true });
     await page.locator("#analysis-scope").selectOption("recent");
     await page.locator("#analysis-filter").selectOption("complete");
     await page.locator("#analysis-jobs .queue-item").waitFor();
+    await page.locator("#analysis-trend .usage-day").nth(6).waitFor();
+    if ((await page.locator("#analysis-trend .usage-day").count()) !== 7)
+      throw Error("usage chart must show seven days");
+    if (
+      !(
+        await page.locator("#analysis-trend .usage-legend").innerText()
+      ).includes("非实际扣费")
+    )
+      throw Error("uncertain usage legend missing");
+    await page.locator("#analysis-trend .usage-day").nth(0).click();
+    if (
+      !(await page
+        .locator("#analysis-trend .usage-day")
+        .nth(0)
+        .evaluate(
+          (el) =>
+            el.getAttribute("aria-pressed") === "true" &&
+            el === document.activeElement,
+        ))
+    )
+      throw Error("day selection/focus not retained");
+    if (
+      !(
+        await page.locator("#analysis-trend .usage-detail").innerText()
+      ).includes("2,300 Token")
+    )
+      throw Error("day detail values incorrect");
+    await page.locator("#analysis-trend .usage-day").nth(6).click();
+    if (
+      !(
+        await page.locator("#analysis-trend .usage-detail").innerText()
+      ).includes("98,680 Token")
+    )
+      throw Error("pending reservation not distinguished");
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({
       animations: "disabled",
       path: path.join(screenshots, "analysis-overview.png"),

@@ -1,6 +1,6 @@
 # 从零部署、微信接入与日常使用 SOP
 
-适用：个人工作 Mac、本地 wx-cli、DeepSeek API。当前应用 v0.5.1、数据库 v6。目标设计与尚待交付项见 [改造设计](AI_CRM_DESIGN.md)。
+适用：个人工作 Mac、本地 wx-cli、DeepSeek API。当前应用 v0.5.2、数据库 v6。目标设计与尚待交付项见 [改造设计](AI_CRM_DESIGN.md)。
 
 ## 已有数据用户：更新后这样使用
 
@@ -288,3 +288,12 @@ DEEPSEEK_PROXY=http://127.0.0.1:7897 uv run wechat-agent start
 若要明确不使用 HTTP／系统代理，可以设置 `DEEPSEEK_PROXY=direct`；这不等于绕开 TUN 或网卡路由。指定路由仍尊重 SSL_CERT_FILE／SSL_CERT_DIR 并保持证书校验；证书错误应修复 CA 配置，不能关闭校验。
 
 对于“ChatGPT域名走代理、其他 MATCH DIRECT-HOTSPOT”的分流，DeepSeek 会走热点直连，不会自动使用 ChatGPT 策略组。无需为了调用 DeepSeek 改动公司内网规则。
+
+
+### 责任方字段校验与近七天用量（v0.5.2）
+
+`model_schema:actions.*.party` 表示模型已返回结果，但责任方字段不符合契约，并不是网络或预算问题。新版统一为 self／merchant／service_provider／other／unknown，并将明确的中英文角色别名转换为标准值；姓名、微信ID、多方混合值仍不能充当角色。未知或空责任方记 unknown，不默认指派给我方；身份和证据校验继续严格执行。
+
+更新后用原来的 `DEEPSEEK_PROXY=http://127.0.0.1:7897 uv run wechat-agent start` 启动，在分析概览点击“恢复／重试分析”，重新处理未成功分片。此操作不重复创建已成功的任务；失败响应未被保存为可重放模型结果，因此可能产生新的 API 请求用量。
+
+近七天用量固定展示北京时间最近7个日期，无请求日期显示零值；绿色柱为已报告／已核对Token，浅色纹理柱为未确认预留，明确区分“实际报告”与“尚未确认”。点击或键盘选择日期可查看精确值与请求数。账单校正会同步反映在今日预算和该日图表中，原始记录继续保留。模型结果校验失败也可能已消耗Token，不能将“任务尚未生成”理解成“没有调用或没有用量”。
