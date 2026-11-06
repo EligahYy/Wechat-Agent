@@ -1395,3 +1395,17 @@ dialog[open]::backdrop {
 #notice button { margin-left: 12px; padding: 3px 10px; }
 button:disabled { cursor: wait; }
 @media(max-width:700px) { nav { max-width: 100%; overflow-x: auto; scrollbar-width: thin; } nav button { flex: 0 0 auto; width: auto; } }
+
+.scope-tabs,.scope-entities { display:flex; gap:8px; flex-wrap:wrap; margin: 0 0 18px; }
+.scope-tabs { border-bottom:1px solid var(--line); }
+.scope-tabs button { border:0; background:transparent; border-bottom:2px solid transparent; border-radius:0; padding:12px 18px; }
+.scope-tabs button[aria-selected=true] { color:var(--green); border-bottom-color:var(--green); background:var(--soft); }
+.scope-entities button[aria-pressed=true] { background:var(--soft); color:var(--green); }
+.source-list { max-height:none; overflow:visible; }
+.source-option { margin:0; padding:12px 14px; }
+.source-option details { font-size:11px; color:var(--muted); margin-top:4px; }
+.name-pending { color:var(--orange); }
+
+.source-bulk { position:sticky; bottom:12px; z-index:4; background:var(--bg); padding:12px; border:1px solid var(--line); border-radius:12px; box-shadow:0 3px 14px #213a2a0d; }
+
+.source-bulk { top:12px; bottom:auto; }

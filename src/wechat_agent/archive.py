@@ -60,7 +60,11 @@ def discover(source):
                 added += 1
             found[sid] = {
                 "source_id": sid,
-                "title": item.get("display_name") or sid,
+                "title": item.get("display_name")
+                or row.get("display_name")
+                or row.get("name")
+                or row.get("nick_name")
+                or sid,
                 "kind": "group" if sid.endswith("@chatroom") else "private",
                 "excluded": sid.startswith("gh_")
                 or sid in SYSTEM
@@ -97,13 +101,24 @@ def register(db, sessions, until, rescan=False, preserve_paused=False):
             if row and preserve_paused and not row["allowlisted"]:
                 continue
             cid = row["id"] if row else uid()
+            from .identity import clean_name
+
+            meta = c.execute(
+                "SELECT remark,nickname FROM identity_metadata WHERE account_id=? AND source_id=?",
+                (db.settings.source_account, item["source_id"]),
+            ).fetchone()
+            title = (
+                (meta["remark"] or meta["nickname"])
+                if meta and (meta["remark"] or meta["nickname"])
+                else clean_name(item["title"], item["source_id"])
+            )
             c.execute(
                 "INSERT INTO conversations(id,source,account_id,source_id,title,kind,allowlisted,egress,followup_source) VALUES(?,'wx_cli',?,?,?,?,1,?,1) ON CONFLICT(source,account_id,source_id) DO UPDATE SET title=excluded.title,allowlisted=1",
                 (
                     cid,
                     db.settings.source_account,
                     item["source_id"],
-                    item["title"],
+                    title,
                     item["kind"],
                     grant,
                 ),

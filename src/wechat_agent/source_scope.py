@@ -55,11 +55,22 @@ def list_sources(db, q="", kind="all", scope="all", page=1):
         + " ORDER BY v.followup_source ASC,v.title,v.id LIMIT 50 OFFSET ?",
         [*args, (page - 1) * 50],
     )
+    from .identity import clean_name
+
+    for row in rows:
+        row["title"] = clean_name(row["title"], row["source_id"])
+        row["name_available"] = bool(row["title"] and row["title"] != row["source_id"])
+        if not row["name_available"]:
+            row["title"] = (
+                "群名待同步" if row["kind"] == "group" else "联系人名称待同步"
+            )
     return {
         "items": rows,
         "total": total,
         "has_more": page * 50 < total,
         "page": page,
+        "page_size": 50,
+        "pages": max(1, (total + 49) // 50),
         "counts": counts(db),
     }
 

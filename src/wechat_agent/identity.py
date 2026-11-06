@@ -45,7 +45,15 @@ def sync_contacts(db, source):
                         db.settings.source_account,
                         sid,
                         *[
-                            row.get(k) if isinstance(row.get(k), str) else ""
+                            (
+                                clean_name(row[k], sid)
+                                if k != "alias" and clean_name(row[k], sid) != sid
+                                else row[k]
+                                if k == "alias"
+                                else ""
+                            )
+                            if isinstance(row.get(k), str)
+                            else ""
                             for k in ("remark", "nick_name", "alias")
                         ],
                         now(),
@@ -65,6 +73,10 @@ def sync_contacts(db, source):
         c.executemany(
             "INSERT INTO identity_metadata VALUES(?,?,?,?,?,?) ON CONFLICT(account_id,source_id) DO UPDATE SET remark=excluded.remark,nickname=excluded.nickname,alias=excluded.alias,updated_at=excluded.updated_at",
             items,
+        )
+        c.execute(
+            "UPDATE conversations SET title=(SELECT CASE WHEN i.remark<>'' THEN i.remark ELSE i.nickname END FROM identity_metadata i WHERE i.account_id=conversations.account_id AND i.source_id=conversations.source_id) WHERE account_id=? AND EXISTS(SELECT 1 FROM identity_metadata i WHERE i.account_id=conversations.account_id AND i.source_id=conversations.source_id AND (i.remark<>'' OR i.nickname<>''))",
+            (db.settings.source_account,),
         )
     db.heartbeat("identity", "running")
     return {"ok": True, "contacts": len(items)}

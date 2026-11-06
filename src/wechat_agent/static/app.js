@@ -803,22 +803,28 @@ function renderUsageTrend(days) {
 }
 
 // Archive scope and model follow-up scope are deliberately independent.
-let sourcePage = 1, sourceHasMore = false, sourceRows = [];
+let sourcePage = 1, sourceHasMore = false, sourceRows = [], sourceScope = "customer", sourceRequest = 0;
 const sourceSelection = new Set();
 function renderSourceSelection() {
   $("#source-selection").textContent = `已勾选 ${sourceSelection.size} 个`;
   $("#source-add").disabled = $("#source-remove").disabled = !sourceSelection.size;
+  $("#source-add").classList.toggle('hidden',sourceScope!=='customer');
+  $("#source-remove").classList.toggle('hidden',sourceScope!=='archive');
 }
 async function loadSources() {
   const f = new FormData($("#source-search"));
-  const params = new URLSearchParams({q: f.get("q"), kind: f.get("kind"), scope: f.get("scope"), page: sourcePage});
+  const params = new URLSearchParams({q: f.get("q"), kind: f.get("kind"), scope: sourceScope, page: sourcePage});
+  const ticket = ++sourceRequest;
+  sourceRows=[]; $("#source-select-page").disabled=true; $("#source-list").innerHTML='<p class="hint" role="status">正在加载会话…</p>';
   const d = await api("/api/crm/exemptions?" + params);
-  sourceRows = d.items; sourceHasMore = d.has_more;
+  if(ticket!==sourceRequest) return;
+  if(sourcePage>d.pages) {sourcePage=d.pages;return loadSources();}
+  sourceRows = d.items; sourceHasMore = d.has_more; $("#source-select-page").disabled=!d.items.length;
   $("#source-counts").textContent = `已归档 ${d.counts.total} 个会话 · 正常跟进 ${d.counts.selected} 个 · 白名单免跟进 ${d.counts.archive_only} 个`;
-  $("#source-list").innerHTML = d.items.length ? d.items.map(v => `<label class="source-option"><input type="checkbox" data-followup-source="${esc(v.id)}" ${sourceSelection.has(v.id) ? "checked" : ""}><span><strong>${esc(v.title || v.source_id)}</strong><small>${v.kind === "group" ? "群聊" : "私信"} · ${esc(v.messages)} 条 · ${esc(({internal:"内部同事",buyer:"买手",provider:"纯服务商",announcement:"通知",merchant:"商家",unknown:"待识别"})[v.business_kind]||"待识别")} · ${v.followup_source ? "正常跟进" : "白名单 · 免跟进"}</small><small>${esc(v.source_id)}</small></span></label>`).join("") : empty("没有匹配会话", "先完成微信采集，或调整搜索条件。");
+  $("#source-list").innerHTML = d.items.length ? d.items.map(v => `<label class="source-option"><input type="checkbox" data-followup-source="${esc(v.id)}" ${sourceSelection.has(v.id) ? "checked" : ""}><span><strong>${esc(v.title || v.source_id)}</strong><small>${v.kind === "group" ? "群聊" : "私信"} · ${esc(v.messages)} 条 · ${esc(({internal:"内部同事",buyer:"买手",provider:"纯服务商",announcement:"通知",merchant:"商家",unknown:"待识别"})[v.business_kind]||"待识别")} · ${v.followup_source ? "正常跟进" : "白名单 · 免跟进"}</small>${v.name_available ? "" : '<small class="name-pending">源端暂未提供可用名称，可刷新微信群名</small>'}<details><summary>微信 ID</summary><small>${esc(v.source_id)}</small></details></span></label>`).join("") : empty("没有匹配会话", "先完成微信采集，或调整搜索条件。");
   $("#source-prev").disabled = sourcePage <= 1;
   $("#source-next").disabled = !sourceHasMore;
-  $("#source-page").textContent = `第 ${d.page} 页 · 匹配 ${d.total} 个`;
+  $("#source-page").textContent = `第 ${d.page} / ${d.pages} 页 · 共 ${d.total} 个 · 每页最多50条`;
   renderSourceSelection();
 }
 $("#source-list").onchange = e => {
@@ -827,7 +833,7 @@ $("#source-list").onchange = e => {
   if (e.target.checked) sourceSelection.add(id); else sourceSelection.delete(id);
   renderSourceSelection();
 };
-$("#source-search").onsubmit = safe(async e => { e.preventDefault(); sourcePage = 1; await loadSources(); });
+$("#source-search").onsubmit = safe(async e => { e.preventDefault(); sourcePage = 1; sourceSelection.clear(); await loadSources(); });
 $("#source-select-page").onclick = safe(async () => { sourceRows.forEach(v => sourceSelection.add(v.id)); await loadSources(); });
 $("#source-clear").onclick = safe(async () => { sourceSelection.clear(); await loadSources(); });
 $("#source-prev").onclick = safe(async () => { if (sourcePage > 1) { sourcePage--; await loadSources(); } });
@@ -850,10 +856,9 @@ $("#source-remove").onclick = safe(() => saveSources(false));
 
 $("#manage-exemptions").onclick = () => {
   go("scope");
+  document.querySelector('[data-scope-entity="conversations"]').click();
   $("#followup-sources").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start"});
-  $("#source-search [name=scope]").value = "archive";
-  $("#source-search [name=scope]").dispatchEvent(new Event("change"));
-  sourcePage = 1; loadSources().catch(e => notice(e.message, true));
+  setScopeTab("archive");
 };
 $("#clear-reviews").onclick = safe(async () => {
   $("#clear-reviews").disabled = true;
@@ -931,7 +936,7 @@ document.addEventListener("pointerdown", e => {
 enhanceSelects();
 new MutationObserver(enhanceSelects).observe(document.body, {childList: true, subtree: true});
 
-$("#source-search").addEventListener("change", safe(async e => { if (e.target.tagName === "SELECT") { sourcePage = 1; await loadSources(); } }));
+$("#source-search").addEventListener("change", safe(async e => { if (e.target.tagName === "SELECT") { sourcePage = 1; sourceSelection.clear(); await loadSources(); } }));
 
 function locationHTML(d) {
   if(!d) return '';
@@ -939,6 +944,27 @@ function locationHTML(d) {
 }
 document.addEventListener('click',safe(async e=>{const b=e.target.closest('[data-copy-location],[data-person-exclude]');if(!b)return;if(b.dataset.copyLocation){await navigator.clipboard.writeText(b.dataset.copyLocation);notice('已复制，请在微信搜索或进入来源群定位');}else{await api('/api/crm/people/'+encodeURIComponent(b.dataset.personExclude)+'/exclusion',{enabled:b.dataset.enabled==='true'});await loadPeople();await load();notice('人物跟进范围已更新，其他群成员不受影响');}}));
 let peopleRequest=0;
-async function loadPeople(){const ticket=++peopleRequest;const d=await api('/api/crm/people?q='+encodeURIComponent($('#people-search').value));if(ticket!==peopleRequest)return;$('#people-list').innerHTML=d.map(v=>`<div class="location-row"><span><strong>${esc(v.name)}</strong><small>${esc(v.source_id)} · ${v.excluded?'已免跟进':'正常'}</small></span><button data-person-exclude="${esc(v.id)}" data-enabled="${!v.excluded}">${v.excluded?'恢复':'免跟进此人'}</button></div>`).join('')||empty('未找到联系人','先同步微信联系人或等待消息采集。');}
-$('#people-search').oninput=()=>{clearTimeout(loadPeople.timer);loadPeople.timer=setTimeout(()=>loadPeople().catch(e=>notice(e.message,true)),200);};
+let peoplePage=1, peopleHasMore=false;
+async function loadPeople(){const ticket=++peopleRequest;$('#people-list').innerHTML='<p class="hint" role="status">正在加载人物…</p>';const d=await api('/api/crm/people?q='+encodeURIComponent($('#people-search').value)+'&scope='+sourceScope+'&page='+peoplePage);if(ticket!==peopleRequest)return;if(peoplePage>d.pages){peoplePage=d.pages;return loadPeople();}peopleHasMore=d.has_more;$('#people-list').innerHTML=d.items.map(v=>`<div class="location-row"><span><strong>${esc(v.name)}</strong><small>${esc(v.source_id)}</small></span><button data-person-exclude="${esc(v.id)}" data-enabled="${!v.excluded}">${v.excluded?'移出白名单':'加入免跟进白名单'}</button></div>`).join('')||empty(sourceScope==='archive'?'人物白名单为空':'未找到正常跟进人物','可切换页签或搜索条件。');$('#people-page').textContent=`第 ${d.page} / ${d.pages} 页 · 共 ${d.total} 人 · 每页最多50条`;$('#people-prev').disabled=peoplePage<=1;$('#people-next').disabled=!peopleHasMore;}
+$('#people-search').oninput=()=>{peoplePage=1;clearTimeout(loadPeople.timer);loadPeople.timer=setTimeout(()=>loadPeople().catch(e=>notice(e.message,true)),200);};
 $('#sync-identity').onclick=safe(async()=>{const b=$('#sync-identity');b.disabled=true;try{const d=await api('/api/identity/sync',{});const audit=await api('/api/identity/audit');$('#identity-audit').textContent=`已同步 ${d.contacts} 位联系人 · ${audit.unresolved_names} 位名称待补全`;await load();notice('联系人已更新，不需要重新导入聊天或调用模型');}finally{b.disabled=false;}});
+
+function setScopeTab(value){
+  sourceScope=value;sourcePage=1;peoplePage=1;sourceSelection.clear();
+  document.querySelectorAll('[data-scope-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.scopeTab===value)));
+  $('#scope-list-title').textContent=value==='archive'?'免跟进白名单会话':'正常跟进会话';
+  $('#people-title').textContent=value==='archive'?'免跟进白名单人物':'正常跟进人物';
+  renderSourceSelection();
+  loadSources().catch(e=>notice(e.message,true));loadPeople().catch(e=>notice(e.message,true));
+}
+document.querySelectorAll('[data-scope-tab]').forEach(b=>b.onclick=()=>setScopeTab(b.dataset.scopeTab));
+document.querySelectorAll('[data-scope-entity]').forEach(b=>b.onclick=()=>{
+  const people=b.dataset.scopeEntity==='people';$('#followup-sources').classList.toggle('hidden',people);$('#people-panel').classList.toggle('hidden',!people);
+  document.querySelectorAll('[data-scope-entity]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
+});
+$('#people-prev').onclick=safe(async()=>{if(peoplePage>1){peoplePage--;await loadPeople();}});
+$('#people-next').onclick=safe(async()=>{if(peopleHasMore){peoplePage++;await loadPeople();}});
+$('#refresh-source-names').onclick=safe(async()=>{const b=$('#refresh-source-names');b.disabled=true;try{const d=await api('/api/source/names/refresh',{});await loadSources();notice(`已更新 ${d.updated} 个会话名称；仍无名称的会话将保留待同步提示，不消耗模型预算。`);}finally{b.disabled=false;}});
+
+const scopeTabs=[...document.querySelectorAll('[data-scope-tab]')];
+scopeTabs.forEach((button,index)=>button.addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const next=e.key==='Home'?0:e.key==='End'?scopeTabs.length-1:(index+(e.key==='ArrowRight'?1:-1)+scopeTabs.length)%scopeTabs.length;scopeTabs[next].focus();setScopeTab(scopeTabs[next].dataset.scopeTab);}}));

@@ -941,13 +941,32 @@ def create_app(settings=None, source_factory=None, background=False):
         return {"ok": True}
 
     @app.get("/api/crm/people")
-    def people(q: str = ""):
-        if len(q) > 200:
-            raise ValueError("搜索内容过长")
-        return db.rows(
-            "SELECT n.*,EXISTS(SELECT 1 FROM actor_exclusions x WHERE x.account_id=n.account_id AND x.source_id=n.source_id) excluded FROM crm_contacts n WHERE n.account_id=? AND (instr(n.name,?)>0 OR instr(n.source_id,?)>0) ORDER BY excluded DESC,n.name LIMIT 100",
-            (db.settings.source_account, q, q),
+    def people(q: str = "", scope: str = "customer", page: int = 1):
+        if (
+            len(q) > 200
+            or scope not in {"customer", "archive"}
+            or not 1 <= page <= 100000
+        ):
+            raise ValueError("筛选参数无效")
+        where = "n.account_id=? AND (instr(n.name,?)>0 OR instr(n.source_id,?)>0) AND EXISTS(SELECT 1 FROM actor_exclusions x WHERE x.account_id=n.account_id AND x.source_id=n.source_id) = ?"
+        args = (db.settings.source_account, q, q, int(scope == "archive"))
+        total = db.rows("SELECT COUNT(*) n FROM crm_contacts n WHERE " + where, args)[
+            0
+        ]["n"]
+        rows = db.rows(
+            "SELECT n.*,? excluded FROM crm_contacts n WHERE "
+            + where
+            + " ORDER BY n.name,n.id LIMIT 50 OFFSET ?",
+            (int(scope == "archive"), *args, (page - 1) * 50),
         )
+        return {
+            "items": rows,
+            "total": total,
+            "page": page,
+            "page_size": 50,
+            "pages": max(1, (total + 49) // 50),
+            "has_more": page * 50 < total,
+        }
 
     @app.post("/api/identity/sync")
     def sync_identity():
@@ -958,6 +977,41 @@ def create_app(settings=None, source_factory=None, background=False):
         with db.tx() as c:
             index_contacts(c, db.settings.source_account)
         return result
+
+    @app.post("/api/source/names/refresh")
+    def refresh_source_names():
+        from .archive import discover
+        from .identity import clean_name
+
+        def refresh(source):
+            sessions = discover(source)
+            changed = 0
+            with db.tx() as c:
+                for item in sessions:
+                    meta = c.execute(
+                        "SELECT remark,nickname FROM identity_metadata WHERE account_id=? AND source_id=?",
+                        (db.settings.source_account, item["source_id"]),
+                    ).fetchone()
+                    title = clean_name(item["title"], item["source_id"])
+                    if (not title or title == item["source_id"]) and meta:
+                        title = clean_name(
+                            meta["remark"] or meta["nickname"], item["source_id"]
+                        )
+
+                    if not title or title == item["source_id"]:
+                        continue
+                    changed += c.execute(
+                        "UPDATE conversations SET title=? WHERE account_id=? AND source='wx_cli' AND source_id=? AND title<>?",
+                        (title, db.settings.source_account, item["source_id"], title),
+                    ).rowcount
+            return {
+                "ok": True,
+                "updated": changed,
+                "visible": len(sessions),
+                "note": "仅刷新会话名称，不导入消息、不调用模型。",
+            }
+
+        return source_operation(refresh)
 
     @app.get("/api/identity/audit")
     def identity_audit():
