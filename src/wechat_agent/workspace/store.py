@@ -205,8 +205,14 @@ def commit(db, source_id, proposal, context, fingerprint):
                 "evidence": evid,
             }
             new_batches[item.origin] = ident
+        post_shipment_only = bool(body["batches"]) and all(
+            b["stage"] in {"fulfillment", "reported_shipped", "closed"}
+            for b in body["batches"].values()
+        )
         updated_actions = set()
         for item in proposal.actions:
+            if post_shipment_only:
+                continue
             evid = refs(item.evidence)
             if item.origin not in item.evidence:
                 raise ValueError("workspace_origin_required")
@@ -290,6 +296,10 @@ def commit(db, source_id, proposal, context, fingerprint):
             if k == "role" or v.get("resolved")
         }
         for item in proposal.decisions:
+            if post_shipment_only and (
+                item.key != "role" or body["relationship"] == "merchant"
+            ):
+                continue
             if item.key != "role" and (
                 not item.blocks_followup or not item.impact.strip()
             ):
@@ -314,6 +324,21 @@ def commit(db, source_id, proposal, context, fingerprint):
                 },
             )
         body["quality_issues"] = context.get("quality_issues", [])
+        if post_shipment_only:
+            for action in body["actions"].values():
+                if action["state"] in {
+                    "open",
+                    "waiting",
+                    "proposed",
+                    "historical_unresolved",
+                }:
+                    action["state"] = "cancelled"
+            body["decisions"] = {
+                k: v
+                for k, v in body["decisions"].items()
+                if v.get("resolved")
+                or (k == "role" and body["relationship"] != "merchant")
+            }
         body["engine_version"] = ENGINE_VERSION
         body["source_revision"] = snapshot(db, source_id, False)
         body["coverage"] = {

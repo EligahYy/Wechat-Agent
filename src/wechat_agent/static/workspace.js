@@ -27,7 +27,7 @@ const stages = {
   quoting: "报价沟通",
   decision: "商家决策",
   preparing: "备货中",
-  fulfillment: "履约对接（到仓／卸货）",
+  fulfillment: "已走货 · 后续对接",
   reported_shipped: "已报告发货",
   closed: "已结束",
 };

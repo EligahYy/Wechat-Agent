@@ -626,3 +626,23 @@ def test_fulfillment_batch_stops_new_stocking_tasks(pilot):
     p.batches[0].stage = "preparing"
     d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
     assert next(iter(d["body"]["batches"].values()))["stage"] == "fulfillment"
+
+
+def test_post_shipment_only_suppresses_unbatched_tasks_and_questions(pilot):
+    from wechat_agent.workspace.schema import Decision
+
+    ctx, p = proposal(pilot)
+    p.batches[0].stage = "fulfillment"
+    p.actions[0].batch = None
+    p.decisions = [
+        Decision(
+            key="other",
+            text="确认件重",
+            evidence=p.evidence,
+            blocks_followup=True,
+            impact="补充件重",
+        )
+    ]
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    assert not d["body"]["actions"]
+    assert not d["body"]["decisions"]

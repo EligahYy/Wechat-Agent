@@ -2,7 +2,7 @@
 
 import re
 
-ENGINE_VERSION = "workspace-v5-fulfillment"
+ENGINE_VERSION = "workspace-v6-post-shipment"
 MODES = ("海运", "卡航", "班列")
 
 
