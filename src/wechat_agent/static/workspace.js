@@ -19,7 +19,9 @@ let view = "today",
   candidatePage = 1,
   candidateQuery = "",
   candidateSource = "",
-  candidateRequest = 0;
+  candidateRequest = 0,
+  candidateItems = [],
+  candidateTimer;
 const stages = {
   needs: "需求确认",
   quoting: "报价沟通",
@@ -124,16 +126,17 @@ const emptyCandidates = {
   ],
 };
 function updateCandidateButton() {
-  const option = $("#contact")?.selectedOptions[0];
-  const reason = option?.dataset.blocked;
+  const option = candidateItems.find((c) => c.source_id === candidateSource);
+  const reason = option?.blocked_reason;
+  if (!$("#analyze")) return;
   $("#analyze").disabled = busy || !option || !!reason;
   $("#candidate-readiness").textContent = reason
     ? candidateBlocks[reason]
     : option
-      ? "可开始分析。只读取此人在已授权范围内的相关文本。"
-      : "";
-  candidateSource = option?.value || "";
+      ? `已选：${option.name}。仅分析授权范围内的文本。`
+      : "输入姓名搜索，再点击一个匹配联系人。";
 }
+
 async function pilot() {
   const ticket = ++candidateRequest;
   try {
@@ -147,20 +150,38 @@ async function pilot() {
     ]);
     if (view !== "pilot" || ticket !== candidateRequest) return;
     candidatePage = data.page;
+    candidateItems = data.items;
     const d = data.diagnostics;
     const empty = emptyCandidates[d.empty_reason];
-    const search = `<form id="candidate-search" class="toolbar spaced"><label class="candidate-search">搜索联系人<input name="q" maxlength="100" value="${esc(candidateQuery)}" placeholder="备注、昵称或微信 ID"></label><button type="submit">搜索</button></form>`;
+    const search = `<form id="candidate-search" class="toolbar spaced"><label class="candidate-search">搜索联系人<input name="q" maxlength="100" value="${esc(candidateQuery)}" placeholder="备注、昵称或微信 ID"></label></form>`;
     const picker = data.items.length
-      ? `<label for="contact">联系人（来源身份，不代表已确认为商家）</label><select id="contact" aria-describedby="candidate-readiness">${data.items.map((c) => `<option value="${esc(c.source_id)}" data-blocked="${esc(c.blocked_reason || "")}" ${c.source_id === candidateSource ? "selected" : ""}>${esc(c.name)} · ${esc(c.source_id)}${c.blocked_reason ? " · 待就绪" : ""}</option>`).join("")}</select><div class="toolbar spaced"><button id="prev" ${candidatePage === 1 ? "disabled" : ""}>上一页</button><span>第 ${candidatePage} 页 · ${data.total} 位来源联系人 · 每页最多 50 位</span><button id="next" ${!data.has_more ? "disabled" : ""}>下一页</button></div><p id="candidate-readiness" class="muted" role="status"></p><button class="primary spaced" id="analyze" disabled>${busy ? "正在分析，请稍候…" : "分析此联系人"}</button>`
+      ? `<div class="candidate-results" aria-label="匹配联系人">${data.items.map((c) => `<button type="button" data-candidate="${esc(c.source_id)}" aria-pressed="${c.source_id === candidateSource}"><strong>${esc(c.name)}</strong><small>${esc(c.source_id)}</small></button>`).join("")}</div><div class="toolbar spaced"><button id="prev" ${candidatePage === 1 ? "disabled" : ""}>上一页</button><span>第 ${candidatePage} 页 · ${data.total} 位来源联系人 · 每页最多 50 位</span><button id="next" ${!data.has_more ? "disabled" : ""}>下一页</button></div><p id="candidate-readiness" class="muted" role="status"></p><button class="primary spaced" id="analyze" disabled>${busy ? "正在分析，请稍候…" : "分析此联系人"}</button>`
       : `<div class="candidate-empty spaced" role="status"><h3>${empty ? empty[0] : "没有匹配的联系人"}</h3><p>${empty ? empty[1] : "请尝试其他备注、昵称或微信 ID，或清空搜索后重试。"}</p>${empty ? `<a href="/?page=${empty[2]}">${empty[2] === "settings" ? "前往连接与模型设置" : "检查会话范围与人物白名单"} →</a>` : '<button id="clear-candidate-search">清空搜索</button>'}</div>`;
     $("#content").innerHTML =
-      `<div class="card"><div class="toolbar"><h2>选择一位真实联系人</h2><button id="refresh-candidates">刷新联系人</button></div><p class="muted">联系人从本机归档读取，查看列表不调用模型。点击分析才会调用 DeepSeek，计入已有预算，单次最多 3 次请求。</p><p class="meta">当前账号已归档 ${d.archived_messages} 条消息 · 正常跟进 ${d.scope_conversations} 个会话 · 可识别 ${d.contacts} 位联系人</p>${search}${picker}<div class="toolbar spaced"><a href="/?page=settings">模型与分析授权设置 →</a><a href="/?page=scope">会话范围与白名单 →</a></div><p class="meta">修改设置后返回刷新。不会启动全库重建。图片尚未识别，历史窗口过长时将标记资料不足。</p></div><section class="card spaced"><h2>最近运行</h2>${runs.map((r) => `<p>${esc(r.created_at)} · ${esc(r.status)} · ${r.calls} 次请求</p>${r.error ? `<p class="error">${esc(r.error === "workspace_transport_term" ? "运输表述与业务术语不一致。请升级后重新分析；0 次请求表示复用缓存，未新增模型调用。" : r.error)}</p>` : ""}`).join("") || "<p>尚未运行试点分析。</p>"}</section>`;
+      `<div class="card"><div class="toolbar"><h2>选择一位真实联系人</h2><button id="refresh-candidates">刷新联系人</button></div><p class="muted">联系人从本机归档读取，查看列表不调用模型。点击分析才会调用 DeepSeek，计入已有预算，单次最多 3 次请求。</p><p class="meta">当前账号已归档 ${d.archived_messages} 条消息 · 正常跟进 ${d.scope_conversations} 个会话 · 可识别 ${d.contacts} 位联系人</p>${search}${picker}<div class="toolbar spaced"><a href="/?page=settings">模型与分析授权设置 →</a><a href="/?page=scope">会话范围与白名单 →</a></div><p class="meta">修改设置后返回刷新。不会启动全库重建。图片尚未识别，历史窗口过长时将标记资料不足。</p></div><section class="card spaced"><h2>最近运行</h2>${runs.map((r) => `<p>${esc(new Date(r.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))} 北京时间 · ${esc({ succeeded: "已完成", failed: "未完成", running: "处理中" }[r.status] || r.status)} · ${r.calls} 次请求</p>${r.error ? `<p class="error">${esc(r.error === "workspace_transport_term" ? "运输表述与业务术语不一致。请升级后重新分析；0 次请求表示复用缓存，未新增模型调用。" : r.error)}</p>` : ""}`).join("") || "<p>尚未运行试点分析。</p>"}</section>`;
     if (data.items.length) updateCandidateButton();
   } catch (e) {
     if (view === "pilot" && ticket === candidateRequest)
       $("#status").textContent = e.message;
   }
 }
+document.addEventListener("input", (e) => {
+  if (e.target.name !== "q" || !e.target.closest("#candidate-search")) return;
+  candidateQuery = e.target.value;
+  candidateSource = "";
+  candidatePage = 1;
+  ++candidateRequest;
+  updateCandidateButton();
+  clearTimeout(candidateTimer);
+  candidateTimer = setTimeout(async () => {
+    await pilot();
+    if (view === "pilot") {
+      const input = $("#candidate-search input");
+      input?.focus();
+      input?.setSelectionRange(input.value.length, input.value.length);
+    }
+  }, 250);
+});
 document.addEventListener("change", (e) => {
   if (e.target.id === "contact") updateCandidateButton();
 });
@@ -192,7 +213,7 @@ function openDetail(id) {
   $("#detail-title").textContent = d.name;
   $("#detail-status").textContent = "";
   $("#detail").innerHTML =
-    `${d.body.quality_issues?.length ? `<section class="insight-card" role="status"><h3>部分内容需要核实</h3><p>${d.body.quality_issues.length} 条内容未通过来源校验，已隔离；仅展示通过校验的资料。本次不发布批次和待办，请核对来源。</p></section>` : ""}<section class="section"><h3>微信定位</h3><p>${esc(d.location.remark || d.location.nickname || "姓名待同步")}</p><p class="meta">${d.location.conversations.map((c) => esc(c.title)).join(" / ")}</p><button data-operation="pause" data-value="${!d.body.paused}">${d.body.paused ? "恢复联系建议" : "暂停联系建议"}</button></section><section class="section"><h3>初步沟通与资料</h3>${
+    `${d.body.quality_issues?.length ? `<section class="insight-card" role="status"><h3>部分内容需要核实</h3><p>${d.body.quality_issues.length} 条内容未通过来源校验，已隔离；仅展示通过校验的资料。独立通过校验的行动保留为待确认建议，请核对来源。</p></section>` : ""}<section class="section"><h3>微信定位</h3><p>${esc(d.location.remark || d.location.nickname || "姓名待同步")}</p><p class="meta">${d.location.conversations.map((c) => esc(c.title)).join(" / ")}</p><button data-operation="pause" data-value="${!d.body.paused}">${d.body.paused ? "恢复联系建议" : "暂停联系建议"}</button></section><section class="section"><h3>初步沟通与资料</h3>${
       Object.entries(d.body.notes)
         .map(
           ([id, n]) =>
@@ -219,7 +240,7 @@ function openDetail(id) {
         .filter(([, q]) => !q.resolved)
         .map(
           ([id, q]) =>
-            `<label>${esc(q.text)}${id === "role" ? `<select id="decision-${id}"><option value="merchant">商家</option><option value="non_target">非目标客户（同事／服务商等）</option><option value="candidate">暂不能确定</option></select>` : `<input id="decision-${id}" maxlength="500" placeholder="填写明确判断；保存为人工约束">`}</label>${evidence(q.evidence, d)}<button data-operation="decision" data-target="${id}">保存判断</button>`,
+            `<article class="insight-card"><h4>${esc(q.text)}</h4>${q.impact ? `<p class="meta">确认用途：${esc(q.impact)}</p>` : ""}<label>你的判断${id === "role" ? `<select id="decision-${id}"><option value="merchant">商家</option><option value="non_target">非目标客户（同事／服务商等）</option><option value="candidate">暂不能确定</option></select>` : `<input id="decision-${id}" maxlength="500" placeholder="填写明确判断；保存为人工约束">`}</label>${evidence(q.evidence, d)}<button data-operation="decision" data-target="${id}">保存判断</button></article>`,
         )
         .join("") || "<p>暂无待确认。</p>"
     }</section>`;
@@ -233,6 +254,13 @@ document.addEventListener("click", async (e) => {
   const b = e.target.closest("button");
   if (!b) return;
   try {
+    if (b.dataset.candidate) {
+      candidateSource = b.dataset.candidate;
+      document
+        .querySelectorAll("[data-candidate]")
+        .forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      updateCandidateButton();
+    }
     if (b.dataset.view) {
       view = b.dataset.view;
       render();
@@ -252,7 +280,7 @@ document.addEventListener("click", async (e) => {
     }
     if (b.id === "analyze") {
       if (busy) return;
-      const source = $("#contact").value;
+      const source = candidateSource;
       busy = true;
       b.disabled = true;
       b.textContent = "正在分析，请稍候…";

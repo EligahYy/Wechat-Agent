@@ -594,6 +594,23 @@ def test_failed_transport_review_is_isolated_with_bounded_calls(pilot):
     d = read(pilot, "merchant")
     assert d["body"]["quality_issues"]
     assert len(d["body"]["notes"]) == 1
-    assert not d["body"]["actions"]
-    assert not d["body"]["batches"]
+    assert all(a["state"] == "proposed" for a in d["body"]["actions"].values())
+    assert d["body"]["batches"]
     assert "汽运" not in dumps(d["body"])
+
+
+def test_operating_rule_not_a_confirmation_and_obligation_survives_bad_note(pilot):
+    from wechat_agent.workspace.quality import isolate_invalid_items
+    from wechat_agent.workspace.schema import Decision
+    from wechat_agent.workspace.views import details
+
+    ctx, p = proposal(pilot)
+    p.decisions = [Decision(key="other", text="件重以实际为准", evidence=p.evidence)]
+    p.notes[0].text = "询问汽运"
+    safe = isolate_invalid_items(p, ctx)
+    d = commit(pilot, "merchant", safe, ctx, snapshot(pilot, "merchant"))
+    assert not d["body"]["decisions"]
+    aid = next(iter(d["body"]["actions"]))
+    assert d["body"]["actions"][aid]["state"] == "proposed"
+    command(pilot, "merchant", d["version"], "confirm_action", aid, True)
+    assert details(pilot, "merchant")["today_action_ids"] == [aid]

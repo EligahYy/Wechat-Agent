@@ -134,7 +134,8 @@ def build(db, source_id, search=None):
         if isinstance(value, dict):
             return {
                 k: redact(v)
-                if k in {"text", "reason", "resolution", "result_note", "value"}
+                if k
+                in {"text", "reason", "resolution", "result_note", "impact", "value"}
                 and isinstance(v, str)
                 else clean(v)
                 for k, v in value.items()

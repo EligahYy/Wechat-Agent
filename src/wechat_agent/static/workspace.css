@@ -600,3 +600,30 @@ select {
 .insight-card button {
   margin: 8px 8px 0 0;
 }
+
+.candidate-results {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 16px;
+}
+.candidate-results button {
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.candidate-results small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.candidate-results button[aria-pressed="true"] {
+  background: var(--tint);
+  border-color: var(--blue);
+}
+.insight-card h4 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}

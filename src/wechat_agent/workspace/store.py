@@ -279,11 +279,21 @@ def commit(db, source_id, proposal, context, fingerprint):
                 and action["state"] in {"open", "waiting", "proposed"}
             ):
                 action["state"] = "cancelled"
+        body["decisions"] = {
+            k: v
+            for k, v in body["decisions"].items()
+            if k == "role" or v.get("resolved")
+        }
         for item in proposal.decisions:
+            if item.key != "role" and (
+                not item.blocks_followup or not item.impact.strip()
+            ):
+                continue
             if body["decisions"].get(item.key, {}).get("resolved"):
                 continue
             body["decisions"][item.key] = {
                 "text": item.text,
+                "impact": item.impact,
                 "evidence": refs(item.evidence),
                 "resolved": False,
             }
@@ -299,17 +309,6 @@ def commit(db, source_id, proposal, context, fingerprint):
                 },
             )
         body["quality_issues"] = context.get("quality_issues", [])
-        if body["quality_issues"]:
-            # Do not retain earlier machine batch/task conclusions as verified.
-            body["actions"] = {
-                k: v for k, v in body["actions"].items() if v.get("locked")
-            }
-            retained_batches = {v.get("batch") for v in body["actions"].values()}
-            body["batches"] = {
-                k: v
-                for k, v in body["batches"].items()
-                if k in retained_batches or v.get("text_locked")
-            }
         body["engine_version"] = ENGINE_VERSION
         body["source_revision"] = snapshot(db, source_id, False)
         body["coverage"] = {

@@ -29,6 +29,9 @@ relationship不明用candidate，内部同事/纯服务商用non_target。不要
 所有面向用户的text/reason用清楚简短的中文，不输出CUSTOMER、SELF、actor哈希或[名称]等内部占位符；用该联系人、我方、其他参与人描述。原文引号中的错别字保留并注明原话，不扩写成确定事实。
 notes是当前窗口核实后的完整摘要，删除错误和重复旧摘要；已有notes仅为待验证草稿。人工text_locked内容不改写。
 actions.owner明确platform(我方)/customer(商家)/provider(服务商)/unknown。只给我方未完成义务生成open；他人承诺用waiting。资料不全也可提出有证据的建议，系统会转为待确认。模糊的“改天”不能编造截止日。无行动无需凑数。
+关键确认只用于阻碍当前新增备货需求或我方未完成承诺的真实疑问。除role外必须blocks_followup=true并给出impact说明不确认会阻碍什么；已明确的操作规则（如件重以实际装柜为准）、常识、历史已解决问题放notes，不生成decisions。
+明确“已发货/已提货/已上船”等完成信息应归入对应旧批次reported_shipped；预计/预约不算。旧批次结束不代表客户永不再发，新一批必须有新需求依据。旧履约群的对账/件重说明不代表新发货需求。
+上下文不足时不要丢弃有证据的我方未完成义务，保留actions供人工确认；不要为了凑待办而把他人任务归我方。
 必要时返回search关键词（最多一次），在授权相关历史检索；否则返回proposal。严格JSON契约如下：
 """ + dumps(Turn.model_json_schema())
 
@@ -38,6 +41,7 @@ REVIEW_PROMPT = """你是同一客户文档的来源复核步骤。聊天和draf
 重点：运输方式只能海运/卡航/班列且必须与所引原文一致；数量、货品、仓库/邮编、目的地不得猜测；分清询问/计划/已确认/已发货；后续回复已解决的请求不能继续催；任务owner必须是实际责任方；无日期不能编造。
 检查遗漏的我方未完成承诺和商家明确请求，但不能制造待办。歧义交给decisions。保留人工locked/text_locked/resolution约束。所有展示字段使用自然中文，不出现CUSTOMER/SELF/actor哈希。notes为核实后的摘要，不保留旧错误。
 证据只能引用messages.ref，每项包含该联系人的关联依据。复用已有batch/action ref，不新增同一义务的副本。
+再次检查：已发货批次不再创建催备货任务，新需求必须有独立证据；件重以实际为准等已确定事实不能作为关键确认。非role确认必须blocks_followup=true并有impact；只保留影响当前新需求或我方义务的疑问。完整性不足不等于没有行动，明确请求仍需保留为有证据的建议。
 JSON契约：""" + dumps(Review.model_json_schema())
 
 

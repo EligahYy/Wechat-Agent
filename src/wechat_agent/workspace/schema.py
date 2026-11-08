@@ -31,6 +31,8 @@ class Action(Item):
 
 class Decision(Item):
     key: Literal["role", "batch", "timing", "other"]
+    blocks_followup: bool = False
+    impact: str = Field(default="", max_length=500)
 
 
 class Proposal(Strict):

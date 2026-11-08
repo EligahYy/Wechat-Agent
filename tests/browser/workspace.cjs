@@ -18,7 +18,7 @@ const fs = require("fs");
   await page.request.post("http://127.0.0.1:8768/login", { data: { token } });
   await page.goto("http://127.0.0.1:8768/workspace");
   await page.getByRole("button", { name: "试点与进度", exact: true }).click();
-  await page.locator("#contact").selectOption("merchant");
+  await page.locator('[data-candidate="merchant"]').click();
   await page.getByText(/尚未开启文本分析授权/).waitFor();
   if (!(await page.locator("#analyze").isDisabled()))
     throw Error("authorization bypass");
@@ -38,11 +38,11 @@ const fs = require("fs");
   await page.goto("http://127.0.0.1:8768/workspace");
   await page.getByRole("button", { name: "试点与进度", exact: true }).click();
   await page.getByRole("textbox", { name: "搜索联系人" }).fill("not-a-contact");
-  await page.getByRole("button", { name: "搜索", exact: true }).click();
+  await page.getByRole("textbox", { name: "搜索联系人" }).press("Enter");
   await page.getByText("没有匹配的联系人", { exact: true }).waitFor();
   await page.getByRole("button", { name: "清空搜索", exact: true }).click();
   await page.getByRole("button", { name: "刷新联系人", exact: true }).click();
-  await page.locator("#contact").selectOption("merchant");
+  await page.locator('[data-candidate="merchant"]').click();
 
   await page.getByRole("button", { name: "分析此联系人", exact: true }).click();
   await page
@@ -50,7 +50,10 @@ const fs = require("fs");
     .waitFor();
   await page.getByRole("button", { name: "今日", exact: true }).click();
   await page.getByRole("button", { name: "查看档案" }).click();
-  await page.locator(".insight-card").filter({hasText:"英国第一批"}).waitFor();
+  await page
+    .locator(".insight-card")
+    .filter({ hasText: "英国第一批" })
+    .waitFor();
   await page.getByText("查看来源", { exact: true }).first().click();
   await page
     .getByText("下周英国3方货，请确认报价。", { exact: true })

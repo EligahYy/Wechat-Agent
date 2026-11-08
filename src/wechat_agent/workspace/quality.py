@@ -2,7 +2,7 @@
 
 import re
 
-ENGINE_VERSION = "workspace-v3-isolated-review"
+ENGINE_VERSION = "workspace-v4-current-obligations"
 MODES = ("海运", "卡航", "班列")
 
 
@@ -71,9 +71,11 @@ def isolate_invalid_items(proposal, context):
         setattr(safe, section, kept)
     if issues:
         # Partial extraction cannot establish batch/action completeness or role.
-        safe.batches = []
-        safe.actions = []
-        safe.relationship = "candidate"
+        if any(i["section"] == "batches" for i in issues):
+            safe.batches = []
+            safe.actions = []
+        # A bad note does not invalidate independently grounded obligations.
+
         context["quality_issues"] = issues
         context["complete"] = False
     return validate_proposal(safe, context)
