@@ -646,3 +646,65 @@ def test_post_shipment_only_suppresses_unbatched_tasks_and_questions(pilot):
     d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
     assert not d["body"]["actions"]
     assert not d["body"]["decisions"]
+
+
+def test_customer_anchor_checked_before_commit_and_isolated(pilot, record):
+    from wechat_agent.workspace.quality import isolate_invalid_items, validate_proposal
+    from wechat_agent.workspace.schema import Item
+
+    ingest(
+        pilot,
+        [
+            record
+            | {"source_id": "service", "sender_id": "provider", "text": "可以安排"}
+        ],
+    )
+    ctx, p = proposal(pilot)
+    other = next(k for k, v in ctx["evidence"].items() if not v["anchor"])
+    p.notes.append(Item(text="服务商可安排", evidence=[other]))
+    with pytest.raises(ValueError, match="customer_anchor_required"):
+        validate_proposal(p, ctx)
+    safe = isolate_invalid_items(p, ctx)
+    assert len(safe.notes) == 1
+    commit(pilot, "merchant", safe, ctx, snapshot(pilot, "merchant"))
+    p.evidence = [other]
+    with pytest.raises(ValueError, match="customer_anchor_required"):
+        isolate_invalid_items(p, ctx)
+
+
+def test_agent_repairs_missing_customer_anchor(pilot, record):
+    ingest(
+        pilot,
+        [record | {"source_id": "reply", "sender_id": "provider", "text": "可以安排"}],
+    )
+    calls = []
+
+    def respond(request):
+        payload = json.loads(json.loads(request.content)["messages"][1]["content"])
+        calls.append(payload)
+        ctx, p = proposal(pilot)
+        if len(calls) == 2:
+            p.notes[0].evidence = [
+                next(k for k, v in ctx["evidence"].items() if not v["anchor"])
+            ]
+        body = {"proposal": p.model_dump()}
+        if "draft" in payload:
+            body["checked"] = True
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": dumps(body)}}
+                ],
+                "usage": {"total_tokens": 10},
+            },
+        )
+
+    with httpx.Client(
+        base_url="https://api.deepseek.com", transport=httpx.MockTransport(respond)
+    ) as client:
+        run(pilot, "merchant", client)
+    assert len(calls) == 3
+    assert calls[2]["validation_error"] == "workspace_customer_anchor_required"
+    assert any(m["customer_related"] for m in calls[0]["messages"])
+    assert read(pilot, "merchant")

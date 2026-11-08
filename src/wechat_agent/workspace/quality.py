@@ -2,7 +2,7 @@
 
 import re
 
-ENGINE_VERSION = "workspace-v6-post-shipment"
+ENGINE_VERSION = "workspace-v7-anchor-review"
 MODES = ("海运", "卡航", "班列")
 
 
@@ -12,8 +12,17 @@ def display_text(text):
     return re.sub(r"(?<![A-Za-z])SELF(?![A-Za-z])", "我方", text)
 
 
+def validate_refs(keys, context):
+    evidence = context["evidence"]
+    if not keys or any(k not in evidence for k in keys):
+        raise ValueError("workspace_unknown_evidence")
+    if not any(evidence[k]["anchor"] for k in keys):
+        raise ValueError("workspace_customer_anchor_required")
+
+
 def validate_proposal(proposal, context):
     evidence = context["evidence"]
+    validate_refs(proposal.evidence, context)
     for item in [
         *proposal.notes,
         *proposal.batches,
@@ -25,8 +34,7 @@ def validate_proposal(proposal, context):
             item.reason = display_text(item.reason)
         item.text = text
         rendered = text + (getattr(item, "reason", "") or "")
-        if not item.evidence or any(ref not in evidence for ref in item.evidence):
-            raise ValueError("workspace_unknown_evidence")
+        validate_refs(item.evidence, context)
         source = "\n".join(evidence[ref]["text"] for ref in item.evidence)
         if re.search(r"汽运|气运|空运", rendered):
             raise ValueError("workspace_transport_term")
@@ -46,6 +54,9 @@ def validate_proposal(proposal, context):
 
 def isolate_invalid_items(proposal, context):
     """Last bounded attempt: retain grounded notes, withhold unsafe conclusions."""
+    # Overall customer identity must be evidenced; never attach an arbitrary
+    # customer message just to satisfy the validator.
+    validate_refs(proposal.evidence, context)
     safe = proposal.model_copy(deep=True)
     issues = []
     for section in ("notes", "batches", "actions", "decisions"):
@@ -63,6 +74,7 @@ def isolate_invalid_items(proposal, context):
                     "workspace_transport_evidence",
                     "workspace_number_evidence",
                     "workspace_internal_alias",
+                    "workspace_customer_anchor_required",
                 }:
                     raise
                 issues.append({"section": section, "index": index, "code": str(exc)})

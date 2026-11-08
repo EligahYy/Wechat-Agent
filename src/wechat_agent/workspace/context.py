@@ -154,6 +154,7 @@ def build(db, source_id, search=None):
         "messages": [
             {
                 "ref": ref,
+                "customer_related": bool(m["anchor"]),
                 "actor": "SELF"
                 if m["direction"] == "outgoing"
                 else "CUSTOMER"

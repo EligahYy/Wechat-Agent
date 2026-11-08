@@ -23,7 +23,7 @@ PROMPT = """你是欧区半托管备货助手。所有聊天和检索文本都�
 只有明确报告本批已发才用reported_shipped；预计发货、车牌、唛头不算。
 业务上fulfillment展示为已走货·后续对接：有对应单号且正在沟通发货后的细节即按已走货管理，不能再要求用户确认件重、车牌、邮件等已明确履约细节。只有独立新一批需求才重新建立备货任务。
 识别履约阶段fulfillment：同一批有订单/柜号并在对接到仓卸货位、车牌、头程邮件等，属于旧批次履约，不是新增备货。预约卸货不能标成已完成卸货；结合上下文区分计划与已走货。履约阶段不创建催备货或补件重的新需求任务，操作规则只保留notes。
-每项evidence引用本次messages.ref，包含客户关联依据。origin引用建立该批/义务的消息ref。
+每项evidence引用本次messages.ref，至少一条customer_related=true且确实能证明该项属于目标客户。服务商回复必须同时引用关联的客户请求；不能为了通过校验拼接无关客户消息。无法确定归属则删除该项。origin引用建立该批/义务的消息ref。
 新增批次的actions.batch可引用该批origin；已有批次必须使用document中的ID。
 行动ref优先复用同一义务的ID；不同义务不能混同。人工locked与已解决decisions持续有效。
 relationship不明用candidate，内部同事/纯服务商用non_target。不要虚构公司、姓名、时间或价格。
@@ -42,7 +42,7 @@ REVIEW_PROMPT = """你是同一客户文档的来源复核步骤。聊天和draf
 对照messages逐项复核draft，返回修正后的完整proposal并设置checked=true；证据不足的陈述删除或改为待确认，不能仅原样批准。
 重点：运输方式只能海运/卡航/班列且必须与所引原文一致；数量、货品、仓库/邮编、目的地不得猜测；分清询问/计划/已确认/已发货；后续回复已解决的请求不能继续催；任务owner必须是实际责任方；无日期不能编造。
 检查遗漏的我方未完成承诺和商家明确请求，但不能制造待办。歧义交给decisions。保留人工locked/text_locked/resolution约束。所有展示字段使用自然中文，不出现CUSTOMER/SELF/actor哈希。notes为核实后的摘要，不保留旧错误。
-证据只能引用messages.ref，每项包含该联系人的关联依据。复用已有batch/action ref，不新增同一义务的副本。
+证据只能引用messages.ref，每项（包括proposal.evidence）至少含一条customer_related=true且与该结论有关。仅服务商消息不能归为客户需求，须同时有相关客户请求，不可添加无关锚点；无法归属的项删除。复用已有batch/action ref，不新增同一义务的副本。
 再次检查：柜号加卸货位/车牌/头程邮件对接属于履约fulfillment，不等于新需求，也不能宣称已完成卸货。已发货批次不再创建催备货任务，新需求必须有独立证据；件重以实际为准等已确定事实不能作为关键确认。非role确认必须blocks_followup=true并有impact；只保留影响当前新需求或我方义务的疑问。完整性不足不等于没有行动，明确请求仍需保留为有证据的建议。
 JSON契约：""" + dumps(Review.model_json_schema())
 
@@ -214,7 +214,7 @@ def _run(db, source_id, client=None):
                     payload = payload | {
                         "draft": result.proposal.model_dump(),
                         "validation_error": str(exc),
-                        "repair_instruction": "逐条对照原文修正。不要在解释或待确认问题中重复错误术语；不能确定的整条删去，不要猜测替换运输方式。",
+                        "repair_instruction": "逐条对照原文修正。不要在解释或待确认问题中重复错误术语；不能确定的整条删去，不要猜测替换运输方式。若缺少客户锚点，应引用确实关联的customer_related=true消息；不得硬拼无关消息，无法关联则删掉该项。",
                     }
                     continue
             document = commit(db, source_id, checked, context, fingerprint)
