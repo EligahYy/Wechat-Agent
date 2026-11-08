@@ -190,6 +190,10 @@ def commit(db, source_id, proposal, context, fingerprint):
             if old and (
                 old["event_time"] > when
                 or old["stage"] == "closed"
+                or (
+                    old["stage"] == "fulfillment"
+                    and item.stage not in {"fulfillment", "reported_shipped", "closed"}
+                )
                 or (old["stage"] == "reported_shipped" and item.stage != "closed")
             ):
                 continue
@@ -226,6 +230,7 @@ def commit(db, source_id, proposal, context, fingerprint):
             if batch and body["batches"][batch]["stage"] in {
                 "closed",
                 "reported_shipped",
+                "fulfillment",
             }:
                 continue
             if item.due_date:
@@ -275,7 +280,7 @@ def commit(db, source_id, proposal, context, fingerprint):
             if (
                 action.get("batch")
                 and body["batches"][action["batch"]]["stage"]
-                in {"closed", "reported_shipped"}
+                in {"closed", "reported_shipped", "fulfillment"}
                 and action["state"] in {"open", "waiting", "proposed"}
             ):
                 action["state"] = "cancelled"
@@ -371,6 +376,7 @@ def command(db, source_id, expected_version, operation, target=None, value=None)
             if item.get("batch") and body["batches"][item["batch"]]["stage"] in {
                 "closed",
                 "reported_shipped",
+                "fulfillment",
             }:
                 raise ValueError("workspace_closed_batch")
             if body["relationship"] != "merchant":
@@ -413,7 +419,7 @@ def command(db, source_id, expected_version, operation, target=None, value=None)
                 value in {"open", "waiting"}
                 and item.get("batch")
                 and body["batches"][item["batch"]]["stage"]
-                in {"closed", "reported_shipped"}
+                in {"closed", "reported_shipped", "fulfillment"}
             ):
                 raise ValueError("workspace_closed_batch")
             if value in {"open", "waiting"} and item["state"] in {

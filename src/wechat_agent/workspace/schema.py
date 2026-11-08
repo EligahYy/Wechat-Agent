@@ -14,7 +14,13 @@ class Batch(Item):
     ref: str | None = None
     origin: str
     stage: Literal[
-        "needs", "quoting", "decision", "preparing", "reported_shipped", "closed"
+        "needs",
+        "quoting",
+        "decision",
+        "preparing",
+        "fulfillment",
+        "reported_shipped",
+        "closed",
     ]
 
 

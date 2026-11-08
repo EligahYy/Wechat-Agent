@@ -614,3 +614,15 @@ def test_operating_rule_not_a_confirmation_and_obligation_survives_bad_note(pilo
     assert d["body"]["actions"][aid]["state"] == "proposed"
     command(pilot, "merchant", d["version"], "confirm_action", aid, True)
     assert details(pilot, "merchant")["today_action_ids"] == [aid]
+
+
+def test_fulfillment_batch_stops_new_stocking_tasks(pilot):
+    ctx, p = proposal(pilot)
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    p.batches[0].ref = next(iter(d["body"]["batches"]))
+    p.batches[0].stage = "fulfillment"
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    assert all(a["state"] == "cancelled" for a in d["body"]["actions"].values())
+    p.batches[0].stage = "preparing"
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    assert next(iter(d["body"]["batches"].values()))["stage"] == "fulfillment"
