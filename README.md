@@ -2,7 +2,7 @@
 
 **目标：从工作微信持续整理客户档案与备货批次，让运营每天知道该联系谁、为什么、如何推进。** 面向跨境电商平台产品／运营，接入个人工作微信的私信与普通群聊，使用 DeepSeek 分析。
 
-当前已发布 v0.6.1 是原型实现，客户归属、批次、待确认和行动质量仍未达到预期，正在重新评审产品和系统底座。新方案见 [产品](docs/PRODUCT_DESIGN.md)、[技术](docs/SYSTEM_ARCHITECTURE.md)、[验收计划](docs/ACCEPTANCE_PLAN.md)；尚未启动新架构重建。微信发送始终由用户操作。
+当前已发布 v0.6.1 是原型实现，客户归属、批次、待确认和行动质量仍未达到预期，已开始重建产品和系统底座。新方案见 [产品](docs/PRODUCT_DESIGN.md)、[技术](docs/SYSTEM_ARCHITECTURE.md)、[验收计划](docs/ACCEPTANCE_PLAN.md)；目前交付M0来源检查与交互原型，尚未切换新业务引擎。微信发送始终由用户操作。
 
 ## 启动
 
@@ -20,7 +20,7 @@ DEEPSEEK_PROXY=http://127.0.0.1:7897 uv run wechat-agent start
 
 首次接入和故障排查见 [部署与使用 SOP](docs/DEPLOYMENT_SOP.md)。旧数据保留，数据库升级至 v9 前自动备份；不需要重新导入现有记录。
 
-## 本轮整体重建设计（待评审，未实现）
+## 重建已开始：M0 来源与交互底座
 
 一位联系人一份客户档案；初步沟通先沉淀，出现具体需求再建立备货批次。单 Agent 读取相关上下文、检索原文并提出带证据的变更，程序负责规则、版本和写入。今日与确认按客户归组，免跟进人物退出全部客户视图；近15天先产生可用结果，历史后台补齐。图片价卡、真实身份定位和业务效果评测纳入实施计划。
 
@@ -28,7 +28,7 @@ DEEPSEEK_PROXY=http://127.0.0.1:7897 uv run wechat-agent start
 - [系统与 Agent 架构](docs/SYSTEM_ARCHITECTURE.md)：本机来源库、客户文档、有限工具、状态一致性与恢复。
 - [验收与实施计划](docs/ACCEPTANCE_PLAN.md)：26类必测情节、样本质量门槛和分阶段重建。
 
-本轮仅修改文档；旧业务代码版本与数据库结构不变，不重新调用模型或清空现有数据。以下为已发布版本的历史交付与使用说明，不代表新方案已经上线。
+新增 `uv run wechat-agent rebuild inspect`，检查本地来源、姓名与媒体缺口，不调用模型。查看 [交互规范](docs/UI_DESIGN.md)、[可操作原型](docs/UI_PROTOTYPE.html) 和 [实施状态](docs/IMPLEMENTATION_STATUS.md)。新客户引擎尚未接入；以下保留原工作台的历史交付说明。
 
 ## 本次更新（v0.6.1）
 

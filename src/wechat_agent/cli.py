@@ -21,6 +21,8 @@ def parser():
     )
     s = p.add_subparsers(dest="command", required=True)
     s.add_parser("init")
+    rebuild = s.add_parser("rebuild", help="新体系来源检查，不调用模型、不清理旧结果")
+    rebuild.add_argument("action", choices=["inspect"])
     diagnosis = s.add_parser(
         "diagnose", help="安全诊断；默认仅本地读取，不输出聊天或凭据"
     )
@@ -156,6 +158,10 @@ def main():
     try:
         if args.command == "init":
             print("已初始化本地数据库；查看登录口令：wechat-agent token")
+        elif args.command == "rebuild":
+            from .rebuild import inspect_sources
+
+            print(dumps(inspect_sources(db)))
         elif args.command == "diagnose":
             from .diagnostics import snapshot
 
