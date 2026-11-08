@@ -16,7 +16,10 @@ let view = "today",
   selected,
   focusBefore,
   busy = false,
-  candidatePage = 1;
+  candidatePage = 1,
+  candidateQuery = "",
+  candidateSource = "",
+  candidateRequest = 0;
 const stages = {
   needs: "需求确认",
   quoting: "报价沟通",
@@ -88,18 +91,86 @@ function render() {
       '<div class="empty"><h2>当前没有可展示的结果</h2><p class="muted">在“试点与进度”选择一位联系人分析。无必要行动、身份未明确或覆盖不足时，不会强行创建待办。</p></div>') +
     "</div>";
 }
+const candidateBlocks = {
+  analysis_disabled:
+    "尚未开启文本分析授权。前往设置确认范围和预算后，返回刷新联系人。",
+  key_missing: "尚未配置 DeepSeek key。前往设置保存后，返回刷新联系人。",
+  source_unauthorized:
+    "此联系人的来源会话尚未授权外发。前往会话范围检查分析授权。",
+  no_text:
+    "此联系人暂无已授权的完整文本，现有图片或不完整记录不能用于本次分析。",
+};
+const emptyCandidates = {
+  account_unbound: [
+    "尚未绑定工作微信",
+    "请在原工作台设置中检测连接并确认工作账号。",
+    "settings",
+  ],
+  no_archive: [
+    "当前账号尚无归档消息",
+    "请在原工作台设置中检查 wx-cli 与采集状态；已有归档时，请核对绑定账号和启动时的数据目录，无需重复导入。",
+    "settings",
+  ],
+  scope_excluded: [
+    "暂无正常跟进会话",
+    "当前归档会话未进入跟进范围，或已加入免跟进白名单。只恢复确实需要跟进的会话即可。",
+    "scope",
+  ],
+  no_identity: [
+    "暂未找到可选联系人",
+    "正常跟进范围内尚无可识别的私信对象或群消息发送者，或人物已加入白名单。请检查人物白名单及源端身份信息；无需先让模型分析。",
+    "scope",
+  ],
+};
+function updateCandidateButton() {
+  const option = $("#contact")?.selectedOptions[0];
+  const reason = option?.dataset.blocked;
+  $("#analyze").disabled = busy || !option || !!reason;
+  $("#candidate-readiness").textContent = reason
+    ? candidateBlocks[reason]
+    : option
+      ? "可开始分析。只读取此人在已授权范围内的相关文本。"
+      : "";
+  candidateSource = option?.value || "";
+}
 async function pilot() {
-  const current = view;
+  const ticket = ++candidateRequest;
   try {
-    const data = await api("candidates?page=" + candidatePage),
-      runs = await api("runs");
-    if (view !== current) return;
+    const params = new URLSearchParams({
+      page: candidatePage,
+      q: candidateQuery,
+    });
+    const [data, runs] = await Promise.all([
+      api("candidates?" + params),
+      api("runs"),
+    ]);
+    if (view !== "pilot" || ticket !== candidateRequest) return;
+    candidatePage = data.page;
+    const d = data.diagnostics;
+    const empty = emptyCandidates[d.empty_reason];
+    const search = `<form id="candidate-search" class="toolbar spaced"><label class="candidate-search">搜索联系人<input name="q" maxlength="100" value="${esc(candidateQuery)}" placeholder="备注、昵称或微信 ID"></label><button type="submit">搜索</button></form>`;
+    const picker = data.items.length
+      ? `<label for="contact">联系人（来源身份，不代表已确认为商家）</label><select id="contact" aria-describedby="candidate-readiness">${data.items.map((c) => `<option value="${esc(c.source_id)}" data-blocked="${esc(c.blocked_reason || "")}" ${c.source_id === candidateSource ? "selected" : ""}>${esc(c.name)} · ${esc(c.source_id)}${c.blocked_reason ? " · 待就绪" : ""}</option>`).join("")}</select><div class="toolbar spaced"><button id="prev" ${candidatePage === 1 ? "disabled" : ""}>上一页</button><span>第 ${candidatePage} 页 · ${data.total} 位来源联系人 · 每页最多 50 位</span><button id="next" ${!data.has_more ? "disabled" : ""}>下一页</button></div><p id="candidate-readiness" class="muted" role="status"></p><button class="primary spaced" id="analyze" disabled>${busy ? "正在分析，请稍候…" : "分析此联系人"}</button>`
+      : `<div class="candidate-empty spaced" role="status"><h3>${empty ? empty[0] : "没有匹配的联系人"}</h3><p>${empty ? empty[1] : "请尝试其他备注、昵称或微信 ID，或清空搜索后重试。"}</p>${empty ? `<a href="/?page=${empty[2]}">${empty[2] === "settings" ? "前往连接与模型设置" : "检查会话范围与人物白名单"} →</a>` : '<button id="clear-candidate-search">清空搜索</button>'}</div>`;
     $("#content").innerHTML =
-      `<div class="card"><h2>选择一位真实联系人</h2><p class="muted">读取此人在授权私信与群聊中的相关文本。会调用 DeepSeek 并计入已有预算；先在原工作台设置模型和外发授权。单次最多3次请求。</p><label for="contact">联系人（来源身份，不代表已确认为商家）</label><select id="contact">${data.items.map((c) => `<option value="${esc(c.source_id)}">${esc(c.name)} · ${esc(c.source_id)}</option>`).join("")}</select><div class="toolbar spaced"><button id="prev" ${candidatePage === 1 ? "disabled" : ""}>上一页</button><span>第 ${candidatePage} 页 · ${data.total} 位来源联系人</span><button id="next" ${!data.has_more ? "disabled" : ""}>下一页</button></div><button class="primary" id="analyze" ${busy || !data.items.length ? "disabled" : ""}>${busy ? "正在分析，请稍候…" : "分析此联系人"}</button><p class="meta">不会启动全库重建。图片尚未识别，历史窗口过长时将标记资料不足。</p></div><section class="card spaced"><h2>最近运行</h2>${runs.map((r) => `<p>${esc(r.created_at)} · ${esc(r.status)} · ${r.calls} 次请求</p>${r.error ? `<p class="error">${esc(r.error)}</p>` : ""}`).join("") || "<p>尚未运行试点分析。</p>"}</section>`;
+      `<div class="card"><div class="toolbar"><h2>选择一位真实联系人</h2><button id="refresh-candidates">刷新联系人</button></div><p class="muted">联系人从本机归档读取，查看列表不调用模型。点击分析才会调用 DeepSeek，计入已有预算，单次最多 3 次请求。</p><p class="meta">当前账号已归档 ${d.archived_messages} 条消息 · 正常跟进 ${d.scope_conversations} 个会话 · 可识别 ${d.contacts} 位联系人</p>${search}${picker}<div class="toolbar spaced"><a href="/?page=settings">模型与分析授权设置 →</a><a href="/?page=scope">会话范围与白名单 →</a></div><p class="meta">修改设置后返回刷新。不会启动全库重建。图片尚未识别，历史窗口过长时将标记资料不足。</p></div><section class="card spaced"><h2>最近运行</h2>${runs.map((r) => `<p>${esc(r.created_at)} · ${esc(r.status)} · ${r.calls} 次请求</p>${r.error ? `<p class="error">${esc(r.error)}</p>` : ""}`).join("") || "<p>尚未运行试点分析。</p>"}</section>`;
+    if (data.items.length) updateCandidateButton();
   } catch (e) {
-    $("#status").textContent = e.message;
+    if (view === "pilot" && ticket === candidateRequest)
+      $("#status").textContent = e.message;
   }
 }
+document.addEventListener("change", (e) => {
+  if (e.target.id === "contact") updateCandidateButton();
+});
+document.addEventListener("submit", (e) => {
+  if (e.target.id !== "candidate-search") return;
+  e.preventDefault();
+  candidateQuery = new FormData(e.target).get("q").trim();
+  candidatePage = 1;
+  pilot();
+});
+
 function evidence(refs, d) {
   const ids = new Set(refs.map((r) => r.id));
   return `<details><summary>查看来源</summary>${d.evidence
@@ -163,6 +234,13 @@ document.addEventListener("click", async (e) => {
     if (b.id === "prev" || b.id === "next") {
       candidatePage += b.id === "next" ? 1 : -1;
       pilot();
+    }
+    if (b.id === "refresh-candidates" || b.id === "clear-candidate-search") {
+      if (b.id === "clear-candidate-search") candidateQuery = "";
+      candidatePage = 1;
+      b.disabled = true;
+      await pilot();
+      if (b.isConnected) b.disabled = false;
     }
     if (b.id === "analyze") {
       if (busy) return;

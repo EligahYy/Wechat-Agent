@@ -558,3 +558,16 @@ select {
   display: block;
   margin: 24px 12px;
 }
+
+.candidate-search {
+  flex: 1;
+  min-width: 180px;
+}
+.candidate-empty {
+  padding: 20px;
+  border-radius: 14px;
+  background: var(--bg);
+}
+.candidate-empty p {
+  margin: 8px 0 16px;
+}

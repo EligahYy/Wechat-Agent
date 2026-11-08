@@ -611,7 +611,10 @@ $("#date-label").textContent = new Date().toLocaleDateString("zh-CN", {
   day: "numeric",
   weekday: "long",
 });
-load().catch((e) => notice(e.message, true));
+load().then(() => {
+  const entry = new URLSearchParams(location.search).get("page");
+  if (["settings", "scope"].includes(entry)) go(entry);
+}).catch((e) => notice(e.message, true));
 setInterval(() => load().catch(() => {}), 15000);
 
 let analysisEnabled = false;

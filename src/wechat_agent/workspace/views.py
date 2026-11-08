@@ -2,30 +2,97 @@ import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from ..config import secret
 from ..db import dumps
 from ..identity import location
-from .store import allowed_chats, legacy_paused, read
+from .store import allowed_chats, legacy_paused, read, source_chats
 
 
 def candidates(db, q="", page=1):
     if len(q) > 100 or page < 1 or page > 10000:
         raise ValueError("workspace_invalid_query")
-    ids = [v["id"] for v in allowed_chats(db)]
+    account = db.settings.source_account
+    ids = [v["id"] for v in source_chats(db)]
+    # A private peer is known even if only our outgoing messages were archived.
+    # Group membership comes from a real sender, never from a group ID/name.
     rows = db.rows(
-        "SELECT DISTINCT m.sender_id source_id,COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),'姓名待同步') name FROM messages m LEFT JOIN identity_metadata i ON i.account_id=? AND i.source_id=m.sender_id WHERE m.conversation_id IN (SELECT value FROM json_each(?)) AND m.direction='incoming' AND m.sender_id NOT IN ('unknown','',?) AND m.sender_id NOT LIKE '%@chatroom' AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=? AND e.source_id=m.sender_id) ORDER BY name,m.sender_id",
+        """WITH sources AS (
+          SELECT CASE WHEN v.kind='private' THEN v.source_id ELSE m.sender_id END source_id,
+                 v.egress, CASE WHEN v.kind='private' THEN NULLIF(v.title,v.source_id) END title,
+                 m.type, m.completeness
+          FROM messages m JOIN conversations v ON v.id=m.conversation_id
+          WHERE v.id IN (SELECT value FROM json_each(?))
+            AND (v.kind='private' OR (v.kind='group' AND m.direction<>'outgoing'))
+        )
+        SELECT s.source_id,
+          COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),MAX(NULLIF(s.title,'')),'姓名待同步') name,
+          MAX(s.egress) authorized,
+          MAX(s.egress=1 AND s.type='text' AND s.completeness='full') has_text
+        FROM sources s
+        LEFT JOIN identity_metadata i ON i.account_id=? AND i.source_id=s.source_id
+        WHERE s.source_id NOT IN ('unknown','',?,?) AND s.source_id NOT LIKE '%@chatroom'
+          AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=? AND e.source_id=s.source_id)
+        GROUP BY s.source_id ORDER BY name,s.source_id""",
         (
-            db.settings.source_account,
             dumps(ids),
-            db.settings.source_account,
-            db.settings.source_account,
+            account,
+            account,
+            db.settings.self_id,
+            account,
         ),
     )
-    rows = [r for r in rows if q in r["name"] or q in r["source_id"]]
+    policy = db.rows("SELECT enabled FROM crm_policies WHERE account_id=?", (account,))
+    enabled = bool(policy and policy[0]["enabled"])
+    key = bool(secret("DEEPSEEK_API_KEY"))
+    messages = db.rows(
+        "SELECT COUNT(*) n FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE v.account_id=?",
+        (account,),
+    )[0]["n"]
+    for row in rows:
+        row["blocked_reason"] = (
+            "analysis_disabled"
+            if not enabled
+            else "key_missing"
+            if not key
+            else "source_unauthorized"
+            if not row["authorized"]
+            else "no_text"
+            if not row["has_text"]
+            else None
+        )
+    reason = (
+        "account_unbound"
+        if not account
+        else "no_archive"
+        if not messages
+        else "scope_excluded"
+        if not ids
+        else "no_identity"
+        if not rows
+        else None
+    )
+    diagnostics = {
+        "archived_messages": messages,
+        "scope_conversations": len(ids),
+        "contacts": len(rows),
+        "analysis_enabled": enabled,
+        "key_configured": key,
+        "empty_reason": reason,
+    }
+    rows = [
+        r
+        for r in rows
+        if q.casefold() in r["name"].casefold()
+        or q.casefold() in r["source_id"].casefold()
+    ]
+    pages = max(1, (len(rows) + 49) // 50)
+    page = min(page, pages)
     return {
         "items": rows[(page - 1) * 50 : page * 50],
         "total": len(rows),
         "page": page,
         "has_more": len(rows) > page * 50,
+        "diagnostics": diagnostics,
     }
 
 

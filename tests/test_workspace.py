@@ -404,3 +404,101 @@ def test_legacy_pause_is_preserved_until_explicit_new_override(pilot):
     command(pilot, "merchant", d["version"], "pause", value=False)
     d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
     assert not d["body"]["paused"]
+
+
+def test_candidates_visible_without_model_authorization(pilot):
+    from wechat_agent.analysis import Blocked
+    from wechat_agent.workspace.views import candidates
+
+    configure(pilot, False)
+    data = candidates(pilot)
+    assert data["total"] == 1
+    assert data["items"][0]["name"] == "张先生"
+    assert data["items"][0]["blocked_reason"] == "analysis_disabled"
+    assert data["diagnostics"]["archived_messages"] == 1
+    assert not data["diagnostics"]["empty_reason"]
+    assert build(pilot, "merchant")["evidence"] == {}
+    with pytest.raises(Blocked, match="blocked_policy"):
+        run(pilot, "merchant")
+    assert pilot.rows("SELECT * FROM workspace_runs") == []
+
+
+def test_candidates_private_outgoing_and_unknown_group_direction(pilot, record):
+    from wechat_agent.workspace.views import candidates
+
+    allow_conversation(
+        pilot,
+        "fixture",
+        "account",
+        "peer",
+        "私信备注",
+        "private",
+        None,
+        None,
+        True,
+        followup_source=True,
+    )
+    ingest(
+        pilot,
+        [
+            record
+            | {
+                "conversation_id": "peer",
+                "conversation_type": "private",
+                "source_id": "p1",
+                "sender_id": "account",
+                "direction": "outgoing",
+            },
+            record | {"source_id": "g2", "sender_id": "known", "direction": "unknown"},
+            record
+            | {"source_id": "g3", "sender_id": "unknown", "direction": "unknown"},
+            record
+            | {"source_id": "g4", "sender_id": "account", "direction": "unknown"},
+            record
+            | {"source_id": "g5", "sender_id": "123@chatroom", "direction": "unknown"},
+        ],
+    )
+    data = candidates(pilot)
+    assert {r["source_id"] for r in data["items"]} == {"peer", "known", "merchant"}
+    peer = candidates(pilot, q="私信备注")["items"][0]
+    assert peer["source_id"] == "peer"
+    assert peer["blocked_reason"] is None
+    assert candidates(pilot, page=99)["page"] == 1
+    assert candidates(pilot, q="does-not-exist")["total"] == 0
+    assert candidates(pilot, q="does-not-exist")["diagnostics"]["contacts"] == 3
+
+
+def test_candidates_exclusions_account_scope_and_readiness(pilot, record, monkeypatch):
+    from wechat_agent.workspace.views import candidates
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY")
+    assert candidates(pilot)["items"][0]["blocked_reason"] == "key_missing"
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-only")
+    with pilot.tx() as c:
+        c.execute("UPDATE conversations SET egress=0")
+    assert candidates(pilot)["items"][0]["blocked_reason"] == "source_unauthorized"
+    with pilot.tx() as c:
+        c.execute("UPDATE conversations SET egress=1")
+        c.execute("UPDATE messages SET type='image'")
+    assert candidates(pilot)["items"][0]["blocked_reason"] == "no_text"
+    with pilot.tx() as c:
+        c.execute("INSERT INTO actor_exclusions VALUES('account','merchant','同事')")
+    assert candidates(pilot)["items"] == []
+    with pilot.tx() as c:
+        c.execute("DELETE FROM actor_exclusions")
+        c.execute("UPDATE conversations SET followup_source=0")
+    assert candidates(pilot)["diagnostics"]["empty_reason"] == "scope_excluded"
+    assert candidates(pilot)["items"] == []
+    pilot.settings.bind_source("other-account")
+    assert candidates(pilot)["diagnostics"]["empty_reason"] == "no_archive"
+    assert candidates(pilot)["items"] == []
+
+
+def test_candidates_empty_diagnostics(db, chat, record):
+    from wechat_agent.workspace.views import candidates
+
+    assert candidates(db)["diagnostics"]["empty_reason"] == "account_unbound"
+    db.settings.bind_source("account")
+    assert candidates(db)["diagnostics"]["empty_reason"] == "no_archive"
+    ingest(db, [record | {"sender_id": "unknown", "direction": "unknown"}])
+    assert candidates(db)["diagnostics"]["empty_reason"] == "no_identity"

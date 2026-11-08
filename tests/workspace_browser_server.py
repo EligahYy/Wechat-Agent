@@ -95,6 +95,7 @@ if __name__ == "__main__":
             "INSERT INTO identity_metadata VALUES('work','merchant','张先生（虚构）','张','',?)",
             (datetime.now(UTC).isoformat(),),
         )
+    configure(db, False)  # Discovery must work before external analysis consent.
     agent.create_client = lambda: httpx.Client(
         base_url="https://api.deepseek.com", transport=httpx.MockTransport(fake_model)
     )

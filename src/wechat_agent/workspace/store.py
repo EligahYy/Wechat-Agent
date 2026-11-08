@@ -29,11 +29,16 @@ def eligible(db, source_id):
         raise ValueError("workspace_excluded_person")
 
 
-def allowed_chats(db):
+def source_chats(db):
+    """Local discovery scope; model authorization is checked separately."""
     return db.rows(
-        "SELECT * FROM conversations v WHERE account_id=? AND allowlisted=1 AND egress=1 AND followup_source=1 AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=v.account_id AND e.source_id=v.source_id AND v.kind='private')",
+        "SELECT * FROM conversations v WHERE account_id=? AND allowlisted=1 AND followup_source=1 AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=v.account_id AND e.source_id=v.source_id AND v.kind='private')",
         (db.settings.source_account,),
     )
+
+
+def allowed_chats(db):
+    return [v for v in source_chats(db) if v["egress"]]
 
 
 def legacy_paused(db, source_id):
