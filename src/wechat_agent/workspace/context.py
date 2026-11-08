@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from ..db import dumps
+from .order_links import linked_keys
 from .quality import ENGINE_VERSION
 from .store import allowed_chats, eligible, legacy_paused, raw, stable, valid_refs
 
@@ -104,6 +105,19 @@ def build(db, source_id, search=None):
             break
         kept.append(m)
         size += len(m["text"])
+    # Keep the customer-side order question alongside a recent tracking reply.
+    source_map = {m["id"]: m for m in selected.values()}
+    kept_ids = {m["id"] for m in kept}
+    for ident in linked_keys(list(kept_ids), source_map):
+        if ident not in kept_ids:
+            m = source_map[ident]
+            if len(kept) < 100 and size + len(m["text"]) <= 20000:
+                kept.append(m)
+                kept_ids.add(ident)
+                size += len(m["text"])
+            else:
+                complete = False
+                gaps.add("order_link_limit")
     metadata = db.rows(
         "SELECT remark,nickname,alias FROM identity_metadata WHERE account_id=?",
         (db.settings.source_account,),
@@ -155,6 +169,7 @@ def build(db, source_id, search=None):
             {
                 "ref": ref,
                 "customer_related": bool(m["anchor"]),
+                "customer_links": [k for k in linked_keys([ref], evidence) if k != ref],
                 "actor": "SELF"
                 if m["direction"] == "outgoing"
                 else "CUSTOMER"

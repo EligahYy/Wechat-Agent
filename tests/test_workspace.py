@@ -708,3 +708,51 @@ def test_agent_repairs_missing_customer_anchor(pilot, record):
     assert calls[2]["validation_error"] == "workspace_customer_anchor_required"
     assert any(m["customer_related"] for m in calls[0]["messages"])
     assert read(pilot, "merchant")
+
+
+def test_order_tracking_reply_links_to_customer_without_fabricating_anchor(
+    pilot, record
+):
+    from wechat_agent.workspace.quality import validate_proposal
+
+    ingest(
+        pilot,
+        [
+            record
+            | {
+                "source_id": "order-question",
+                "sender_id": "merchant",
+                "text": "ZTH20261103这个又是没发出去吗",
+            },
+            record
+            | {
+                "source_id": "tracking",
+                "sender_id": "provider",
+                "text": "ZTH20261103：11-05号已发车，预计3-5天到达新疆",
+            },
+        ],
+    )
+    ctx, p = proposal(pilot)
+    ref = next(k for k, m in ctx["evidence"].items() if m["source_id"] == "tracking")
+    question = next(
+        m for m in ctx["evidence"].values() if m["source_id"] == "order-question"
+    )
+    p.notes = []
+    p.actions = []
+    p.batches[0].evidence = [ref]
+    p.batches[0].origin = ref
+    p.batches[0].text = "该订单已发车，在途"
+    p.batches[0].stage = "reported_shipped"
+    validate_proposal(p, ctx)
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    batch = next(iter(d["body"]["batches"].values()))
+    assert batch["stage"] == "reported_shipped"
+    assert question["id"] in {r["id"] for r in batch["evidence"]}
+    assert not d["body"]["actions"]
+    ctx["evidence"][ref]["text"] = "ZTH20261104已发车"
+    with pytest.raises(ValueError, match="customer_anchor_required"):
+        validate_proposal(p, ctx)
+    ctx["evidence"][ref]["text"] = "ZTH20261103已发车"
+    ctx["evidence"][ref]["conversation_id"] = "another-group"
+    with pytest.raises(ValueError, match="customer_anchor_required"):
+        validate_proposal(p, ctx)

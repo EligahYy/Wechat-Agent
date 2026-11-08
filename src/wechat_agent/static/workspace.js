@@ -214,7 +214,7 @@ function openDetail(id) {
   $("#detail-title").textContent = d.name;
   $("#detail-status").textContent = "";
   $("#detail").innerHTML =
-    `${d.body.quality_issues?.length ? `<section class="insight-card" role="status"><h3>部分内容需要核实</h3><p>${d.body.quality_issues.length} 条内容未通过来源校验，已隔离；仅展示通过校验的资料。独立通过校验的行动保留为待确认建议，请核对来源。</p></section>` : ""}<section class="section"><h3>微信定位</h3><p>${esc(d.location.remark || d.location.nickname || "姓名待同步")}</p><p class="meta">${d.location.conversations.map((c) => esc(c.title)).join(" / ")}</p><button data-operation="pause" data-value="${!d.body.paused}">${d.body.paused ? "恢复联系建议" : "暂停联系建议"}</button></section><section class="section"><h3>初步沟通与资料</h3>${
+    `${d.body.quality_issues?.length ? `<section class="insight-card" role="status"><h3>部分内容需要核实</h3><p>${d.body.quality_issues.length} 条内容未通过来源校验，已隔离；仅展示通过校验的资料。独立通过校验的行动保留为待确认建议，请核对来源。</p><ul>${d.body.quality_issues.map((i) => `<li>${esc({ notes: "资料", batches: "批次", actions: "行动", decisions: "确认" }[i.section] || i.section)}：${esc({ workspace_customer_anchor_required: "缺少客户关联证据", workspace_transport_term: "运输术语不一致", workspace_transport_evidence: "运输方式没有对应原文", workspace_number_evidence: "数字与所引原文不一致", workspace_internal_alias: "含内部代号" }[i.code] || i.code)}</li>`).join("")}</ul></section>` : ""}<section class="section"><h3>微信定位</h3><p>${esc(d.location.remark || d.location.nickname || "姓名待同步")}</p><p class="meta">${d.location.conversations.map((c) => esc(c.title)).join(" / ")}</p><button data-operation="pause" data-value="${!d.body.paused}">${d.body.paused ? "恢复联系建议" : "暂停联系建议"}</button></section><section class="section"><h3>初步沟通与资料</h3>${
       Object.entries(d.body.notes)
         .map(
           ([id, n]) =>

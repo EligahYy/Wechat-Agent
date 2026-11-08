@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from ..db import dumps, now, uid
 from ..services import Conflict
+from .order_links import linked_keys
 from .quality import ENGINE_VERSION, display_text, validate_proposal
 
 
@@ -157,7 +158,7 @@ def commit(db, source_id, proposal, context, fingerprint):
         def refs(keys):
             if not keys or any(k not in evidence for k in keys):
                 raise ValueError("workspace_unknown_evidence")
-            selected = [evidence[k] for k in set(keys)]
+            selected = [evidence[k] for k in linked_keys(keys, evidence)]
             if not any(m["anchor"] for m in selected):
                 raise ValueError("workspace_customer_anchor_required")
             return [{"id": m["id"], "revision": m["revision"]} for m in selected]

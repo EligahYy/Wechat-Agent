@@ -2,7 +2,9 @@
 
 import re
 
-ENGINE_VERSION = "workspace-v7-anchor-review"
+from .order_links import linked_keys
+
+ENGINE_VERSION = "workspace-v8-order-links"
 MODES = ("海运", "卡航", "班列")
 
 
@@ -16,7 +18,7 @@ def validate_refs(keys, context):
     evidence = context["evidence"]
     if not keys or any(k not in evidence for k in keys):
         raise ValueError("workspace_unknown_evidence")
-    if not any(evidence[k]["anchor"] for k in keys):
+    if not any(evidence[k]["anchor"] for k in linked_keys(keys, evidence)):
         raise ValueError("workspace_customer_anchor_required")
 
 
