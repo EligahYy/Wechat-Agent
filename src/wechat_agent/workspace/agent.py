@@ -12,7 +12,7 @@ from ..config import secret
 from ..db import dumps, now, uid
 from ..model_network import connection_code, create_client
 from .context import build, snapshot
-from .quality import ENGINE_VERSION, validate_proposal
+from .quality import ENGINE_VERSION, isolate_invalid_items, validate_proposal
 from .schema import Review, Turn
 from .store import commit, read, stable
 
@@ -203,12 +203,14 @@ def _run(db, source_id, client=None):
                 checked = validate_proposal(result.proposal, context)
             except ValueError as exc:
                 if attempt == 2:
-                    raise
-                payload = payload | {
-                    "draft": result.proposal.model_dump(),
-                    "validation_error": str(exc),
-                }
-                continue
+                    checked = isolate_invalid_items(result.proposal, context)
+                else:
+                    payload = payload | {
+                        "draft": result.proposal.model_dump(),
+                        "validation_error": str(exc),
+                        "repair_instruction": "逐条对照原文修正。不要在解释或待确认问题中重复错误术语；不能确定的整条删去，不要猜测替换运输方式。",
+                    }
+                    continue
             document = commit(db, source_id, checked, context, fingerprint)
             with db.tx() as c:
                 c.execute(

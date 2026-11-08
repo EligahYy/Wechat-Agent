@@ -2,7 +2,7 @@
 
 import re
 
-ENGINE_VERSION = "workspace-v2-reviewed-tasks"
+ENGINE_VERSION = "workspace-v3-isolated-review"
 MODES = ("海运", "卡航", "班列")
 
 
@@ -42,3 +42,38 @@ def validate_proposal(proposal, context):
         if re.search(r"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", rendered):
             raise ValueError("workspace_internal_alias")
     return proposal
+
+
+def isolate_invalid_items(proposal, context):
+    """Last bounded attempt: retain grounded notes, withhold unsafe conclusions."""
+    safe = proposal.model_copy(deep=True)
+    issues = []
+    for section in ("notes", "batches", "actions", "decisions"):
+        kept = []
+        for index, item in enumerate(getattr(safe, section)):
+            probe = safe.model_copy(
+                update={"notes": [], "batches": [], "actions": [], "decisions": []}
+            )
+            setattr(probe, section, [item])
+            try:
+                validate_proposal(probe, context)
+            except ValueError as exc:
+                if str(exc) not in {
+                    "workspace_transport_term",
+                    "workspace_transport_evidence",
+                    "workspace_number_evidence",
+                    "workspace_internal_alias",
+                }:
+                    raise
+                issues.append({"section": section, "index": index, "code": str(exc)})
+            else:
+                kept.append(item)
+        setattr(safe, section, kept)
+    if issues:
+        # Partial extraction cannot establish batch/action completeness or role.
+        safe.batches = []
+        safe.actions = []
+        safe.relationship = "candidate"
+        context["quality_issues"] = issues
+        context["complete"] = False
+    return validate_proposal(safe, context)

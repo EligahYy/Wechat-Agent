@@ -131,6 +131,7 @@ def details(db, source_id):
             item["text"] = display_text(item["text"])
     doc["can_followup"] = bool(
         doc["body"]["relationship"] == "merchant"
+        and not doc["body"].get("quality_issues")
         and not doc["body"]["paused"]
         and locator["quality"] == "named"
         and not doc["needs_update"]

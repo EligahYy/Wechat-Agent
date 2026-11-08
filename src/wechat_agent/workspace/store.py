@@ -298,6 +298,18 @@ def commit(db, source_id, proposal, context, fingerprint):
                     "resolved": False,
                 },
             )
+        body["quality_issues"] = context.get("quality_issues", [])
+        if body["quality_issues"]:
+            # Do not retain earlier machine batch/task conclusions as verified.
+            body["actions"] = {
+                k: v for k, v in body["actions"].items() if v.get("locked")
+            }
+            retained_batches = {v.get("batch") for v in body["actions"].values()}
+            body["batches"] = {
+                k: v
+                for k, v in body["batches"].items()
+                if k in retained_batches or v.get("text_locked")
+            }
         body["engine_version"] = ENGINE_VERSION
         body["source_revision"] = snapshot(db, source_id, False)
         body["coverage"] = {

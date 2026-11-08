@@ -562,3 +562,38 @@ def test_corrected_note_survives_review(pilot):
     d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
     assert len(d["body"]["notes"]) == 1
     assert d["body"]["notes"][nid]["text"] == "关注英国报价，尚未确定方案"
+
+
+def test_failed_transport_review_is_isolated_with_bounded_calls(pilot):
+    calls = []
+
+    def respond(request):
+        payload = json.loads(json.loads(request.content)["messages"][1]["content"])
+        calls.append(payload)
+        _, p = proposal(pilot)
+        p.notes.append(p.notes[0].model_copy(update={"text": "询问汽运"}))
+        body = {"proposal": p.model_dump()}
+        if "draft" in payload:
+            body["checked"] = True
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": dumps(body)}}
+                ],
+                "usage": {"total_tokens": 10},
+            },
+        )
+
+    with httpx.Client(
+        base_url="https://api.deepseek.com", transport=httpx.MockTransport(respond)
+    ) as client:
+        run(pilot, "merchant", client)
+        assert run(pilot, "merchant", client)["cached"]
+    assert len(calls) == 3
+    d = read(pilot, "merchant")
+    assert d["body"]["quality_issues"]
+    assert len(d["body"]["notes"]) == 1
+    assert not d["body"]["actions"]
+    assert not d["body"]["batches"]
+    assert "汽运" not in dumps(d["body"])
