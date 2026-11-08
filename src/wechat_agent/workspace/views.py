@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from ..config import secret
 from ..db import dumps
 from ..identity import location
+from .quality import display_text
 from .store import allowed_chats, legacy_paused, read, source_chats
 
 
@@ -125,11 +126,13 @@ def details(db, source_id):
     doc["needs_update"] = doc["body"].get("source_revision") != snapshot(
         db, source_id, False
     )
+    for section in ("notes", "batches", "actions", "decisions"):
+        for item in doc["body"][section].values():
+            item["text"] = display_text(item["text"])
     doc["can_followup"] = bool(
         doc["body"]["relationship"] == "merchant"
         and not doc["body"]["paused"]
         and locator["quality"] == "named"
-        and doc["body"]["coverage"]["complete_context"]
         and not doc["needs_update"]
     )
     today = datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
@@ -137,6 +140,7 @@ def details(db, source_id):
         k
         for k, a in doc["body"]["actions"].items()
         if doc["can_followup"]
+        and (doc["body"]["coverage"]["complete_context"] or a.get("confirmed"))
         and a["state"] == "open"
         and (not a["due_date"] or a["due_date"] <= today)
     ]

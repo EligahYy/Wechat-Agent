@@ -3,9 +3,11 @@
 import hashlib
 import json
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from ..db import dumps, now, uid
 from ..services import Conflict
+from .quality import ENGINE_VERSION, display_text, validate_proposal
 
 
 def stable(*parts):
@@ -104,6 +106,7 @@ def save(c, db, source_id, body, refs, version, reason):
 def commit(db, source_id, proposal, context, fingerprint):
     from .context import snapshot
 
+    validate_proposal(proposal, context)
     with db.tx() as c:
         eligible(db, source_id)
         if snapshot(db, source_id) != fingerprint:
@@ -123,6 +126,7 @@ def commit(db, source_id, proposal, context, fingerprint):
             }
         )
         prior_body = json.loads(previous["body"]) if previous else {}
+        body["history"] = prior_body.get("history", [])
         body["locks"] = prior_body.get("locks", {})
         body["locks"].update(
             {
@@ -160,7 +164,14 @@ def commit(db, source_id, proposal, context, fingerprint):
 
         refs(proposal.evidence)
         body["relationship"] = body.get("manual_role", proposal.relationship)
+        # Reviewed notes replace prior machine drafts. User corrections survive.
+        body["notes"] = {k: v for k, v in body["notes"].items() if v.get("text_locked")}
         for note in proposal.notes:
+            if any(
+                v["evidence"] == refs(note.evidence) and v.get("text_locked")
+                for v in body["notes"].values()
+            ):
+                continue
             body["notes"][stable(note.text)] = {
                 "text": note.text,
                 "evidence": refs(note.evidence),
@@ -183,12 +194,14 @@ def commit(db, source_id, proposal, context, fingerprint):
             ):
                 continue
             body["batches"][ident] = {
-                "text": item.text,
+                "text": old["text"] if old and old.get("text_locked") else item.text,
+                "text_locked": bool(old and old.get("text_locked")),
                 "stage": item.stage,
                 "event_time": when,
                 "evidence": evid,
             }
             new_batches[item.origin] = ident
+        updated_actions = set()
         for item in proposal.actions:
             evid = refs(item.evidence)
             if item.origin not in item.evidence:
@@ -199,6 +212,7 @@ def commit(db, source_id, proposal, context, fingerprint):
             ident = item.ref or stable(
                 "action", source_id, batch, item.kind, evidence[item.origin]["id"]
             )
+            updated_actions.add(ident)
             old = body["actions"].get(ident)
             if body["locks"].get(ident):
                 continue
@@ -209,32 +223,40 @@ def commit(db, source_id, proposal, context, fingerprint):
             when = max(evidence[k]["event_time"] for k in item.evidence)
             if old and (old.get("locked") or old["event_time"] > when):
                 continue
-            if item.state in {"open", "waiting"} and (
-                not context["complete"]
-                or body["relationship"] != "merchant"
-                or (
-                    batch
-                    and body["batches"][batch]["stage"]
-                    in {"closed", "reported_shipped"}
-                )
-            ):
+            if batch and body["batches"][batch]["stage"] in {
+                "closed",
+                "reported_shipped",
+            }:
                 continue
             if item.due_date:
                 date.fromisoformat(item.due_date)
+            reasons = []
             action_state = item.state
-            if (
-                action_state in {"open", "waiting"}
-                and datetime.fromisoformat(when)
-                < datetime.now(UTC) - timedelta(days=30)
-                and (
+            if item.state in {"open", "waiting"}:
+                if not context["complete"]:
+                    reasons.append("incomplete_context")
+                if body["relationship"] != "merchant":
+                    reasons.append("role_unconfirmed")
+                if item.owner == "unknown":
+                    reasons.append("owner_unclear")
+                if item.owner in {"customer", "provider"}:
+                    action_state = "waiting"
+                if datetime.fromisoformat(when) < datetime.now(UTC) - timedelta(
+                    days=30
+                ) and (
                     not item.due_date
-                    or item.due_date < datetime.now(UTC).date().isoformat()
-                )
-            ):
-                action_state = "historical_unresolved"
+                    or item.due_date
+                    < datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+                ):
+                    reasons.append("historical_request")
+                if reasons:
+                    action_state = "proposed"
             body["actions"][ident] = {
-                "text": item.text,
+                "text": old["text"] if old and old.get("text_locked") else item.text,
+                "text_locked": bool(old and old.get("text_locked")),
                 "reason": item.reason,
+                "owner": item.owner,
+                "review_reasons": reasons,
                 "batch": batch,
                 "kind": item.kind,
                 "state": action_state,
@@ -242,12 +264,19 @@ def commit(db, source_id, proposal, context, fingerprint):
                 "event_time": when,
                 "evidence": evid,
             }
-        for action in body["actions"].values():
+        for aid, action in body["actions"].items():
+            if (
+                aid not in updated_actions
+                and not action.get("locked")
+                and action["state"] in {"open", "waiting", "proposed"}
+            ):
+                action.update(state="proposed", review_reasons=["not_revalidated"])
+
             if (
                 action.get("batch")
                 and body["batches"][action["batch"]]["stage"]
                 in {"closed", "reported_shipped"}
-                and action["state"] in {"open", "waiting"}
+                and action["state"] in {"open", "waiting", "proposed"}
             ):
                 action["state"] = "cancelled"
         for item in proposal.decisions:
@@ -258,10 +287,23 @@ def commit(db, source_id, proposal, context, fingerprint):
                 "evidence": refs(item.evidence),
                 "resolved": False,
             }
+        if body["relationship"] == "candidate" and not body["decisions"].get(
+            "role", {}
+        ).get("resolved"):
+            body["decisions"].setdefault(
+                "role",
+                {
+                    "text": "此联系人是否为需要跟进的商家？",
+                    "evidence": refs(proposal.evidence),
+                    "resolved": False,
+                },
+            )
+        body["engine_version"] = ENGINE_VERSION
         body["source_revision"] = snapshot(db, source_id, False)
         body["coverage"] = {
             "complete_context": context["complete"],
             "messages": len(evidence),
+            "gaps": context.get("gaps", []),
         }
         read_set = (
             {r["id"]: r for r in json.loads(previous["read_set"])} if usable else {}
@@ -299,6 +341,58 @@ def command(db, source_id, expected_version, operation, target=None, value=None)
             body["paused"] = value
             body["pause_override"] = True
         elif (
+            operation == "correct"
+            and isinstance(value, str)
+            and 0 < len(value.strip()) <= 500
+        ):
+            section, _, ident = (target or "").partition(":")
+            if (
+                section not in {"notes", "batches", "actions"}
+                or ident not in body[section]
+            ):
+                raise ValueError("workspace_invalid_correction")
+            body[section][ident].update(
+                text=display_text(value.strip()), text_locked=True
+            )
+            body["source_revision"] = None
+        elif operation in {"schedule", "confirm_action"} and target in body["actions"]:
+            item = body["actions"][target]
+            if item.get("batch") and body["batches"][item["batch"]]["stage"] in {
+                "closed",
+                "reported_shipped",
+            }:
+                raise ValueError("workspace_closed_batch")
+            if body["relationship"] != "merchant":
+                raise ValueError("workspace_role_required")
+            if operation == "schedule":
+                if item["state"] not in {"open", "waiting"} or not isinstance(
+                    value, str
+                ):
+                    raise ValueError("workspace_action_not_active")
+                try:
+                    parsed = date.fromisoformat(value)
+                except ValueError:
+                    raise ValueError("workspace_invalid_date") from None
+                if (
+                    parsed < datetime.now(ZoneInfo("Asia/Shanghai")).date()
+                    or parsed.isoformat() != value
+                ):
+                    raise ValueError("workspace_invalid_date")
+                item.update(due_date=value, state="open", locked=True, confirmed=True)
+            else:
+                if value is not True or item["state"] not in {
+                    "proposed",
+                    "historical_unresolved",
+                }:
+                    raise ValueError("workspace_invalid_command")
+                item.update(
+                    state="open",
+                    owner="platform",
+                    confirmed=True,
+                    locked=True,
+                    review_reasons=[],
+                )
+        elif (
             operation == "action"
             and target in body["actions"]
             and value in {"done", "cancelled", "open", "waiting"}
@@ -311,7 +405,13 @@ def command(db, source_id, expected_version, operation, target=None, value=None)
                 in {"closed", "reported_shipped"}
             ):
                 raise ValueError("workspace_closed_batch")
+            if value in {"open", "waiting"} and item["state"] in {
+                "proposed",
+                "historical_unresolved",
+            }:
+                raise ValueError("workspace_confirmation_required")
             item.update(state=value, locked=True)
+            item["completed_at"] = now() if value == "done" else None
         elif (
             operation == "decision"
             and target in body["decisions"]
@@ -330,6 +430,10 @@ def command(db, source_id, expected_version, operation, target=None, value=None)
             if target == "role" and value == "candidate":
                 body["decisions"][target]["resolved"] = False
                 body.pop("manual_role", None)
+        body["history"] = (
+            body.get("history", [])
+            + [{"at": now(), "operation": operation, "target": target, "value": value}]
+        )[-50:]
         row = raw(db, source_id)
         return save(
             c,

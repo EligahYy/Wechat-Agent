@@ -34,6 +34,7 @@ def fake_model(request):
                 "text": "确认英国报价",
                 "reason": "商家明确有3方货",
                 "state": "open",
+                "owner": "platform",
                 "evidence": [key],
             }
         ],
@@ -44,7 +45,14 @@ def fake_model(request):
             "choices": [
                 {
                     "finish_reason": "stop",
-                    "message": {"content": json.dumps({"proposal": proposal})},
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "proposal": proposal,
+                                **({"checked": True} if "draft" in content else {}),
+                            }
+                        )
+                    },
                 }
             ],
             "usage": {"total_tokens": 50},

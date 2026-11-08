@@ -3,8 +3,10 @@
 import json
 import re
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from ..db import dumps
+from .quality import ENGINE_VERSION
 from .store import allowed_chats, eligible, legacy_paused, raw, stable, valid_refs
 
 
@@ -39,6 +41,7 @@ def snapshot(db, source_id, include_document=True):
         (db.settings.source_account,),
     )
     return stable(
+        ENGINE_VERSION,
         chats,
         rows,
         policy,
@@ -52,6 +55,7 @@ def build(db, source_id, search=None):
     eligible(db, source_id)
     selected = {}
     complete = True
+    gaps = set()
     for chat in related_chats(db, source_id):
         if chat["kind"] == "private" and chat["source_id"] != source_id:
             continue
@@ -66,6 +70,7 @@ def build(db, source_id, search=None):
         )
         if len(rows) > 500:
             complete = False
+            gaps.add("history_limit")
         rows = list(reversed(rows[:500]))
         anchors = [
             i
@@ -77,6 +82,7 @@ def build(db, source_id, search=None):
             m = rows[i]
             if m["type"] != "text" or m["completeness"] != "full":
                 complete = False
+                gaps.add("media_or_partial")
                 continue
             if search and search not in m["text"]:
                 continue
@@ -94,6 +100,7 @@ def build(db, source_id, search=None):
     for m in rows:
         if len(kept) >= 80 or size + len(m["text"]) > 16000:
             complete = False
+            gaps.add("context_limit")
             break
         kept.append(m)
         size += len(m["text"])
@@ -127,7 +134,8 @@ def build(db, source_id, search=None):
         if isinstance(value, dict):
             return {
                 k: redact(v)
-                if k in {"text", "reason", "resolution"} and isinstance(v, str)
+                if k in {"text", "reason", "resolution", "result_note", "value"}
+                and isinstance(v, str)
                 else clean(v)
                 for k, v in value.items()
             }
@@ -139,6 +147,7 @@ def build(db, source_id, search=None):
     payload = {
         "customer": "CUSTOMER",
         "timezone": "Asia/Shanghai",
+        "as_of": datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat(),
         "document": memory,
         "complete_context": complete,
         "messages": [
@@ -155,4 +164,9 @@ def build(db, source_id, search=None):
             for ref, m in evidence.items()
         ],
     }
-    return {"payload": payload, "evidence": evidence, "complete": complete}
+    return {
+        "payload": payload,
+        "evidence": evidence,
+        "complete": complete,
+        "gaps": sorted(gaps),
+    }

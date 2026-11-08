@@ -571,3 +571,32 @@ select {
 .candidate-empty p {
   margin: 8px 0 16px;
 }
+
+.insight-card {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--bg);
+  overflow-wrap: anywhere;
+}
+.insight-card > p {
+  margin-bottom: 12px;
+}
+.insight-card details {
+  margin-top: 12px;
+}
+.insight-card summary {
+  cursor: pointer;
+  color: var(--blue);
+  min-height: 36px;
+}
+.insight-card .evidence {
+  margin: 10px 0;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: 10px;
+}
+.insight-card button {
+  margin: 8px 8px 0 0;
+}

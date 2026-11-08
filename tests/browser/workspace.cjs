@@ -50,7 +50,7 @@ const fs = require("fs");
     .waitFor();
   await page.getByRole("button", { name: "今日", exact: true }).click();
   await page.getByRole("button", { name: "查看档案" }).click();
-  await page.getByText("英国第一批 · 需求确认").waitFor();
+  await page.locator(".insight-card").filter({hasText:"英国第一批"}).waitFor();
   await page.getByText("查看来源", { exact: true }).first().click();
   await page
     .getByText("下周英国3方货，请确认报价。", { exact: true })

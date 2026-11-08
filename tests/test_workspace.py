@@ -53,6 +53,7 @@ def proposal(db):
                     "text": "确认报价",
                     "reason": "商家有具体备货意向",
                     "state": "open",
+                    "owner": "platform",
                     "evidence": [key],
                 }
             ],
@@ -148,6 +149,8 @@ def test_agent_tool_loop_budget_and_completed_input_reuse(pilot):
         else:
             ctx, p = proposal(pilot)
             body = {"proposal": p.model_dump()}
+            if "draft" in payload:
+                body["checked"] = True
         return httpx.Response(
             200,
             json={
@@ -163,8 +166,8 @@ def test_agent_tool_loop_budget_and_completed_input_reuse(pilot):
     ) as client:
         run(pilot, "merchant", client)
         assert run(pilot, "merchant", client)["cached"]
-    assert len(calls) == 2
-    assert sum(r["actual"] for r in pilot.rows("SELECT * FROM usage")) == 200
+    assert len(calls) == 3
+    assert sum(r["actual"] for r in pilot.rows("SELECT * FROM usage")) == 300
     assert "手机号" not in dumps(calls)
     assert read(pilot, "merchant")["version"] == 1
 
@@ -193,7 +196,7 @@ def test_partial_context_does_not_manufacture_action(pilot):
     ctx["complete"] = False
     d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
     assert d["body"]["batches"]
-    assert not d["body"]["actions"]
+    assert all(a["state"] == "proposed" for a in d["body"]["actions"].values())
 
 
 def test_manual_role_is_structured_and_survives_reanalysis(pilot):
@@ -338,7 +341,23 @@ def test_no_reentrant_model_spending(pilot):
                 "choices": [
                     {
                         "finish_reason": "stop",
-                        "message": {"content": dumps({"proposal": p.model_dump()})},
+                        "message": {
+                            "content": dumps(
+                                {
+                                    "proposal": p.model_dump(),
+                                    **(
+                                        {"checked": True}
+                                        if "draft"
+                                        in json.loads(
+                                            json.loads(request.content)["messages"][1][
+                                                "content"
+                                            ]
+                                        )
+                                        else {}
+                                    ),
+                                }
+                            )
+                        },
                     }
                 ],
                 "usage": {"total_tokens": 10},
@@ -349,7 +368,7 @@ def test_no_reentrant_model_spending(pilot):
         base_url="https://api.deepseek.com", transport=httpx.MockTransport(respond)
     ) as client:
         run(pilot, "merchant", client)
-    assert len(pilot.rows("SELECT * FROM usage")) == 1
+    assert len(pilot.rows("SELECT * FROM usage")) == 2
 
 
 def test_pilot_runtime_does_not_schedule_legacy_model(pilot, monkeypatch):
@@ -502,3 +521,44 @@ def test_candidates_empty_diagnostics(db, chat, record):
     assert candidates(db)["diagnostics"]["empty_reason"] == "no_archive"
     ingest(db, [record | {"sender_id": "unknown", "direction": "unknown"}])
     assert candidates(db)["diagnostics"]["empty_reason"] == "no_identity"
+
+
+def test_transport_grounding_and_pending_task_confirmation(pilot):
+    from wechat_agent.workspace.views import details
+
+    ctx, p = proposal(pilot)
+    p.notes[0].text = "询问汽运"
+    with pytest.raises(ValueError, match="transport_term"):
+        commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    p.notes[0].text = "询问海运"
+    with pytest.raises(ValueError, match="transport_evidence"):
+        commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    p.notes[0].text = "CUSTOMER关注英国"
+    ctx["complete"] = False
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    aid = next(iter(d["body"]["actions"]))
+    assert not details(pilot, "merchant")["today_action_ids"]
+    d = command(pilot, "merchant", d["version"], "confirm_action", aid, True)
+    assert details(pilot, "merchant")["today_action_ids"] == [aid]
+    d = command(pilot, "merchant", d["version"], "action", aid, "done")
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    assert d["body"]["actions"][aid]["state"] == "done"
+    assert "CUSTOMER" not in dumps(d["body"]["notes"])
+
+
+def test_corrected_note_survives_review(pilot):
+    ctx, p = proposal(pilot)
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    nid = next(iter(d["body"]["notes"]))
+    command(
+        pilot,
+        "merchant",
+        d["version"],
+        "correct",
+        "notes:" + nid,
+        "关注英国报价，尚未确定方案",
+    )
+    p.notes[0].text = "已确定方案"
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    assert len(d["body"]["notes"]) == 1
+    assert d["body"]["notes"][nid]["text"] == "关注英国报价，尚未确定方案"

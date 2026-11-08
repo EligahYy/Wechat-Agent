@@ -77,7 +77,8 @@ function render() {
     view === "today"
       ? active(d).length
       : view === "review"
-        ? Object.values(d.body.decisions).some((q) => !q.resolved)
+        ? Object.values(d.body.decisions).some((q) => !q.resolved) ||
+          Object.values(d.body.actions).some((a) => a.state === "proposed")
         : d.body.relationship === "merchant",
   );
   $("#content").innerHTML =
@@ -85,7 +86,7 @@ function render() {
     (list
       .map(
         (d) =>
-          `<article class="card"><div class="row"><div><h2>${esc(d.name)}</h2><span class="meta">版本 ${d.version} · ${d.body.coverage.complete_context ? "相关文本窗口完整" : "资料覆盖有限，不自动创建新行动"}${d.body.paused ? " · 已暂停联系" : ""}${d.needs_update ? " · 新进展待整理" : ""}</span></div><button data-open="${esc(d.id)}" class="primary">查看档案</button></div><p class="reason">${esc(view === "today" ? active(d)[0][1].text : Object.values(d.body.notes)[0]?.text || "初步沟通")}</p></article>`,
+          `<article class="card"><div class="row"><div><h2>${esc(d.name)}</h2><span class="meta">版本 ${d.version} · ${d.body.coverage.complete_context ? "相关文本窗口完整" : "资料覆盖有限，行动建议需确认"}${d.body.paused ? " · 已暂停联系" : ""}${d.needs_update ? " · 新进展待整理" : ""}</span></div><button data-open="${esc(d.id)}" class="primary">查看档案</button></div><p class="reason">${esc(view === "today" ? active(d)[0][1].text : Object.values(d.body.notes)[0]?.text || "初步沟通")}</p></article>`,
       )
       .join("") ||
       '<div class="empty"><h2>当前没有可展示的结果</h2><p class="muted">在“试点与进度”选择一位联系人分析。无必要行动、身份未明确或覆盖不足时，不会强行创建待办。</p></div>') +
@@ -177,9 +178,12 @@ function evidence(refs, d) {
     .filter((m) => ids.has(m.id))
     .map(
       (m) =>
-        `<div class="evidence"><p class="meta">${esc(m.conversation)} · ${esc(m.event_time)}</p><p>${esc(m.text)}</p></div>`,
+        `<div class="evidence"><p class="meta">${esc(m.conversation)} · ${esc(new Date(m.event_time).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))}</p><p>${esc(m.text)}</p></div>`,
     )
     .join("")}</details>`;
+}
+function correction(section, id, item) {
+  return `<details><summary>纠正这条内容</summary><label>核对来源后的表述<input maxlength="500" id="correct-${id}" value="${esc(item.text)}"></label><button data-operation="correct" data-target="${section}:${id}" data-input="correct-${id}">保存纠正</button></details>`;
 }
 function openDetail(id) {
   selected = documents.find((d) => d.id === id);
@@ -189,23 +193,27 @@ function openDetail(id) {
   $("#detail-status").textContent = "";
   $("#detail").innerHTML =
     `<section class="section"><h3>微信定位</h3><p>${esc(d.location.remark || d.location.nickname || "姓名待同步")}</p><p class="meta">${d.location.conversations.map((c) => esc(c.title)).join(" / ")}</p><button data-operation="pause" data-value="${!d.body.paused}">${d.body.paused ? "恢复联系建议" : "暂停联系建议"}</button></section><section class="section"><h3>初步沟通与资料</h3>${
-      Object.values(d.body.notes)
-        .map((n) => `<p>${esc(n.text)}</p>${evidence(n.evidence, d)}`)
+      Object.entries(d.body.notes)
+        .map(
+          ([id, n]) =>
+            `<article class="insight-card"><p>${esc(n.text)}</p>${evidence(n.evidence, d)}${correction("notes", id, n)}</article>`,
+        )
         .join("") || "<p>暂无确定资料。</p>"
     }</section><section class="section"><h3>备货批次</h3>${
-      Object.values(d.body.batches)
+      Object.entries(d.body.batches)
         .map(
-          (b) =>
-            `<p>${esc(b.text)} · ${stages[b.stage]}</p>${evidence(b.evidence, d)}`,
+          ([id, b]) =>
+            `<article class="insight-card"><span class="meta">${stages[b.stage]}</span><p>${esc(b.text)}</p>${evidence(b.evidence, d)}${correction("batches", id, b)}</article>`,
         )
         .join("") || "<p>尚无具体批次。</p>"
     }</section><section class="section"><h3>下一步</h3>${
       Object.entries(d.body.actions)
         .map(
           ([id, a]) =>
-            `<p>${esc(a.text)} · ${esc(a.state)}</p><p class="meta">${esc(a.reason)} ${esc(a.due_date || "未约定日期")}</p>${evidence(a.evidence, d)}${["open", "waiting"].includes(a.state) ? `<button data-operation="action" data-target="${id}" data-value="done">标记已处理</button>` : ""}`,
+            `<article class="insight-card"><p>${esc(a.text)} · ${esc({ open: "待处理", waiting: "等待回复", done: "已完成", cancelled: "已取消", proposed: "待确认建议", historical_unresolved: "历史待核实" }[a.state] || a.state)}</p><p class="meta">${esc(a.reason)} ${esc(a.due_date || "未约定日期")}</p>${evidence(a.evidence, d)}${a.state === "proposed" ? `<p class="meta">来源覆盖或责任归属尚需确认，请核对原文。</p><button data-operation="confirm_action" data-target="${id}" data-value="true">确认由我跟进</button>` : ""}${["open", "waiting"].includes(a.state) ? `<button data-operation="action" data-target="${id}" data-value="done">标记已处理</button><button data-operation="action" data-target="${id}" data-value="waiting">等待回复</button><label>下次联系日期<input type="date" id="schedule-${id}"></label><button data-operation="schedule" data-target="${id}">保存日期</button>` : ""}</article>`,
         )
-        .join("") || "<p>当前无需行动。</p>"
+        .join("") ||
+      `<p>${d.body.coverage.complete_context ? "当前文本未识别出明确的未完成行动。" : "上下文含未读媒体或历史截断，不能判定无需行动。请核对来源后重新分析。"}</p>`
     }</section><section class="section"><h3>关键确认</h3>${
       Object.entries(d.body.decisions)
         .filter(([, q]) => !q.resolved)
@@ -262,11 +270,15 @@ document.addEventListener("click", async (e) => {
     if (b.dataset.operation) {
       b.disabled = true;
       const value =
-        b.dataset.operation === "pause"
-          ? b.dataset.value === "true"
-          : b.dataset.operation === "decision"
-            ? $("#decision-" + b.dataset.target).value
-            : b.dataset.value;
+        b.dataset.operation === "correct"
+          ? $("#" + b.dataset.input).value
+          : ["pause", "confirm_action"].includes(b.dataset.operation)
+            ? b.dataset.value === "true"
+            : b.dataset.operation === "schedule"
+              ? $("#schedule-" + b.dataset.target).value
+              : b.dataset.operation === "decision"
+                ? $("#decision-" + b.dataset.target).value
+                : b.dataset.value;
       await api("command", {
         source_id: selected.source_id,
         version: selected.version,

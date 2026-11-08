@@ -24,6 +24,7 @@ class Action(Item):
     origin: str
     kind: Literal["callback", "confirm_demand", "confirm_quote", "prepare_shipment"]
     state: Literal["open", "waiting", "done", "cancelled"]
+    owner: Literal["platform", "customer", "provider", "unknown"] = "unknown"
     due_date: str | None = None
     reason: str = Field(min_length=1, max_length=500)
 
@@ -44,3 +45,8 @@ class Proposal(Strict):
 class Turn(Strict):
     search: str | None = Field(default=None, max_length=80)
     proposal: Proposal | None = None
+
+
+class Review(Strict):
+    proposal: Proposal
+    checked: Literal[True]
