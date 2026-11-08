@@ -159,6 +159,55 @@ def create_app(settings=None, source_factory=None, background=False):
             nonce=request.state.nonce,
         )
 
+    @app.get("/workspace", response_class=HTMLResponse)
+    def workspace(request: Request):
+        return env.get_template("workspace.html").render(
+            csrf=request.state.csrf, nonce=request.state.nonce
+        )
+
+    @app.get("/api/workspace/runs")
+    def workspace_runs():
+        return db.rows(
+            "SELECT id,status,calls,error,created_at FROM workspace_runs WHERE account_id=? ORDER BY created_at DESC LIMIT 20",
+            (db.settings.source_account,),
+        )
+
+    @app.get("/api/workspace/candidates")
+    def workspace_candidates(q: str = "", page: int = 1):
+        from .workspace.views import candidates
+
+        return candidates(db, q, page)
+
+    @app.get("/api/workspace/documents")
+    def workspace_documents():
+        from .workspace.views import listing
+
+        return listing(db)
+
+    @app.post("/api/workspace/analyze")
+    async def workspace_analyze(request: Request):
+        from .workspace.agent import run
+
+        body = await request.json()
+        source_id = body.get("source_id")
+        if not isinstance(source_id, str) or not 0 < len(source_id) <= 200:
+            raise ValueError("workspace_invalid_identity")
+        return await run_in_threadpool(run, db, source_id)
+
+    @app.post("/api/workspace/command")
+    async def workspace_command(request: Request):
+        from .workspace.store import command
+
+        body = await request.json()
+        return command(
+            db,
+            body.get("source_id"),
+            body.get("version"),
+            body.get("operation"),
+            body.get("target"),
+            body.get("value"),
+        )
+
     @app.post("/login")
     async def login(request: Request):
         body = await request.json()

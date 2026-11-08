@@ -84,6 +84,10 @@ class Runtime:
 
     def analyze(self):
         while not self.stop.is_set():
+            if self.db.settings.analysis_mode == "pilot":
+                self.db.heartbeat("worker", "pilot_manual")
+                self.stop.wait(5)
+                continue
             try:
                 policy = self.db.rows(
                     "SELECT enabled FROM crm_policies WHERE account_id=?",

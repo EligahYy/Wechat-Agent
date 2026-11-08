@@ -22,7 +22,10 @@ def parser():
     s = p.add_subparsers(dest="command", required=True)
     s.add_parser("init")
     rebuild = s.add_parser("rebuild", help="新体系来源检查，不调用模型、不清理旧结果")
-    rebuild.add_argument("action", choices=["inspect"])
+    rebuild.add_argument("action", choices=["inspect", "analyze"])
+    rebuild.add_argument(
+        "--contact", help="试点联系人真实source_id；仅分析该联系人授权来源"
+    )
     diagnosis = s.add_parser(
         "diagnose", help="安全诊断；默认仅本地读取，不输出聊天或凭据"
     )
@@ -38,6 +41,11 @@ def parser():
     s.add_parser("demo")
     start = s.add_parser("start", help="启动工作台及采集、历史补齐和分析后台")
     start.add_argument("--port", type=int, default=8765)
+    start.add_argument(
+        "--pilot",
+        action="store_true",
+        help="保留采集，暂停旧模型后台，仅手动运行新工作台试点",
+    )
     archive = s.add_parser("archive", help="全量私信与群聊本地初始化，不依赖导出文件")
     archive.add_argument(
         "action", choices=["discover", "init-all", "resume", "repair", "status"]
@@ -61,6 +69,7 @@ def parser():
     serve = s.add_parser("serve")
     serve.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1"])
     serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--pilot", action="store_true")
     worker = s.add_parser("worker")
     worker.add_argument("--engine", choices=["deepseek"], default="deepseek")
     worker.add_argument("--once", action="store_true")
@@ -161,7 +170,14 @@ def main():
         elif args.command == "rebuild":
             from .rebuild import inspect_sources
 
-            print(dumps(inspect_sources(db)))
+            if args.action == "inspect":
+                print(dumps(inspect_sources(db)))
+            else:
+                from .workspace.agent import run
+
+                if not args.contact:
+                    raise ValueError("试点分析需要 --contact")
+                print(dumps(run(db, args.contact)))
         elif args.command == "diagnose":
             from .diagnostics import snapshot
 
@@ -206,6 +222,8 @@ def main():
 
             from .web import create_app
 
+            if args.pilot:
+                settings.analysis_mode = "pilot"
             uvicorn.run(
                 create_app(settings, background=True),
                 host="127.0.0.1",

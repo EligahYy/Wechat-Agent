@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 9:
+            if version > 10:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -181,6 +181,24 @@ class DB:
                 CREATE TABLE IF NOT EXISTS business_events(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,actor_ref TEXT NOT NULL,opportunity TEXT NOT NULL,kind TEXT NOT NULL,evidence TEXT NOT NULL,event_time TEXT NOT NULL,UNIQUE(account_id,actor_ref,opportunity,kind,evidence));
                 CREATE TABLE IF NOT EXISTS conversation_classifications(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id),kind TEXT NOT NULL,evidence TEXT NOT NULL,updated_at TEXT NOT NULL);
                 PRAGMA user_version=9; COMMIT;""")
+            if version < 10:
+                if version:
+                    target = settings.data_dir / (
+                        "pre-v10-"
+                        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                        + ".sqlite3"
+                    )
+                    backup = sqlite3.connect(target)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    target.chmod(0o600)
+                connection.executescript("""BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS workspace_documents(id TEXT PRIMARY KEY, account_id TEXT NOT NULL, source_id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, read_set TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(account_id,source_id));
+                CREATE TABLE IF NOT EXISTS workspace_versions(id TEXT PRIMARY KEY, document_id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(document_id,version));
+                CREATE TABLE IF NOT EXISTS workspace_runs(id TEXT PRIMARY KEY, account_id TEXT NOT NULL, source_id TEXT NOT NULL, status TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL);
+                PRAGMA user_version=10; COMMIT;""")
         finally:
             connection.close()
         self.path.chmod(0o600)
