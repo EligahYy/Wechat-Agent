@@ -1,6 +1,6 @@
 # 从零部署、微信接入与日常使用 SOP
 
-适用：个人工作 Mac、本地 wx-cli、DeepSeek API。当前应用 v0.6.1、数据库 v9。目标设计与尚待交付项见 [改造设计](AI_CRM_DESIGN.md)。
+适用：个人工作 Mac、本地 wx-cli、DeepSeek API。当前应用 v0.6.1、数据库 v9。本文件仅描述已发布版本操作；新系统仍在设计评审，见 [产品方案](PRODUCT_DESIGN.md)、[技术方案](SYSTEM_ARCHITECTURE.md) 和 [验收计划](ACCEPTANCE_PLAN.md)。不要将新方案中的拟议接口当作当前命令。
 
 ## v0.6.1 会话范围与群名
 
