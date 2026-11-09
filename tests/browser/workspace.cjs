@@ -50,7 +50,7 @@ const fs = require("fs");
     .getByText("分析完成。可在客户或待确认中查看；无业务依据时不会创建客户。")
     .waitFor();
   await page
-    .getByText("分册 1 / 1 · 已整理 1 / 1 条 · 价值过滤 0 条")
+    .getByText("当前没有进行中的整理任务。已完成的档案可在“客户”中查看。")
     .waitFor();
   await page.screenshot({
     path: "/tmp/workspace-corpus-progress.png",
@@ -118,12 +118,9 @@ const fs = require("fs");
   await page
     .getByRole("button", { name: "暂停自动整理", exact: true })
     .waitFor();
-  await page.locator("#queue-details > summary").click();
   await page
     .getByRole("button", { name: "刷新会话与队列", exact: true })
     .click();
-  if (!((await page.locator("#queue-details").getAttribute("open")) !== null))
-    throw Error("queue details collapsed unexpectedly");
   const advanced = await page.request.post(
     "http://127.0.0.1:8768/__test__/advance-queue",
     { headers: { "X-CSRF-Token": csrf }, data: {} },

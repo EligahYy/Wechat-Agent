@@ -366,8 +366,26 @@ def estimate_tokens(text):
     )
 
 
-def reserve(db, job_id, tokens):
+def reserve(db, job_id, tokens, *, enforce_limit=True):
     rid = uid()
+    if not enforce_limit:
+        from .crm import TZ
+
+        # Workspace requests keep usage accounting without a daily budget gate.
+        with db.tx() as c:
+            c.execute(
+                "INSERT INTO usage VALUES(?,?,?,?,?,?,?)",
+                (
+                    rid,
+                    job_id,
+                    datetime.now(TZ).date().isoformat(),
+                    tokens,
+                    None,
+                    "reserved",
+                    now(),
+                ),
+            )
+        return rid
     budget = budget_state(db)
     limit = budget["limit"]
     history = False

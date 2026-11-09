@@ -181,14 +181,18 @@ p {
 .toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 16px;
   flex-wrap: wrap;
   margin-bottom: 24px;
 }
 .segments {
   padding: 4px;
-  display: flex;
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  justify-content: flex-start;
+  flex-wrap: wrap;
   background: var(--line);
   border-radius: 12px;
   gap: 3px;
@@ -203,6 +207,29 @@ p {
 .segments button[aria-selected="true"] {
   background: var(--surface);
   box-shadow: 0 1px 4px #0002;
+}
+.progress-card h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.progress-card .row {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.progress-card .row > div {
+  min-width: 0;
+}
+.progress-card button {
+  margin: 0;
+  flex-shrink: 0;
+}
+.progress-card p:last-child {
+  margin-bottom: 0;
+}
+.progress-pagination {
+  margin: 20px 0 0;
+  gap: 12px;
 }
 .cards {
   display: grid;

@@ -1,10 +1,11 @@
-"""One budgeted, cached transport for packet extraction and customer synthesis."""
+"""Cached model transport with usage accounting and bounded packet recovery."""
 
 import json
 
 import httpx
+from pydantic import ValidationError
 
-from ..analysis import Blocked, estimate_tokens, release_rejected, reserve, settle
+from ..analysis import estimate_tokens, release_rejected, reserve, settle
 from ..db import dumps, now
 from ..model_network import connection_code
 from .context import snapshot
@@ -14,6 +15,10 @@ from .store import stable
 
 class Paused(Exception):
     pass
+
+
+class FactbookError(ValueError):
+    """Safe contract diagnostics; never include chat or model output."""
 
 
 class ModelSession:
@@ -31,8 +36,9 @@ class ModelSession:
 
     def ensure_active(self):
         if self.should_stop:
-            if self.should_stop():
-                raise Paused("automation_paused")
+            reason = self.should_stop()
+            if reason:
+                raise Paused(reason if isinstance(reason, str) else "automation_paused")
             self.db.heartbeat("worker", "workspace_running")
         if self.guard and not self.guard():
             raise ValueError("workspace_stale_input")
@@ -61,14 +67,12 @@ class ModelSession:
         if self.calls >= self.limit:
             raise Paused("call_limit")
         maximum = min(6000, db.settings.max_output_tokens)
-        try:
-            rid = reserve(
-                db, self.run_id, estimate_tokens(prompt + dumps(payload)) + maximum
-            )
-        except Blocked as exc:
-            if "budget" in exc.status:
-                raise Paused(exc.status) from None
-            raise
+        rid = reserve(
+            db,
+            self.run_id,
+            estimate_tokens(prompt + dumps(payload)) + maximum,
+            enforce_limit=False,
+        )
         self.calls += 1
         with db.tx() as c:
             c.execute(
@@ -109,15 +113,49 @@ class ModelSession:
     def factbook(self, prompt, payload):
         from .schema import FactBook
 
+        issues = []
         for attempt in range(3):
             data = self.request(
-                prompt, payload | ({"repair_attempt": attempt} if attempt else {})
+                prompt,
+                payload
+                | (
+                    {
+                        "repair_attempt": attempt,
+                        "validation_issues": issues,
+                        "repair_instruction": "按契约返回完整JSON。修正列出的字段，保留原始事实与来源ref；不要输出解释。",
+                    }
+                    if attempt
+                    else {}
+                ),
             )
             try:
                 choice = data["choices"][0]
+                if choice.get("finish_reason") == "length":
+                    # Repeating the same oversized output cannot repair truncation.
+                    raise FactbookError("workspace_fact_truncated")
                 if choice.get("finish_reason") != "stop":
                     raise ValueError("incomplete")
                 return FactBook.model_validate_json(choice["message"]["content"])
+            except FactbookError:
+                raise
+            except ValidationError as exc:
+                issues = [
+                    ".".join(
+                        str(p)
+                        if isinstance(p, int)
+                        or p
+                        in {"facts", "text", "kind", "subject", "order_id", "evidence"}
+                        else "field"
+                        for p in e["loc"]
+                    )
+                    + ":"
+                    + e["type"]
+                    for e in exc.errors(include_input=False, include_url=False)[:8]
+                ]
             except (ValueError, KeyError, IndexError, TypeError):
-                if attempt == 2:
-                    raise ValueError("workspace_fact_schema") from None
+                issues = ["response:invalid_json_or_incomplete"]
+            if attempt == 2:
+                # Only safe field paths / validator types can be persisted.
+                raise FactbookError(
+                    "workspace_fact_schema:" + ",".join(issues)
+                ) from None

@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 13:
+            if version > 14:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -250,6 +250,45 @@ class DB:
                 connection.executescript("""BEGIN IMMEDIATE;
                 CREATE TABLE IF NOT EXISTS message_extractions(message_id TEXT PRIMARY KEY REFERENCES messages(id),source_revision INTEGER NOT NULL,sha256 TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 0,confirmed_text TEXT NOT NULL DEFAULT '',candidate_text TEXT NOT NULL DEFAULT '',engine TEXT NOT NULL,updated_at TEXT NOT NULL);
                 PRAGMA user_version=13; COMMIT;""")
+            if version < 14:
+                if version:
+                    target = settings.data_dir / (
+                        "pre-v14-"
+                        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                        + ".sqlite3"
+                    )
+                    backup = sqlite3.connect(target)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    target.chmod(0o600)
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    columns = {
+                        r[1]
+                        for r in connection.execute(
+                            "PRAGMA table_info(workspace_queue)"
+                        )
+                    }
+                    if "user_paused" not in columns:
+                        connection.execute(
+                            "ALTER TABLE workspace_queue ADD COLUMN user_paused INTEGER NOT NULL DEFAULT 0"
+                        )
+                    if "control_version" not in columns:
+                        connection.execute(
+                            "ALTER TABLE workspace_queue ADD COLUMN control_version INTEGER NOT NULL DEFAULT 0"
+                        )
+                    # Wake old budget-paused jobs; usage history is left intact.
+                    connection.execute(
+                        "UPDATE workspace_queue SET status='queued',error=NULL,available_at=?,updated_at=? WHERE error='blocked_budget' AND user_paused=0",
+                        (now(), now()),
+                    )
+                    connection.execute(
+                        "UPDATE workspace_scans SET status='queued',error=NULL,updated_at=? WHERE error='blocked_budget'",
+                        (now(),),
+                    )
+                    connection.execute("PRAGMA user_version=14")
         finally:
             connection.close()
         self.path.chmod(0o600)

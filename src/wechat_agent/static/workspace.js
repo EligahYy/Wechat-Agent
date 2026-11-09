@@ -1,5 +1,13 @@
 import "./workspace/select.js";
-import { $, esc, api, copy, time, errorText } from "./workspace/client.js";
+import {
+  $,
+  esc,
+  api,
+  copy,
+  time,
+  errorText,
+  notice,
+} from "./workspace/client.js";
 import { renderSettings } from "./workspace/settings.js";
 import { renderScope } from "./workspace/scope.js";
 import { customerHTML, evidence, mediaControls } from "./workspace/customer.js";
@@ -19,8 +27,8 @@ let view = [
       new URLSearchParams(location.search).get("page")
     : "today",
   taskView = "today",
-  queuePage = 1,
-  queueExpanded = false,
+  progressPage = 1,
+  progressRequest = 0,
   documents = [],
   selected,
   focusBefore,
@@ -163,7 +171,7 @@ function render() {
 }
 const candidateBlocks = {
   analysis_disabled:
-    "尚未开启文本分析授权。前往设置确认范围和预算后，返回刷新联系人。",
+    "尚未开启文本分析授权。前往设置确认范围和分析授权后，返回刷新联系人。",
   key_missing: "尚未配置 DeepSeek key。前往设置保存后，返回刷新联系人。",
   source_unauthorized:
     "此联系人的来源会话尚未授权外发。前往会话范围检查分析授权。",
@@ -206,28 +214,32 @@ function updateCandidateButton() {
 }
 
 async function scanProgress() {
-  const scans = await api("scans");
+  const ticket = ++progressRequest;
+  const data = await api("progress?page=" + progressPage);
   const target = $("#scan-progress");
-  if (!target || view !== "pilot") return;
-  const names = {
+  if (!target || view !== "pilot" || ticket !== progressRequest) return;
+  progressPage = data.page;
+  const phases = {
     collect: "整理原始资料",
     merge: "合并资料分册",
     summarize: "总结客户档案",
-    done: "已完成",
+    done: "等待更新",
+    queued: "等待开始",
   };
-  const visible = candidateSource
-    ? scans.filter((s) => s.source_id === candidateSource)
-    : scans.slice(0, 10);
-  const cards = visible
-    .map(
-      (s) =>
-        `<article class="insight-card"><p>${esc(s.name || s.source_id)} · ${esc(names[s.phase] || s.phase)}${s.status === "paused" ? " · 已暂停，可继续分析" : s.status === "failed" ? " · 需要处理" : ""}</p><p>分册 ${s.completed_pages} / ${s.total_pages} · 已整理 ${s.processed_messages} / ${s.source_messages} 条 · 价值过滤 0 条</p>${s.error ? `<p class="meta">${esc(s.error)}</p>` : ""}</article>`,
-    )
-    .join("");
-  target.innerHTML = `<p class="meta">${candidateSource ? "当前选中联系人的进度" : "最近10位联系人的进度；完整状态见联系人队列"}</p>${cards || "<p>尚未开始客户资料整理。</p>"}`;
+  const states = {
+    queued: "等待整理",
+    running: "正在整理",
+    paused: "已暂停",
+    failed: "需要处理",
+  };
+  target.innerHTML = `<p class="meta">按客户归纳 · 最新更新在前 · 已完成自动移出 · 每页20位</p><div class="cards">${data.items.map((s) => `<article class="insight-card progress-card" data-progress-source="${esc(s.source_id)}"><div class="row"><div><h3>${esc(s.name)}</h3><p class="meta">${esc(states[s.status] || s.status)} · ${esc(phases[s.phase] || s.phase)}</p></div><button data-progress-action="${["running", "queued"].includes(s.status) ? "pause" : "resume"}" data-source="${esc(s.source_id)}">${["running", "queued"].includes(s.status) ? "暂停分析" : s.status === "failed" ? "重试分析" : "继续分析"}</button></div>${s.total_pages ? `<p>分册 ${s.completed_pages} / ${s.total_pages} · 已整理 ${s.processed_messages} / ${s.source_messages} 条</p>` : "<p class='meta'>开始后将完整整理该客户的相关聊天。</p>"}${s.error ? `<p class="${s.status === "failed" ? "error" : "meta"}">${esc(errorText(s.error))}</p>` : ""}<p class="meta">更新于 ${esc(time(s.updated_at))} 北京时间</p></article>`).join("") || '<p class="progress-empty">当前没有进行中的整理任务。已完成的档案可在“客户”中查看。</p>'}</div><div class="toolbar progress-pagination"><button id="progress-prev" ${data.page === 1 ? "disabled" : ""}>上一页</button><span class="meta">第 ${data.page} / ${data.pages} 页 · ${data.total} 位客户</span><button id="progress-next" ${data.has_more ? "" : "disabled"}>下一页</button></div>`;
 }
 setInterval(() => {
-  if (view === "pilot" && !$("#auto-queue :focus")) {
+  if (
+    view === "pilot" &&
+    !$("#auto-queue :focus") &&
+    !$("#scan-progress :focus")
+  ) {
     scanProgress().catch(() => {});
     queueProgress().catch(() => {});
   }
@@ -239,10 +251,7 @@ async function pilot() {
       page: candidatePage,
       q: candidateQuery,
     });
-    const [data, runs] = await Promise.all([
-      api("candidates?" + params),
-      api("runs"),
-    ]);
+    const data = await api("candidates?" + params);
     if (view !== "pilot" || ticket !== candidateRequest) return;
     candidatePage = data.page;
     candidateItems = data.items;
@@ -253,24 +262,11 @@ async function pilot() {
       ? `<div class="candidate-results" aria-label="匹配联系人">${data.items.map((c) => `<button type="button" data-candidate="${esc(c.source_id)}" aria-pressed="${c.source_id === candidateSource}"><strong>${esc(c.name)}</strong><small>${esc(c.source_id)}</small></button>`).join("")}</div><div class="toolbar spaced"><button id="prev" ${candidatePage === 1 ? "disabled" : ""}>上一页</button><span>第 ${candidatePage} 页 · ${data.total} 位来源联系人 · 每页最多 50 位</span><button id="next" ${!data.has_more ? "disabled" : ""}>下一页</button></div><p id="candidate-readiness" class="muted" role="status"></p><button class="primary spaced" id="analyze" disabled>${busy ? "正在分析，请稍候…" : "分析此联系人"}</button>`
       : `<div class="candidate-empty spaced" role="status"><h3>${empty ? empty[0] : "没有匹配的联系人"}</h3><p>${empty ? empty[1] : "请尝试其他备注、昵称或微信 ID，或清空搜索后重试。"}</p>${empty ? `<a href="/workspace?view=${empty[2]}">${empty[2] === "settings" ? "前往连接与模型设置" : "检查会话范围与人物白名单"} →</a>` : '<button id="clear-candidate-search">清空搜索</button>'}</div>`;
     $("#content").innerHTML =
-      `<div id="auto-queue"></div><div class="card spaced"><div class="toolbar"><h2>手动分析一位联系人</h2><button id="refresh-candidates">刷新联系人</button></div><p class="muted">联系人从本机归档读取，查看列表不调用模型。点击分析才会调用 DeepSeek，计入已有预算，先完整整理来源分册，再总结；预算不足可续跑。</p><p class="meta">当前账号已归档 ${d.archived_messages} 条消息 · 正常跟进 ${d.scope_conversations} 个会话 · 可识别 ${d.contacts} 位联系人</p>${search}${picker}<div class="toolbar spaced"><a href="/workspace?view=settings">模型与分析授权设置 →</a><a href="/workspace?view=scope">会话范围与白名单 →</a></div><p class="meta">修改设置后返回刷新。不会启动全库重建。图片保留占位；长历史分册整理，暂停后可继续。</p></div><section class="card spaced"><h2>客户资料整理进度</h2><div id="scan-progress" role="status">正在读取进度…</div></section><section class="card spaced"><h2>最近运行</h2>${
-        runs
-          .map(
-            (r) =>
-              `<p>${esc(new Date(r.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))} 北京时间 · ${esc(
-                {
-                  succeeded: "已完成",
-                  draft_succeeded: "草稿已生成",
-                  draft_failed: "草稿未完成",
-                  draft_running: "正在准备草稿",
-                  failed: "未完成",
-                  running: "处理中",
-                  paused: "已暂停，可续跑",
-                }[r.status] || r.status,
-              )} · ${r.calls} 次请求</p>${r.error ? `<p class="error">${esc(r.error === "workspace_customer_anchor_required" ? "无法确认这条结论属于当前客户，未写入档案。请更新后重新分析；不会自动归属服务商或其他商家的消息。" : r.error === "workspace_transport_term" ? "运输表述与业务术语不一致。请升级后重新分析；0 次请求表示复用缓存，未新增模型调用。" : r.error)}</p>` : ""}`,
-          )
-          .join("") || "<p>尚未运行试点分析。</p>"
-      }</section>`;
+      `<div id="auto-queue"></div><div class="card spaced"><div class="toolbar"><h2>手动分析一位联系人</h2><button id="refresh-candidates">刷新联系人</button></div><p class="muted">联系人从本机归档读取，查看列表不调用模型。点击分析才会调用 DeepSeek，仅记录用量；先完整整理来源分册，再总结；进度可暂停、续跑。</p><p class="meta">当前账号已归档 ${d.archived_messages} 条消息 · 正常跟进 ${d.scope_conversations} 个会话 · 可识别 ${d.contacts} 位联系人</p>${search}${picker}<div class="toolbar spaced"><a href="/workspace?view=settings">模型与分析授权设置 →</a><a href="/workspace?view=scope">会话范围与白名单 →</a></div><p class="meta">修改设置后返回刷新。不会启动全库重建。图片保留占位；长历史分册整理，暂停后可继续。</p></div>`;
+    $("#auto-queue").insertAdjacentHTML(
+      "afterend",
+      '<section class="card spaced"><h2>客户资料整理进度</h2><div id="scan-progress" role="status">正在读取进度…</div></section>',
+    );
     if (data.items.length) updateCandidateButton();
     await scanProgress();
     await queueProgress();
@@ -299,7 +295,6 @@ document.addEventListener("input", (e) => {
 document.addEventListener(
   "toggle",
   (e) => {
-    if (e.target.id === "queue-details") queueExpanded = e.target.open;
     if (e.target.id === "packet-disclosure") {
       $("#packet-label").textContent = e.target.open
         ? "收起已保存资料分册"
@@ -412,34 +407,18 @@ document.addEventListener("submit", async (e) => {
 });
 
 async function queueProgress() {
-  const q = await api("queue?page=" + queuePage);
+  const q = await api("queue");
   const target = $("#auto-queue");
   if (!target || view !== "pilot") return;
-  const gateNames = {
-    paused: "自动整理已暂停",
-    manual_mode: "当前启动方式仅支持手动分析；使用 start 启动可运行自动队列",
+  const gates = {
+    paused: "自动整理已暂停；可单独继续一位客户",
+    manual_mode: "当前仅支持手动分析；使用 wechat-agent start 启动自动整理",
     awaiting_account: "请先绑定工作微信",
-    legacy_mode: "当前为旧分析模式，使用 start 启动新客户队列",
+    legacy_mode: "请使用 wechat-agent start 启动客户整理",
     blocked_policy: "请先在设置开启文本分析授权",
     blocked_credentials: "请先配置 DeepSeek key",
   };
-  const reasons = {
-    blocked_budget: "今日预算不足，次日自动续跑；调高预算后也会恢复",
-    call_limit: "本轮资料已保存，后台稍后继续",
-    automation_paused: "已暂停自动整理",
-    HTTP_401: "模型认证失败，请检查 key 后恢复队列",
-    HTTP_402: "模型账户余额不足，请充值后恢复队列",
-    HTTP_429: "模型限流，稍后自动复查",
-    workspace_stale_input: "来源或人工判断已变化，将重新检查",
-  };
-  const states = {
-    queued: "等待整理",
-    running: "正在整理",
-    paused: "保存进度等待续跑",
-    succeeded: "资料已完成",
-    failed: "需要处理",
-  };
-  target.innerHTML = `<section class="card"><div class="toolbar"><div><h2>按客户自动整理</h2><p class="muted">优先处理近15天活跃联系人，每位联系人都从完整历史开始；分册可复用。只对已授权、未加入白名单的来源调用模型。</p></div><button class="${q.enabled ? "" : "primary"}" id="automation-toggle" data-enabled="${!q.enabled}">${q.enabled ? "暂停自动整理" : "开启自动整理"}</button></div><p role="status">${esc(q.gate ? gateNames[q.gate] || reasons[q.gate] || q.gate : "队列运行中；新消息将更新对应客户")}${!q.background ? " · 此服务未启用后台，请使用 wechat-agent start" : ""}</p><p class="meta">待整理 ${q.counts.queued || 0} · 整理中 ${q.counts.running || 0} · 等待续跑 ${q.counts.paused || 0} · 已完成 ${q.counts.succeeded || 0} · 需要处理 ${q.counts.failed || 0}</p><div class="toolbar"><button id="queue-refresh">刷新会话与队列</button>${q.enabled && q.gate && !["manual_mode", "legacy_mode", "blocked_policy", "blocked_credentials", "blocked_budget"].includes(q.gate) ? '<button id="queue-resume">问题已处理，恢复队列</button>' : ""}</div><details id="queue-details" class="queue-disclosure" ${queueExpanded ? "open" : ""}><summary>查看联系人队列（${q.total}位）</summary>${q.items.map((i) => `<article class="queue-row"><div><strong>${esc(i.name)}</strong><p class="meta">${esc(states[i.status] || i.status)} · ${i.priority === 0 ? "近15天活跃" : "历史联系人"}${i.error ? " · " + esc(reasons[i.error] || i.error) : ""}</p></div>${["failed", "paused"].includes(i.status) ? `<button data-queue-retry="${esc(i.source_id)}">重试此联系人</button>` : ""}</article>`).join("") || "<p>尚无待整理联系人；确认工作账号和会话范围后刷新。</p>"}<div class="toolbar spaced"><button id="queue-prev" ${queuePage === 1 ? "disabled" : ""}>上一页队列</button><span>第 ${queuePage} 页 · 共 ${q.total} 位来源联系人 · 每页50位</span><button id="queue-next" ${q.has_more ? "" : "disabled"}>下一页队列</button></div></details></section>`;
+  target.innerHTML = `<section class="card"><h2>按客户自动整理</h2><p class="muted">先完整整理每位客户的历史，再总结档案。优先近15天活跃客户，已完成分册可复用。</p><div class="toolbar"><button class="${q.enabled ? "" : "primary"}" id="automation-toggle" data-enabled="${!q.enabled}">${q.enabled ? "暂停自动整理" : "开启自动整理"}</button><button id="queue-refresh">刷新会话与队列</button>${q.enabled && q.gate && !["manual_mode", "legacy_mode", "blocked_policy", "blocked_credentials"].includes(q.gate) ? '<button id="queue-resume">问题已处理，恢复队列</button>' : ""}</div><p role="status">${esc(q.gate ? gates[q.gate] || errorText(q.gate) : "队列运行中；新消息将更新对应客户")}${!q.background ? " · 当前服务未启用后台，请使用 wechat-agent start" : ""}</p><p class="meta">待整理 ${q.counts.queued || 0} · 整理中 ${q.counts.running || 0} · 暂停或等待续跑 ${q.counts.paused || 0} · 需要处理 ${q.counts.failed || 0}</p><p class="meta">单客户暂停不影响其他客户；继续时复用已整理分册。仅记录用量，不设每日 Token 上限。</p></section>`;
 }
 
 async function loadPackets(page) {
@@ -648,20 +627,45 @@ document.addEventListener("click", async (e) => {
         enabled: b.id === "queue-resume" || b.dataset.enabled === "true",
       });
       await queueProgress();
+      await scanProgress();
     }
     if (b.id === "queue-refresh") {
       b.disabled = true;
       await api("queue/refresh", {});
       await queueProgress();
+      await scanProgress();
     }
-    if (b.id === "queue-prev" || b.id === "queue-next") {
-      queuePage += b.id === "queue-next" ? 1 : -1;
-      await queueProgress();
+    if (b.id === "progress-prev" || b.id === "progress-next") {
+      progressPage += b.id === "progress-next" ? 1 : -1;
+      await scanProgress();
     }
-    if (b.dataset.queueRetry) {
+    if (b.dataset.progressAction) {
       b.disabled = true;
-      await api("queue/retry", { source_id: b.dataset.queueRetry });
+      const source = b.dataset.source;
+      const action = b.dataset.progressAction;
+      const result = await api("progress/control", {
+        source_id: source,
+        action,
+      });
+      await scanProgress();
       await queueProgress();
+      if (action === "resume" && !result.automatic) {
+        notice("正在继续分析，已整理分册会复用。");
+        const analyzed = await api("analyze", { source_id: source });
+        await refresh();
+        notice(
+          analyzed.paused
+            ? "进度已保存，可继续分析。"
+            : "分析完成，档案已更新。",
+        );
+        await scanProgress();
+      } else {
+        notice(
+          action === "pause"
+            ? "已暂停该客户；当前请求结束后停止，已整理分册保留。"
+            : "已安排继续分析，复用已整理分册。",
+        );
+      }
     }
     if (b.dataset.candidate) {
       candidateSource = b.dataset.candidate;
@@ -726,7 +730,7 @@ document.addEventListener("click", async (e) => {
         const result = await api("analyze", { source_id: source });
         await refresh();
         $("#status").textContent = result.paused
-          ? "资料整理已保存并暂停。预算允许后，再点分析可续跑；当前尚未生成最终档案。"
+          ? "资料整理已保存并暂停。可在整理进度中继续分析。"
           : "分析完成。可在客户或待确认中查看；无业务依据时不会创建客户。";
       } finally {
         busy = false;

@@ -158,19 +158,15 @@ def test_auth_failure_stops_account_until_explicit_resume(ready):
     assert queue.report(db)["gate"] is None
 
 
-def test_budget_change_wakes_paused_history_without_clearing_usage(ready):
+def test_daily_budget_does_not_block_workspace_and_usage_is_retained(ready):
     db = ready
     authorize(db, True, budget=1000)
     queue.configure(db, True)
     with model(db) as client:
         assert queue.step(db, client=client)
-        assert queue.report(db)["counts"] == {"paused": 1}
-        assert queue.report(db)["gate"] == "blocked_budget"
-        assert not db.rows("SELECT * FROM usage")
-        authorize(db, True, budget=100000)
-        assert queue.step(db, client=client)
     assert queue.report(db)["counts"] == {"succeeded": 1}
     assert len(db.rows("SELECT * FROM usage")) == 3
+    assert sum(r["actual"] for r in db.rows("SELECT * FROM usage")) == 3
 
 
 def test_retry_failures_back_off_and_stop_after_three_attempts(ready):

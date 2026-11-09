@@ -43,8 +43,25 @@ export async function copy(text) {
 }
 
 export function errorText(code) {
+  if (code?.startsWith("workspace_fact_schema"))
+    return (
+      "资料分册格式未通过校验。已整理的分册保留；点击重试分析可继续。" +
+      (code.includes(":") ? " 字段：" + code.split(":").slice(1).join(":") : "")
+    );
   return (
     {
+      workspace_fact_truncated:
+        "模型返回被截断；重试时将拆成更小的分册，保留已有进度。",
+      workspace_summary_not_reduced:
+        "本轮分册合并未缩减，已保留全部资料。请重试分析。",
+      workspace_customer_paused: "该客户已暂停，请在整理进度中点击继续分析。",
+      customer_paused: "该客户已手动暂停，点击继续分析即可续跑。",
+      call_limit: "本轮分册已保存，后台将继续；也可点击继续分析。",
+      automation_paused: "自动整理已暂停；可继续这位客户。",
+      HTTP_401: "模型认证失败，请检查 API key。",
+      HTTP_402: "模型账户余额不足，请充值后继续。",
+      HTTP_429: "模型请求限流，将稍后重试。",
+      ConnectError: "无法连接 DeepSeek，请检查网络与本机代理。",
       workspace_clue_not_pending:
         "这条线索已被处理，请重新打开档案查看最新结果。",
       workspace_clue_not_resolved: "这条线索已恢复，请查看待核实列表。",
@@ -73,7 +90,7 @@ export function errorText(code) {
         "档案已被更新，本次修改未保存。请重新打开后核对。",
       workspace_followup_note_required: "请填写实际跟进内容。",
       blocked_credentials: "请在设置中检查DeepSeek key和文本分析授权。",
-      blocked_budget: "今日预算不足，可在设置调整预算或稍后继续。",
+      blocked_budget: "此任务来自旧版预算暂停，更新服务后点击继续分析。",
     }[code] || code
   );
 }

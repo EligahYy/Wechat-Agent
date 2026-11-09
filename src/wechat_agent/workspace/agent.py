@@ -10,6 +10,7 @@ from ..config import secret
 from ..db import dumps, now, uid
 from ..model_network import create_client
 from .context import authority, build, snapshot
+from .control import state as control_state
 from .packets import prepare
 from .quality import isolate_invalid_items, validate_proposal
 from .schema import Review, Turn
@@ -69,6 +70,19 @@ def run(db, source_id, client=None, should_stop=None):
 
 
 def _run(db, source_id, client=None, should_stop=None):
+    token = control_state(db, source_id)
+    if token["user_paused"]:
+        raise Blocked("workspace_customer_paused")
+
+    def stop_reason():
+        current = control_state(db, source_id)
+        if (
+            current["user_paused"]
+            or current["control_version"] != token["control_version"]
+        ):
+            return "customer_paused"
+        return "automation_paused" if should_stop and should_stop() else None
+
     policy = db.rows(
         "SELECT enabled FROM crm_policies WHERE account_id=?",
         (db.settings.source_account,),
@@ -102,8 +116,9 @@ def _run(db, source_id, client=None, should_stop=None):
     refs = [reference(m) for m in context["evidence"].values()]
 
     def input_guard():
-        if should_stop and should_stop():
-            return False
+        reason = stop_reason()
+        if reason:
+            raise Paused(reason)
         return authority(db, source_id) == authority_revision and valid_refs(db, refs)
 
     context["input_guard"] = input_guard
@@ -125,7 +140,7 @@ def _run(db, source_id, client=None, should_stop=None):
         client = client or create_client()
         session = ModelSession(db, source_id, client, key, fingerprint, run_id)
         session.guard = input_guard
-        session.should_stop = should_stop
+        session.should_stop = stop_reason
         payload = prepare(db, source_id, context, session)
         for attempt in range(3):
             if len(dumps(payload)) > 90000:
@@ -204,14 +219,25 @@ def _run(db, source_id, client=None, should_stop=None):
             }
         raise ValueError("workspace_call_limit")
     except Paused as exc:
+        control = control_state(db, source_id)
+        resumed = (
+            control["control_version"] != token["control_version"]
+            and not control["user_paused"]
+        )
         with db.tx() as c:
             c.execute(
                 "UPDATE workspace_runs SET status='paused',error=? WHERE id=?",
                 (str(exc), run_id),
             )
             c.execute(
-                "UPDATE workspace_scans SET status='paused',error=?,updated_at=? WHERE account_id=? AND source_id=?",
-                (str(exc), now(), db.settings.source_account, source_id),
+                "UPDATE workspace_scans SET status=?,error=?,updated_at=? WHERE account_id=? AND source_id=?",
+                (
+                    "queued" if resumed else "paused",
+                    None if resumed else str(exc),
+                    now(),
+                    db.settings.source_account,
+                    source_id,
+                ),
             )
         return {"run_id": run_id, "paused": True, "reason": str(exc)}
     except Exception as exc:

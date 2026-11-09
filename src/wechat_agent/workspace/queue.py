@@ -4,9 +4,8 @@ import fcntl
 import json
 import os
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
-from ..analysis import Blocked, budget_state
+from ..analysis import Blocked
 from ..config import secret
 from ..db import now
 from .agent import run
@@ -40,7 +39,7 @@ def configure(db, enabled):
         )
         if enabled:
             for row in c.execute(
-                "SELECT source_id FROM workspace_queue WHERE account_id=? AND status='failed'",
+                "SELECT source_id FROM workspace_queue WHERE account_id=? AND status='failed' AND user_paused=0",
                 (db.settings.source_account,),
             ).fetchall():
                 db.event(
@@ -51,8 +50,8 @@ def configure(db, enabled):
                     {"source_id": row["source_id"]},
                 )
             c.execute(
-                "UPDATE workspace_queue SET status='queued',attempts=0,error=NULL,available_at=? WHERE account_id=? AND status IN ('paused','failed')",
-                (now(), db.settings.source_account),
+                "UPDATE workspace_queue SET status='queued',attempts=0,error=NULL,available_at=?,updated_at=? WHERE account_id=? AND status IN ('paused','failed') AND user_paused=0",
+                (now(), now(), db.settings.source_account),
             )
     reconcile(db)
     return report(db)
@@ -113,33 +112,110 @@ def reconcile(db):
             )
         for update in updates:
             c.execute(
-                "INSERT INTO workspace_queue(account_id,source_id,input_revision,status,priority,available_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(account_id,source_id) DO UPDATE SET input_revision=excluded.input_revision,status=excluded.status,priority=excluded.priority,attempts=0,error=NULL,available_at=excluded.available_at,updated_at=excluded.updated_at",
+                "INSERT INTO workspace_queue(account_id,source_id,input_revision,status,priority,available_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(account_id,source_id) DO UPDATE SET input_revision=excluded.input_revision,status=CASE WHEN workspace_queue.user_paused=1 AND excluded.status<>'succeeded' THEN 'paused' ELSE excluded.status END,priority=excluded.priority,attempts=0,error=CASE WHEN workspace_queue.user_paused=1 AND excluded.status<>'succeeded' THEN 'customer_paused' ELSE NULL END,available_at=excluded.available_at,updated_at=excluded.updated_at",
                 update,
             )
 
 
-def retry(db, source_id):
+def control(db, source_id, action):
+    if action not in {"pause", "resume"}:
+        raise ValueError("workspace_invalid_control")
     reconcile(db)
     with db.tx() as c:
         row = c.execute(
-            "SELECT status FROM workspace_queue WHERE account_id=? AND source_id=?",
+            "SELECT status,user_paused FROM workspace_queue WHERE account_id=? AND source_id=?",
             (db.settings.source_account, source_id),
         ).fetchone()
         if not row or row["status"] == "excluded":
             raise ValueError("workspace_excluded_person")
-        if row["status"] == "running":
+        if action == "resume" and row["status"] == "running" and not row["user_paused"]:
             raise ValueError("workspace_already_running")
-        db.event(
-            c,
-            "workspace-retry:" + stable(db.settings.source_account, source_id),
-            "workspace_retry",
-            {"source_id": source_id},
-        )
+        if action == "resume":
+            db.event(
+                c,
+                "workspace-retry:" + stable(db.settings.source_account, source_id),
+                "workspace_retry",
+                {"source_id": source_id},
+            )
         c.execute(
-            "UPDATE workspace_queue SET status='queued',attempts=0,error=NULL,available_at=?,updated_at=? WHERE account_id=? AND source_id=?",
-            (now(), now(), db.settings.source_account, source_id),
+            "UPDATE workspace_queue SET user_paused=?,control_version=control_version+1,status=?,priority=-1,attempts=0,error=?,available_at=?,updated_at=? WHERE account_id=? AND source_id=?",
+            (
+                int(action == "pause"),
+                "paused" if action == "pause" else "queued",
+                "customer_paused" if action == "pause" else None,
+                now(),
+                now(),
+                db.settings.source_account,
+                source_id,
+            ),
         )
+    return {"source_id": source_id, "paused": action == "pause"}
+
+
+def retry(db, source_id):
+    control(db, source_id, "resume")
     return report(db)
+
+
+def progress(db, page=1):
+    """One active job per customer, newest first. Reading never invokes a model."""
+    if not 1 <= page <= 100000:
+        raise ValueError("workspace_invalid_query")
+    people = {p["source_id"]: p for p in source_people(db)}
+    allowed = {
+        p["source_id"] for p in people.values() if p["authorized"] and p["has_text"]
+    }
+    account = db.settings.source_account
+    scans = {
+        s["source_id"]: s
+        for s in db.rows("SELECT * FROM workspace_scans WHERE account_id=?", (account,))
+    }
+    queued = {
+        q["source_id"]: q
+        for q in db.rows("SELECT * FROM workspace_queue WHERE account_id=?", (account,))
+    }
+    items = []
+    for ident in (set(scans) | set(queued)) & allowed:
+        scan, job = scans.get(ident), queued.get(ident)
+        latest = max([r for r in (scan, job) if r], key=lambda r: r["updated_at"])
+        status = latest["status"]
+        if job and job["status"] == "excluded":
+            continue
+        if job and job["user_paused"]:
+            status = "paused"
+        if status == "succeeded":
+            continue
+        item = {
+            "source_id": ident,
+            "name": people[ident]["name"],
+            "status": status,
+            "phase": scan["phase"] if scan else "queued",
+            "error": "customer_paused"
+            if job and job["user_paused"]
+            else latest["error"],
+            "user_paused": bool(job and job["user_paused"]),
+            "updated_at": latest["updated_at"],
+        }
+        for key in (
+            "total_pages",
+            "completed_pages",
+            "source_messages",
+            "processed_messages",
+        ):
+            item[key] = scan[key] if scan else 0
+        items.append(item)
+    items.sort(key=lambda i: (i["updated_at"], i["source_id"]), reverse=True)
+    total = len(items)
+    pages = max(1, (total + 19) // 20)
+    page = min(page, pages)
+    return {
+        "items": items[(page - 1) * 20 : page * 20],
+        "page": page,
+        "page_size": 20,
+        "total": total,
+        "pages": pages,
+        "has_more": page < pages,
+    }
 
 
 def report(db, page=1):
@@ -174,18 +250,6 @@ def report(db, page=1):
             (db.settings.source_account,),
         )
     }
-    if (
-        gate is None
-        and counts.get("paused")
-        and not counts.get("queued")
-        and not counts.get("running")
-    ):
-        errors = db.rows(
-            "SELECT DISTINCT error FROM workspace_queue WHERE account_id=? AND status='paused'",
-            (db.settings.source_account,),
-        )
-        if errors and all(row["error"] == "blocked_budget" for row in errors):
-            gate = "blocked_budget"
     rows = db.rows(
         "SELECT q.source_id,q.status,q.priority,q.attempts,q.error,q.available_at,q.updated_at,COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),q.source_id) name FROM workspace_queue q LEFT JOIN identity_metadata i ON i.account_id=q.account_id AND i.source_id=q.source_id WHERE q.account_id=? AND q.status<>'excluded' AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=q.account_id AND e.source_id=q.source_id) ORDER BY CASE q.status WHEN 'running' THEN 0 WHEN 'failed' THEN 1 WHEN 'queued' THEN 2 WHEN 'paused' THEN 3 ELSE 4 END,q.priority,q.available_at,q.source_id LIMIT 50 OFFSET ?",
         (db.settings.source_account, (page - 1) * 50),
@@ -199,16 +263,6 @@ def report(db, page=1):
         "has_more": sum(counts.values()) > page * 50,
         "items": rows,
     }
-
-
-def _next_day():
-    local = datetime.now(ZoneInfo("Asia/Shanghai"))
-    return (
-        (local + timedelta(days=1))
-        .replace(hour=0, minute=0, second=0, microsecond=0)
-        .astimezone(UTC)
-        .isoformat()
-    )
 
 
 def step(db, refresh=True, client=None, stop=None):
@@ -236,22 +290,10 @@ def _step(db, refresh, client, stop):
     policy = db.rows("SELECT enabled FROM crm_policies WHERE account_id=?", (account,))
     if not policy or not policy[0]["enabled"] or not secret("DEEPSEEK_API_KEY"):
         return False
-    budget = budget_state(db)
-    # A new day or changed budget wakes budget-paused jobs, without clearing usage.
-    stamp = stable(budget["day"], budget["limit"])
     with db.tx() as c:
-        if state["budget_stamp"] != stamp:
-            c.execute(
-                "UPDATE workspace_queue SET available_at=? WHERE account_id=? AND status='paused' AND error='blocked_budget'",
-                (now(), account),
-            )
-            c.execute(
-                "UPDATE workspace_automation SET budget_stamp=? WHERE account_id=?",
-                (stamp, account),
-            )
         # The file lock proves no previous queue worker still owns these rows.
         c.execute(
-            "UPDATE workspace_queue SET status='queued',available_at=? WHERE account_id=? AND status='running'",
+            "UPDATE workspace_queue SET status='queued',available_at=? WHERE account_id=? AND status='running' AND user_paused=0",
             (now(), account),
         )
     if state.get("gate_error") and (
@@ -260,7 +302,7 @@ def _step(db, refresh, client, stop):
         return False
     with db.tx() as c:
         row = c.execute(
-            "SELECT * FROM workspace_queue WHERE account_id=? AND status IN ('queued','paused') AND available_at<=? ORDER BY priority,CASE WHEN status='paused' THEN 0 ELSE 1 END,available_at,source_id LIMIT 1",
+            "SELECT * FROM workspace_queue WHERE account_id=? AND user_paused=0 AND status IN ('queued','paused') AND available_at<=? ORDER BY priority,CASE WHEN status='paused' THEN 0 ELSE 1 END,available_at,source_id LIMIT 1",
             (account, now()),
         ).fetchone()
         if not row:
@@ -280,11 +322,7 @@ def _step(db, refresh, client, stop):
         result = run(db, item["source_id"], client, should_stop=should_stop)
         if result.get("paused"):
             status, error = "paused", result["reason"]
-            available = (
-                _next_day()
-                if error == "blocked_budget"
-                else (datetime.now(UTC) + timedelta(seconds=10)).isoformat()
-            )
+            available = (datetime.now(UTC) + timedelta(seconds=10)).isoformat()
         elif (
             snapshot(db, item["source_id"], False)
             != json.loads(raw(db, item["source_id"])["body"])["source_revision"]
@@ -327,8 +365,8 @@ def _step(db, refresh, client, stop):
                 gate_error = error
     with db.tx() as c:
         # A source exclusion or new desired revision wins over this old slice.
-        c.execute(
-            "UPDATE workspace_queue SET status=?,attempts=?,error=?,available_at=?,updated_at=? WHERE account_id=? AND source_id=? AND status='running' AND input_revision=?",
+        updated = c.execute(
+            "UPDATE workspace_queue SET status=?,attempts=?,error=?,available_at=?,updated_at=? WHERE account_id=? AND source_id=? AND status='running' AND input_revision=? AND control_version=? AND user_paused=0",
             (
                 status,
                 attempts,
@@ -338,9 +376,10 @@ def _step(db, refresh, client, stop):
                 account,
                 item["source_id"],
                 item["input_revision"],
+                item["control_version"],
             ),
         )
-        if gate_error:
+        if gate_error and updated.rowcount:
             c.execute(
                 "UPDATE workspace_automation SET gate_error=?,gate_until=?,updated_at=? WHERE account_id=?",
                 (gate_error, gate_until, now(), account),

@@ -300,6 +300,62 @@ if __name__ == "__main__":
         )
         return {"ok": True}
 
+    @app.post("/__test__/progress-fixture")
+    def progress_fixture():
+        from wechat_agent.db import now
+        from wechat_agent.workspace import queue
+
+        configure(db, True)
+        with db.tx() as c:
+            c.execute(
+                "INSERT OR IGNORE INTO actor_exclusions VALUES('work','merchant',?)",
+                (now(),),
+            )
+        for n in range(43):
+            ident = f"progress-{n:02d}"
+            allow_conversation(
+                db,
+                "fixture",
+                "work",
+                ident,
+                f"客户{n:02d}",
+                "private",
+                None,
+                None,
+                True,
+                followup_source=True,
+            )
+            ingest(
+                db,
+                [
+                    {
+                        "source": "fixture",
+                        "account_id": "work",
+                        "conversation_id": ident,
+                        "conversation_type": "private",
+                        "source_id": f"progress-message-{n}",
+                        "sender_id": ident,
+                        "direction": "incoming",
+                        "event_time": now(),
+                        "message_type": "text",
+                        "text": "下周英国3方货，请确认报价。",
+                    }
+                ],
+            )
+            with db.tx() as c:
+                c.execute(
+                    "INSERT INTO identity_metadata VALUES('work',?,?,?,'',?)",
+                    (ident, f"客户{n:02d}", f"客户{n:02d}", now()),
+                )
+        queue.reconcile(db)
+        with db.tx() as c:
+            for n in range(43):
+                c.execute(
+                    "UPDATE workspace_queue SET updated_at=? WHERE source_id=?",
+                    (f"2026-11-01T10:00:{n:02d}+00:00", f"progress-{n:02d}"),
+                )
+        return {"ok": True}
+
     @app.post("/__test__/advance-queue")
     def advance_queue():
         from wechat_agent.workspace.queue import step

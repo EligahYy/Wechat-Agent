@@ -188,6 +188,29 @@ def create_app(settings=None, source_factory=None, background=False):
             (db.settings.source_account,),
         )
 
+    @app.get("/api/workspace/progress")
+    def workspace_progress(page: int = 1):
+        from .workspace.queue import progress
+
+        return progress(db, page)
+
+    @app.post("/api/workspace/progress/control")
+    async def workspace_progress_control(request: Request):
+        from .workspace.queue import control, settings
+
+        body = await request.json()
+        if not isinstance(body.get("source_id"), str):
+            raise ValueError("workspace_invalid_identity")
+        result = await run_in_threadpool(
+            control, db, body["source_id"], body.get("action")
+        )
+        result["automatic"] = bool(
+            background
+            and db.settings.analysis_mode == "workspace"
+            and settings(db)["enabled"]
+        )
+        return result
+
     @app.get("/api/workspace/sources")
     def workspace_sources(
         source_id: str, page: int = 1, order: str = "oldest", q: str = ""
@@ -321,12 +344,17 @@ def create_app(settings=None, source_factory=None, background=False):
     @app.post("/api/workspace/analyze")
     async def workspace_analyze(request: Request):
         from .workspace.agent import run
+        from .workspace.queue import reconcile
 
         body = await request.json()
         source_id = body.get("source_id")
         if not isinstance(source_id, str) or not 0 < len(source_id) <= 200:
             raise ValueError("workspace_invalid_identity")
-        return await run_in_threadpool(run, db, source_id)
+        result = await run_in_threadpool(run, db, source_id)
+        if not result.get("paused"):
+            # Cached manual results also finish the queued customer job.
+            await run_in_threadpool(reconcile, db)
+        return result
 
     @app.post("/api/workspace/command")
     async def workspace_command(request: Request):

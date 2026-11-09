@@ -6,6 +6,7 @@ from ..db import dumps, now
 from .quality import ENGINE_VERSION
 from .schema import FactBook
 from .store import reference, stable
+from .transport import FactbookError
 
 EXTRACT = """按客户归集资料。输入是同一相关会话按时间排列的完整分片，保留上下文、疑问、回答、报价、货品、时间、承诺、订单和运输进展。不要以价值判断过滤，也不要只提待办。群里其他人的事实保留subject=other或unclear，不能都归给CUSTOMER。
 区分问题/计划/实际状态；客户问没发出去不代表未发货，后续发出去了/已发车/已出境是实际已走货，系统出库可能滞后。订单号原样保留。媒体占位只记内容未知，不能猜图。
@@ -73,6 +74,7 @@ def prepare(db, source_id, context, session):
     progress(db, source_id, fingerprint, total, 0, len(evidence), 0)
 
     def packet(kind, payload, prompt):
+        session.ensure_active()
         key = stable(
             ENGINE_VERSION,
             db.settings.model,
@@ -84,17 +86,31 @@ def prepare(db, source_id, context, session):
         saved = db.rows("SELECT body FROM workspace_packets WHERE cache_key=?", (key,))
         if saved:
             return json.loads(saved[0]["body"])
-        book = session.factbook(prompt, payload)
+        try:
+            book = session.factbook(prompt, payload)
+            body = book.model_dump()
+        except FactbookError:
+            field = "messages" if kind == "extract" else "facts"
+            items = payload[field]
+            if len(items) < 2:
+                raise
+            # Split only the failing packet. Validated children survive pauses and
+            # retries; the original archive and every extracted packet stay intact.
+            middle = len(items) // 2
+            children = [
+                packet(kind, payload | {field: part}, prompt)
+                for part in (items[:middle], items[middle:])
+            ]
+            body = {"facts": [f for child in children for f in child["facts"]]}
         # Hard checks only for invented source refs; no numeric/term deletion.
         allowed = {m["ref"] for m in payload.get("messages", [])} or {
             r for f in payload.get("facts", []) for r in f["evidence"]
         }
-        for fact in book.facts:
-            if any(r not in allowed for r in fact.evidence):
+        for fact in body["facts"]:
+            if any(r not in allowed for r in fact["evidence"]):
                 raise ValueError("workspace_unknown_evidence")
-        if not book.facts and payload.get("messages"):
+        if not body["facts"] and (payload.get("messages") or payload.get("facts")):
             raise ValueError("workspace_empty_factbook")
-        body = book.model_dump()
         refs = [reference(evidence[r]) for r in sorted(allowed)]
         with db.tx() as c:
             c.execute(
@@ -135,10 +151,14 @@ def prepare(db, source_id, context, session):
             phase="merge",
         )
         merged = []
-        for part in groups(facts, limit=20000, count=100):
+        # Leave ample output room for evidence and order identifiers. A hundred
+        # verbose facts previously overflowed the default 4000-token response.
+        for part in groups(facts, limit=6000, count=16):
             merged.extend(
                 packet(
-                    "merge", {"phase": "merge", "level": level, "facts": part}, MERGE
+                    "merge",
+                    {"phase": "merge", "format": 2, "level": level, "facts": part},
+                    MERGE,
                 )["facts"]
             )
         if len(dumps(merged)) >= len(dumps(facts)):

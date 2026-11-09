@@ -1,4 +1,4 @@
-"""Evidence-bound, budgeted text drafts. Generating a draft never sends it."""
+"""Evidence-bound text drafts with usage tracking; generating never sends them."""
 
 import fcntl
 import json
