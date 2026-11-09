@@ -74,12 +74,17 @@ aside {
   position: fixed;
   inset: 0 auto 0 0;
   width: 224px;
-  padding: 34px 20px;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 34px 20px 26px;
   border-right: 1px solid var(--line);
   background: var(--glass);
   backdrop-filter: blur(20px);
 }
 .brand {
+  flex-shrink: 0;
   font-size: 16px;
   font-weight: 650;
   line-height: 1.5;
@@ -94,6 +99,11 @@ aside {
 }
 nav {
   display: grid;
+  flex: 1;
+  min-height: 0;
+  align-content: start;
+  overflow-y: auto;
+  overflow-x: hidden;
   gap: 6px;
 }
 nav button {
@@ -118,12 +128,12 @@ svg {
   stroke-width: 1.6;
   flex-shrink: 0;
 }
-.foot {
-  position: absolute;
-  bottom: 26px;
+.sidebar-footer {
+  flex-shrink: 0;
+  padding: 18px 12px 0;
   font-size: 12px;
+  line-height: 20px;
   color: var(--muted);
-  padding: 12px;
 }
 main {
   margin-left: 224px;
@@ -460,13 +470,16 @@ a {
     position: sticky;
     top: 0;
     width: auto;
+    height: auto;
+    display: block;
+    overflow: visible;
     padding: 10px 16px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
     z-index: 2;
   }
   .brand,
-  .foot {
+  .sidebar-footer {
     display: none;
   }
   nav {
@@ -553,10 +566,6 @@ select {
 }
 .error {
   color: #b44224;
-}
-.sidebar-link {
-  display: block;
-  margin: 24px 12px;
 }
 
 .candidate-search {
@@ -907,9 +916,6 @@ summary {
 }
 
 @media (max-width: 760px) {
-  aside > .sidebar-link {
-    display: none;
-  }
   nav {
     scrollbar-width: none;
   }
