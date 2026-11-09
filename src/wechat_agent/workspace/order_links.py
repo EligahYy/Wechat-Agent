@@ -12,20 +12,21 @@ def orders(text):
     )
 
 
-def linked_keys(keys, evidence):
+def link_index(evidence):
+    index = {}
+    for ref, m in evidence.items():
+        if m["anchor"]:
+            for code in orders(m["text"]):
+                index.setdefault((m["conversation_id"], code), set()).add(ref)
+    return index
+
+
+def linked_keys(keys, evidence, index=None):
+    index = link_index(evidence) if index is None else index
     result = set(keys)
     for key in keys:
         message = evidence.get(key)
-        if not message:
-            continue
-        codes = orders(message["text"])
-        if not codes:
-            continue
-        for ref, anchor in evidence.items():
-            if (
-                anchor["anchor"]
-                and anchor["conversation_id"] == message["conversation_id"]
-                and codes & orders(anchor["text"])
-            ):
-                result.add(ref)
+        if message:
+            for code in orders(message["text"]):
+                result.update(index.get((message["conversation_id"], code), ()))
     return sorted(result)

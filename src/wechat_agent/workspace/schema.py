@@ -58,3 +58,22 @@ class Turn(Strict):
 class Review(Strict):
     proposal: Proposal
     checked: Literal[True]
+
+
+class Fact(Item):
+    kind: Literal[
+        "identity",
+        "need",
+        "quote",
+        "shipment",
+        "commitment",
+        "reply",
+        "context",
+        "uncertainty",
+    ]
+    order_id: str | None = Field(default=None, max_length=100)
+    subject: Literal["customer", "other", "unclear"] = "unclear"
+
+
+class FactBook(Strict):
+    facts: list[Fact] = Field(max_length=80)

@@ -63,14 +63,14 @@ def raw(db, source_id):
 
 
 def valid_refs(db, refs):
-    allowed = {v["id"] for v in allowed_chats(db)}
-    return bool(refs) and all(
-        db.rows(
-            "SELECT 1 FROM messages WHERE id=? AND revision=? AND conversation_id IN (SELECT value FROM json_each(?))",
-            (r["id"], r["revision"], dumps(list(allowed))),
-        )
-        for r in refs
-    )
+    allowed = [v["id"] for v in allowed_chats(db)]
+    if not refs:
+        return False
+    count = db.rows(
+        "SELECT COUNT(*) n FROM json_each(?) r JOIN messages m ON m.id=json_extract(r.value,'$.id') AND m.revision=json_extract(r.value,'$.revision') WHERE m.conversation_id IN (SELECT value FROM json_each(?))",
+        (dumps(refs), dumps(allowed)),
+    )[0]["n"]
+    return count == len(refs)
 
 
 def read(db, source_id):
@@ -175,6 +175,9 @@ def commit(db, source_id, proposal, context, fingerprint):
                 continue
             body["notes"][stable(note.text)] = {
                 "text": note.text,
+                "quality_warnings": context.get("field_warnings", {}).get(
+                    note.text, []
+                ),
                 "evidence": refs(note.evidence),
             }
         new_batches = {}
@@ -202,6 +205,9 @@ def commit(db, source_id, proposal, context, fingerprint):
                 "text": old["text"] if old and old.get("text_locked") else item.text,
                 "text_locked": bool(old and old.get("text_locked")),
                 "stage": item.stage,
+                "quality_warnings": context.get("field_warnings", {}).get(
+                    item.text, []
+                ),
                 "event_time": when,
                 "evidence": evid,
             }
@@ -242,7 +248,7 @@ def commit(db, source_id, proposal, context, fingerprint):
                 continue
             if item.due_date:
                 date.fromisoformat(item.due_date)
-            reasons = []
+            reasons = list(context.get("field_warnings", {}).get(item.text, []))
             action_state = item.state
             if item.state in {"open", "waiting"}:
                 if not context["complete"]:
@@ -325,6 +331,20 @@ def commit(db, source_id, proposal, context, fingerprint):
                 },
             )
         body["quality_issues"] = context.get("quality_issues", [])
+        body["unattributed"] = [
+            {
+                "section": entry["section"],
+                "code": entry["code"],
+                "text": entry["item"]["text"],
+                "evidence": [
+                    {"id": evidence[k]["id"], "revision": evidence[k]["revision"]}
+                    for k in entry["item"]["evidence"]
+                    if k in evidence
+                ],
+            }
+            for entry in context.get("unattributed", [])
+        ]
+
         if post_shipment_only:
             for action in body["actions"].values():
                 if action["state"] in {
@@ -346,6 +366,10 @@ def commit(db, source_id, proposal, context, fingerprint):
             "complete_context": context["complete"],
             "messages": len(evidence),
             "gaps": context.get("gaps", []),
+            "source_messages": context.get("source_messages", len(evidence)),
+            "value_filtered": 0,
+            "pages": context.get("pages", 0),
+            "processed_messages": context.get("processed_messages", len(evidence)),
         }
         read_set = (
             {r["id"]: r for r in json.loads(previous["read_set"])} if usable else {}

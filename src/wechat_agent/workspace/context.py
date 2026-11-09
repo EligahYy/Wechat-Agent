@@ -1,4 +1,4 @@
-"""Bounded cross-conversation evidence retrieval without legacy model memory."""
+"""Full authorized customer corpus; originals remain separate from summaries."""
 
 import json
 import re
@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from ..db import dumps
-from .order_links import linked_keys
+from .order_links import link_index, linked_keys
 from .quality import ENGINE_VERSION
 from .store import allowed_chats, eligible, legacy_paused, raw, stable, valid_refs
 
@@ -57,6 +57,7 @@ def build(db, source_id, search=None):
     selected = {}
     complete = True
     gaps = set()
+    source_messages = 0
     for chat in related_chats(db, source_id):
         if chat["kind"] == "private" and chat["source_id"] != source_id:
             continue
@@ -66,13 +67,11 @@ def build(db, source_id, search=None):
         ):
             continue
         rows = db.rows(
-            "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time DESC,id DESC LIMIT 501",
+            "SELECT * FROM messages WHERE conversation_id=? ORDER BY event_time DESC,id DESC",
             (chat["id"],),
         )
-        if len(rows) > 500:
-            complete = False
-            gaps.add("history_limit")
-        rows = list(reversed(rows[:500]))
+        source_messages += len(rows)
+        rows = list(reversed(rows))
         anchors = [
             i
             for i, m in enumerate(rows)
@@ -84,7 +83,6 @@ def build(db, source_id, search=None):
             if m["type"] != "text" or m["completeness"] != "full":
                 complete = False
                 gaps.add("media_or_partial")
-                continue
             if search and search not in m["text"]:
                 continue
             selected[m["id"]] = m | {
@@ -93,31 +91,7 @@ def build(db, source_id, search=None):
                 .astimezone(UTC)
                 .isoformat(),
             }
-    rows = sorted(
-        selected.values(), key=lambda m: (m["event_time"], m["id"]), reverse=True
-    )
-    kept = []
-    size = 0
-    for m in rows:
-        if len(kept) >= 80 or size + len(m["text"]) > 16000:
-            complete = False
-            gaps.add("context_limit")
-            break
-        kept.append(m)
-        size += len(m["text"])
-    # Keep the customer-side order question alongside a recent tracking reply.
-    source_map = {m["id"]: m for m in selected.values()}
-    kept_ids = {m["id"] for m in kept}
-    for ident in linked_keys(list(kept_ids), source_map):
-        if ident not in kept_ids:
-            m = source_map[ident]
-            if len(kept) < 100 and size + len(m["text"]) <= 20000:
-                kept.append(m)
-                kept_ids.add(ident)
-                size += len(m["text"])
-            else:
-                complete = False
-                gaps.add("order_link_limit")
+    kept = sorted(selected.values(), key=lambda m: (m["event_time"], m["id"]))
     metadata = db.rows(
         "SELECT remark,nickname,alias FROM identity_metadata WHERE account_id=?",
         (db.settings.source_account,),
@@ -127,7 +101,13 @@ def build(db, source_id, search=None):
 
     def redact(value):
         for name in sorted(replacements, key=len, reverse=True):
-            value = value.replace(name, "[名称]")
+            # Avoid replacing a short nickname inside order/warehouse codes.
+            if re.fullmatch(r"[A-Za-z0-9_.-]+", name) or len(name) == 1:
+                value = re.sub(
+                    r"(?<![\w])" + re.escape(name) + r"(?![\w])", "[名称]", value
+                )
+            else:
+                value = value.replace(name, "[名称]")
         value = re.sub(
             r"https?://\S+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|(?<!\d)1[3-9]\d{9}(?!\d)|wxid_[\w-]+",
             "[隐去]",
@@ -135,7 +115,8 @@ def build(db, source_id, search=None):
         )
         return value
 
-    evidence = {stable("evidence", m["id"], m["revision"]): m for m in reversed(kept)}
+    evidence = {stable("evidence", m["id"], m["revision"]): m for m in kept}
+    order_index = link_index(evidence)
     document = raw(db, source_id)
     memory = (
         json.loads(document["body"])
@@ -169,7 +150,11 @@ def build(db, source_id, search=None):
             {
                 "ref": ref,
                 "customer_related": bool(m["anchor"]),
-                "customer_links": [k for k in linked_keys([ref], evidence) if k != ref],
+                "content_type": m["type"],
+                "completeness": m["completeness"],
+                "customer_links": [
+                    k for k in linked_keys([ref], evidence, order_index) if k != ref
+                ],
                 "actor": "SELF"
                 if m["direction"] == "outgoing"
                 else "CUSTOMER"
@@ -186,4 +171,5 @@ def build(db, source_id, search=None):
         "evidence": evidence,
         "complete": complete,
         "gaps": sorted(gaps),
+        "source_messages": source_messages,
     }

@@ -2,6 +2,7 @@ import json
 
 import httpx
 import pytest
+from model_packets import packet_response
 
 from wechat_agent.crm import configure
 from wechat_agent.db import dumps
@@ -142,6 +143,9 @@ def test_agent_tool_loop_budget_and_completed_input_reuse(pilot):
     calls = []
 
     def respond(request):
+        packet = packet_response(request)
+        if packet is not None:
+            return packet
         payload = json.loads(json.loads(request.content)["messages"][1]["content"])
         calls.append(payload)
         if len(calls) == 1:
@@ -167,13 +171,16 @@ def test_agent_tool_loop_budget_and_completed_input_reuse(pilot):
         run(pilot, "merchant", client)
         assert run(pilot, "merchant", client)["cached"]
     assert len(calls) == 3
-    assert sum(r["actual"] for r in pilot.rows("SELECT * FROM usage")) == 300
+    assert sum(r["actual"] for r in pilot.rows("SELECT * FROM usage")) == 301
     assert "手机号" not in dumps(calls)
     assert read(pilot, "merchant")["version"] == 1
 
 
 def test_malformed_model_output_is_bounded_and_audited(pilot):
     def respond(request):
+        packet = packet_response(request)
+        if packet is not None:
+            return packet
         return httpx.Response(
             200,
             json={
@@ -307,6 +314,9 @@ def test_failed_response_replay_has_no_new_billing(pilot):
     calls = []
 
     def respond(request):
+        packet = packet_response(request)
+        if packet is not None:
+            return packet
         calls.append(1)
         return httpx.Response(
             200,
@@ -325,13 +335,16 @@ def test_failed_response_replay_has_no_new_billing(pilot):
             with pytest.raises(ValueError, match="workspace_model_schema"):
                 run(pilot, "merchant", client)
     assert len(calls) == 3
-    assert sum(r["actual"] for r in pilot.rows("SELECT * FROM usage")) == 15
+    assert sum(r["actual"] for r in pilot.rows("SELECT * FROM usage")) == 16
 
 
 def test_no_reentrant_model_spending(pilot):
     from wechat_agent.analysis import Blocked
 
     def respond(request):
+        packet = packet_response(request)
+        if packet is not None:
+            return packet
         with pytest.raises(Blocked, match="workspace_already_running"):
             run(pilot, "merchant")
         _, p = proposal(pilot)
@@ -368,7 +381,7 @@ def test_no_reentrant_model_spending(pilot):
         base_url="https://api.deepseek.com", transport=httpx.MockTransport(respond)
     ) as client:
         run(pilot, "merchant", client)
-    assert len(pilot.rows("SELECT * FROM usage")) == 2
+    assert len(pilot.rows("SELECT * FROM usage")) == 3
 
 
 def test_pilot_runtime_does_not_schedule_legacy_model(pilot, monkeypatch):
@@ -405,7 +418,7 @@ def test_v10_backup_keeps_archive_and_budget(pilot):
     with sqlite3.connect(backups[-1]) as c:
         assert c.execute("PRAGMA user_version").fetchone()[0] == 9
         assert c.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == count
-    assert migrated.rows("PRAGMA user_version")[0]["user_version"] == 10
+    assert migrated.rows("PRAGMA user_version")[0]["user_version"] == 11
     assert len(migrated.rows("SELECT * FROM messages")) == count
 
 
@@ -568,6 +581,9 @@ def test_failed_transport_review_is_isolated_with_bounded_calls(pilot):
     calls = []
 
     def respond(request):
+        packet = packet_response(request)
+        if packet is not None:
+            return packet
         payload = json.loads(json.loads(request.content)["messages"][1]["content"])
         calls.append(payload)
         _, p = proposal(pilot)
@@ -596,7 +612,8 @@ def test_failed_transport_review_is_isolated_with_bounded_calls(pilot):
     assert len(d["body"]["notes"]) == 1
     assert all(a["state"] == "proposed" for a in d["body"]["actions"].values())
     assert d["body"]["batches"]
-    assert "汽运" not in dumps(d["body"])
+    assert "汽运" not in dumps(d["body"]["notes"])
+    assert d["body"]["unattributed"][0]["text"] == "询问汽运"
 
 
 def test_operating_rule_not_a_confirmation_and_obligation_survives_bad_note(pilot):
@@ -680,6 +697,9 @@ def test_agent_repairs_missing_customer_anchor(pilot, record):
     calls = []
 
     def respond(request):
+        packet = packet_response(request)
+        if packet is not None:
+            return packet
         payload = json.loads(json.loads(request.content)["messages"][1]["content"])
         calls.append(payload)
         ctx, p = proposal(pilot)
@@ -756,3 +776,252 @@ def test_order_tracking_reply_links_to_customer_without_fabricating_anchor(
     ctx["evidence"][ref]["conversation_id"] = "another-group"
     with pytest.raises(ValueError, match="customer_anchor_required"):
         validate_proposal(p, ctx)
+
+
+def test_customer_history_all_packets_resume_before_summary(pilot, record, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from wechat_agent.workspace import agent
+    from wechat_agent.workspace.transport import ModelSession
+    from wechat_agent.workspace.views import sources
+
+    # The real shipment is older than the previous 500-row/80-row windows.
+    ingest(
+        pilot,
+        [
+            record
+            | {
+                "source_id": "order-old",
+                "sender_id": "merchant",
+                "text": "ZTH20261103这个又没发出去吗",
+            },
+            record
+            | {
+                "source_id": "shipment-old",
+                "sender_id": "provider",
+                "text": "ZTH20261103 发出去了，系统今天才做出库。11-05号已发车，已出境",
+            },
+        ],
+    )
+    base = datetime(2026, 11, 5, tzinfo=UTC)
+    ingest(
+        pilot,
+        [
+            record
+            | {
+                "source_id": f"later-{i}",
+                "sender_id": "provider",
+                "event_time": (base + timedelta(minutes=i)).isoformat(),
+                "text": f"后续群聊上下文 {i}",
+            }
+            for i in range(510)
+        ],
+    )
+    expected = {r["id"] for r in pilot.rows("SELECT id FROM messages")}
+    all_pages, paid = set(), []
+
+    def respond(request):
+        payload = json.loads(json.loads(request.content)["messages"][1]["content"])
+        paid.append(payload.get("phase"))
+        if payload.get("phase") == "extract":
+            all_pages.update(m["ref"] for m in payload["messages"])
+        packet = packet_response(request)
+        if packet is not None:
+            return packet
+        assert "已发车" in dumps(payload["facts"])
+        ctx, p = proposal(pilot)
+        tracking = next(
+            k for k, m in ctx["evidence"].items() if m["source_id"] == "shipment-old"
+        )
+        question = next(
+            k for k, m in ctx["evidence"].items() if m["source_id"] == "order-old"
+        )
+        p.evidence = [question]
+        p.batches[0].origin = tracking
+        p.batches[0].evidence = [tracking]
+        p.batches[0].text = "该订单已发车、已出境"
+        p.batches[0].stage = "reported_shipped"
+        p.notes = []
+        p.actions = []
+        body = {"proposal": p.model_dump()}
+        if "draft" in payload:
+            body["checked"] = True
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": dumps(body)}}
+                ],
+                "usage": {"total_tokens": 1},
+            },
+        )
+
+    # Pause after two new paid requests, then continue from validated packets.
+    monkeypatch.setattr(
+        agent, "ModelSession", lambda *args: ModelSession(*args, limit=2)
+    )
+    with httpx.Client(
+        base_url="https://api.deepseek.com", transport=httpx.MockTransport(respond)
+    ) as client:
+        result = run(pilot, "merchant", client)
+        assert result["paused"]
+        assert not read(pilot, "merchant")
+        for _ in range(20):
+            result = run(pilot, "merchant", client)
+            if not result.get("paused"):
+                break
+        assert not result.get("paused")
+        before = len(paid)
+        assert run(pilot, "merchant", client)["cached"]
+        assert len(paid) == before
+    assert len(all_pages) == len(expected)
+    d = read(pilot, "merchant")
+    assert d["body"]["coverage"]["processed_messages"] == len(expected)
+    assert d["body"]["coverage"]["value_filtered"] == 0
+    assert next(iter(d["body"]["batches"].values()))["stage"] == "reported_shipped"
+    assert sources(pilot, "merchant")["total"] == len(expected)
+    assert pilot.rows("SELECT status FROM workspace_scans")[0]["status"] == "succeeded"
+
+
+def test_numeric_difference_retains_shipment_fact(pilot, record):
+    from wechat_agent.workspace.quality import validate_proposal
+
+    ingest(
+        pilot,
+        [
+            record
+            | {
+                "source_id": "dated-shipment",
+                "sender_id": "merchant",
+                "text": "ZTH20261103 11-05号已发车，已出境",
+            }
+        ],
+    )
+    ctx, p = proposal(pilot)
+    key = next(
+        k for k, v in ctx["evidence"].items() if v["source_id"] == "dated-shipment"
+    )
+    p.notes = []
+    p.actions = []
+    p.batches[0].origin = key
+    p.batches[0].evidence = [key]
+    p.batches[0].text = "2026年11月5日已发车、已出境"
+    p.batches[0].stage = "reported_shipped"
+    validate_proposal(p, ctx)
+    d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    b = next(iter(d["body"]["batches"].values()))
+    assert b["stage"] == "reported_shipped"
+    assert b["quality_warnings"] == ["numbers_need_review"]
+    assert not d["body"]["quality_issues"]
+
+
+def test_media_and_partial_source_kept_in_customer_corpus(pilot, record):
+    ingest(
+        pilot,
+        [record | {"source_id": "pic", "message_type": "3", "text": "[图片未识别]"}],
+    )
+    ctx = build(pilot, "merchant")
+    assert len(ctx["evidence"]) == 2
+    assert any(m["content_type"] == "3" for m in ctx["payload"]["messages"])
+    assert not ctx["complete"]
+    assert ctx["source_messages"] == 2
+
+
+def test_old_shipment_does_not_hide_independent_new_demand(pilot, record):
+    ctx, p = proposal(pilot)
+    p.batches[0].stage = "reported_shipped"
+    old = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    ingest(
+        pilot,
+        [
+            record
+            | {
+                "source_id": "new-demand",
+                "sender_id": "merchant",
+                "text": "下一批英国货，请我方确认报价",
+            }
+        ],
+    )
+    ctx, p = proposal(pilot)
+    key = next(k for k, m in ctx["evidence"].items() if m["source_id"] == "new-demand")
+    p.batches[0].origin = key
+    p.batches[0].evidence = [key]
+    p.actions[0].origin = key
+    p.actions[0].evidence = [key]
+    p.actions[0].batch = key
+    new = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
+    assert len(new["body"]["batches"]) == 2
+    assert next(iter(old["body"]["batches"])) in new["body"]["batches"]
+    assert any(a["state"] == "open" for a in new["body"]["actions"].values())
+
+
+def test_packet_and_source_inspection_respects_exclusion(pilot):
+    from wechat_agent.workspace.views import packets, sources
+
+    def respond(request):
+        packet = packet_response(request)
+        if packet is not None:
+            return packet
+        _, p = proposal(pilot)
+        payload = json.loads(json.loads(request.content)["messages"][1]["content"])
+        body = {"proposal": p.model_dump()}
+        if "draft" in payload:
+            body["checked"] = True
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"finish_reason": "stop", "message": {"content": dumps(body)}}
+                ],
+                "usage": {"total_tokens": 1},
+            },
+        )
+
+    with httpx.Client(
+        base_url="https://api.deepseek.com", transport=httpx.MockTransport(respond)
+    ) as client:
+        run(pilot, "merchant", client)
+    packet = packets(pilot, "merchant")["items"][0]
+    assert (
+        packet["body"]["facts"][0]["evidence"][0]["id"] == packet["evidence"][0]["id"]
+    )
+    assert sources(pilot, "merchant")["total"] == 1
+    with pilot.tx() as c:
+        c.execute("INSERT INTO actor_exclusions VALUES('account','merchant','同事')")
+    with pytest.raises(ValueError, match="excluded"):
+        sources(pilot, "merchant")
+    with pytest.raises(ValueError, match="excluded"):
+        packets(pilot, "merchant")
+
+
+def test_v11_migration_backs_up_existing_v10(pilot):
+    import sqlite3
+
+    from wechat_agent.db import DB
+
+    with pilot.tx() as c:
+        c.execute("DROP TABLE workspace_scans")
+        c.execute("DROP TABLE workspace_packets")
+        c.execute("PRAGMA user_version=10")
+    DB(pilot.settings)
+    backup = list(pilot.settings.data_dir.glob("pre-v11-*.sqlite3"))[-1]
+    with sqlite3.connect(backup) as c:
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert c.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
+    assert pilot.rows("PRAGMA user_version")[0]["user_version"] == 11
+
+
+def test_small_nickname_does_not_destroy_business_code(pilot, record):
+    with pilot.tx() as c:
+        c.execute(
+            "INSERT INTO identity_metadata VALUES('account','other','S','S','', '2026-11-09')"
+        )
+    ingest(
+        pilot,
+        [
+            record
+            | {"source_id": "code", "sender_id": "merchant", "text": "ZTHS1026 已出境"}
+        ],
+    )
+    ctx = build(pilot, "merchant")
+    assert any("ZTHS1026" in m["text"] for m in ctx["payload"]["messages"])

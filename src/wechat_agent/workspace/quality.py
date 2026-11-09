@@ -1,10 +1,11 @@
 """Grounded output checks. Source chat text is never rewritten."""
 
 import re
+from decimal import Decimal
 
 from .order_links import linked_keys
 
-ENGINE_VERSION = "workspace-v8-order-links"
+ENGINE_VERSION = "workspace-v10-complete-customer"
 MODES = ("海运", "卡航", "班列")
 
 
@@ -43,12 +44,22 @@ def validate_proposal(proposal, context):
         if any(mode in rendered and mode not in source for mode in MODES):
             raise ValueError("workspace_transport_evidence")
         # Prevent inventing quantities, postal/warehouse codes and quoted prices.
-        numbers = re.findall(r"[0-9]+(?:\.[0-9]+)?", rendered.replace(",", ""))
-        if any(
-            n not in re.findall(r"[0-9]+(?:\.[0-9]+)?", source.replace(",", ""))
-            for n in numbers
-        ):
-            raise ValueError("workspace_number_evidence")
+        linked_source = "\n".join(
+            evidence[k]["text"] for k in linked_keys(item.evidence, evidence)
+        )
+
+        def numbers(value):
+            return {
+                Decimal(n)
+                for n in re.findall(r"[0-9]+(?:\.[0-9]+)?", value.replace(",", ""))
+            }
+
+        if numbers(rendered) - numbers(linked_source):
+            # Text-level numeric mismatch cannot invalidate an independently
+            # evidenced shipment. Keep the claim visibly provisional.
+            context.setdefault("field_warnings", {})[item.text] = [
+                "numbers_need_review"
+            ]
         if re.search(r"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", rendered):
             raise ValueError("workspace_internal_alias")
     return proposal
@@ -80,14 +91,23 @@ def isolate_invalid_items(proposal, context):
                 }:
                     raise
                 issues.append({"section": section, "index": index, "code": str(exc)})
+                context.setdefault("unattributed", []).append(
+                    {"section": section, "code": str(exc), "item": item.model_dump()}
+                )
             else:
                 kept.append(item)
         setattr(safe, section, kept)
     if issues:
         # Partial extraction cannot establish batch/action completeness or role.
         if any(i["section"] == "batches" for i in issues):
-            safe.batches = []
-            safe.actions = []
+            removed = {
+                v
+                for entry in context.get("unattributed", [])
+                if entry["section"] == "batches"
+                for v in (entry["item"].get("ref"), entry["item"].get("origin"))
+                if v
+            }
+            safe.actions = [a for a in safe.actions if a.batch not in removed]
         # A bad note does not invalidate independently grounded obligations.
 
         context["quality_issues"] = issues

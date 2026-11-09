@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 10:
+            if version > 11:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -199,6 +199,23 @@ class DB:
                 CREATE TABLE IF NOT EXISTS workspace_versions(id TEXT PRIMARY KEY, document_id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(document_id,version));
                 CREATE TABLE IF NOT EXISTS workspace_runs(id TEXT PRIMARY KEY, account_id TEXT NOT NULL, source_id TEXT NOT NULL, status TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL);
                 PRAGMA user_version=10; COMMIT;""")
+            if version < 11:
+                if version:
+                    target = settings.data_dir / (
+                        "pre-v11-"
+                        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                        + ".sqlite3"
+                    )
+                    backup = sqlite3.connect(target)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    target.chmod(0o600)
+                connection.executescript("""BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS workspace_scans(account_id TEXT NOT NULL,source_id TEXT NOT NULL,fingerprint TEXT NOT NULL,status TEXT NOT NULL,phase TEXT NOT NULL,total_pages INTEGER NOT NULL,completed_pages INTEGER NOT NULL,source_messages INTEGER NOT NULL,processed_messages INTEGER NOT NULL,error TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(account_id,source_id));
+                CREATE TABLE IF NOT EXISTS workspace_packets(cache_key TEXT PRIMARY KEY,account_id TEXT NOT NULL,source_id TEXT NOT NULL,kind TEXT NOT NULL,read_set TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL);
+                PRAGMA user_version=11; COMMIT;""")
         finally:
             connection.close()
         self.path.chmod(0o600)

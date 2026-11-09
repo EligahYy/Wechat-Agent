@@ -48,11 +48,29 @@ const fs = require("fs");
   await page
     .getByText("分析完成。可在客户或待确认中查看；无业务依据时不会创建客户。")
     .waitFor();
+  await page
+    .getByText("分册 1 / 1 · 已整理 1 / 1 条 · 价值过滤 0 条")
+    .waitFor();
+  await page.screenshot({
+    path: "/tmp/workspace-corpus-progress.png",
+    fullPage: true,
+  });
   await page.getByRole("button", { name: "今日", exact: true }).click();
   await page.getByRole("button", { name: "查看档案" }).click();
   await page
     .locator(".insight-card")
     .filter({ hasText: "英国第一批" })
+    .waitFor();
+  await page
+    .getByRole("button", { name: "查看全部聊天记录", exact: true })
+    .click();
+  await page.getByText("全部相关会话共 1 条 · 第 1 页 · 每页 50 条").waitFor();
+  await page
+    .getByRole("button", { name: "查看已保存资料分册", exact: true })
+    .click();
+  await page
+    .locator("#packet-ledger")
+    .getByText("原始资料整理", { exact: true })
     .waitFor();
   await page.getByText("查看来源", { exact: true }).first().click();
   await page

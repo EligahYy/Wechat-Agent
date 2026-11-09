@@ -172,6 +172,25 @@ def create_app(settings=None, source_factory=None, background=False):
             (db.settings.source_account,),
         )
 
+    @app.get("/api/workspace/scans")
+    def workspace_scans():
+        return db.rows(
+            "SELECT s.source_id,s.status,s.phase,s.total_pages,s.completed_pages,s.source_messages,s.processed_messages,s.error,s.updated_at,COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),s.source_id) name FROM workspace_scans s LEFT JOIN identity_metadata i ON i.account_id=s.account_id AND i.source_id=s.source_id WHERE s.account_id=? AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=s.account_id AND e.source_id=s.source_id) ORDER BY s.updated_at DESC",
+            (db.settings.source_account,),
+        )
+
+    @app.get("/api/workspace/sources")
+    def workspace_sources(source_id: str, page: int = 1):
+        from .workspace.views import sources
+
+        return sources(db, source_id, page)
+
+    @app.get("/api/workspace/packets")
+    def workspace_packets(source_id: str, page: int = 1):
+        from .workspace.views import packets
+
+        return packets(db, source_id, page)
+
     @app.get("/api/workspace/candidates")
     def workspace_candidates(q: str = "", page: int = 1):
         from .workspace.views import candidates

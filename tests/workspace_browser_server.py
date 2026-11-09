@@ -7,6 +7,7 @@ from pathlib import Path
 
 import httpx
 import uvicorn
+from model_packets import packet_response
 
 from wechat_agent.config import Settings
 from wechat_agent.crm import configure
@@ -17,6 +18,9 @@ from wechat_agent.workspace import agent
 
 
 def fake_model(request):
+    packet = packet_response(request)
+    if packet is not None:
+        return packet
     content = json.loads(json.loads(request.content)["messages"][1]["content"])
     key = next(m["ref"] for m in content["messages"] if m["actor"] == "CUSTOMER")
     proposal = {
