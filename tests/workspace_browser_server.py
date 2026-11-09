@@ -111,6 +111,22 @@ if __name__ == "__main__":
         Settings(data_dir=Path(os.environ["WA_BROWSER_DATA_DIR"])),
         source_factory=source_factory,
     )
+
+    @app.middleware("http")
+    async def navigation_metadata(request, call_next):
+        response = await call_next(request)
+        if request.url.path in {
+            "/",
+            "/workspace",
+            "/workspace/",
+            "/legacy",
+            "/legacy/",
+        }:
+            response.headers["X-Test-Fetch-Site"] = request.headers.get(
+                "sec-fetch-site", "missing"
+            )
+        return response
+
     db = app.state.db
     assert not db.rows("SELECT 1 FROM messages LIMIT 1"), (
         "Use a fresh fixture directory"

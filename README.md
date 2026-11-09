@@ -2,7 +2,7 @@
 
 从个人工作微信的私信和群聊，整理商家资料、备货批次和有原文依据的下一步。使用本机 wx-cli 与 DeepSeek API，微信由用户人工发送。
 
-**当前 v0.11.1：完整客户资料、统一工作台与人工跟进闭环。** 自动队列、证据档案、批次判断、跟进记录、行动草稿、白名单和图片文字核对已接入。[交付范围与限制](docs/IMPLEMENTATION_STATUS.md)。
+**当前 v0.11.2：完整客户资料、统一工作台与人工跟进闭环。** 自动队列、证据档案、批次判断、跟进记录、行动草稿、白名单和图片文字核对已接入。[交付范围与限制](docs/IMPLEMENTATION_STATUS.md)。
 
 ## 更新和启动
 
@@ -47,4 +47,4 @@ inspect仅统计归档缺口，不调用模型。完整新装、已有密钥迁�
 - [UI规范](docs/UI_DESIGN.md) · [独立交互原型](docs/UI_PROTOTYPE.html)：目标交互，原型为虚构数据，不代表全部已接入。
 - [文档导航](docs/README.md)：历史说明和阅读入口。
 
-开发检查：`uv run pytest -q`、`uv run ruff check src tests`。新工作台浏览器测试使用独立目录、虚构聊天和模拟模型：`tests/workspace_browser_server.py`、`tests/browser/workspace.cjs`、`tests/browser/workspace-reviews.cjs`、`tests/browser/workspace-select.cjs`、`tests/browser/workspace-shell.cjs`（每套使用新的数据目录）。测试不会访问真实微信或DeepSeek，不代替真实业务样本验收。
+开发检查：`uv run pytest -q`、`uv run ruff check src tests`。新工作台浏览器测试使用独立目录、虚构聊天和模拟模型：`tests/workspace_browser_server.py`、`tests/browser/workspace.cjs`、`tests/browser/workspace-reviews.cjs`、`tests/browser/workspace-select.cjs`、`tests/browser/workspace-shell.cjs`、`tests/browser/workspace-entry.cjs`（每套使用新的数据目录）。测试不会访问真实微信或DeepSeek，不代替真实业务样本验收。

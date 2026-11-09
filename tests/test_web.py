@@ -203,3 +203,91 @@ def test_token_rotation_revokes_running_sessions(tmp_path):
     assert c.get("/api/state").status_code == 200
     assert (tmp_path / "session-token").stat().st_mode & 0o777 == 0o600
     assert not list(tmp_path.glob(".session-*"))
+
+
+def test_cross_site_navigation_supports_all_html_entries_and_reloads(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path))
+    c = TestClient(app)
+    navigation = {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+    }
+    paths = [
+        "/",
+        "/workspace?view=customers",
+        "/workspace?view=settings",
+        "/workspace/?view=scope",
+        "/legacy",
+        "/legacy/?page=settings",
+    ]
+    for path in paths:
+        response = c.get(path, headers=navigation)
+        assert response.status_code == 200
+        assert 'id="login"' in response.text
+        assert response.headers["cache-control"] == "no-store"
+        assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+        assert app.state.db.token not in response.text
+    assert c.post("/login", json={"token": app.state.db.token}).status_code == 200
+    for path in paths:
+        response = c.get(path, headers=navigation)
+        assert response.status_code == 200
+        assert 'id="login"' not in response.text
+        assert (
+            "/static/workspace.js"
+            if not path.startswith("/legacy")
+            else "/static/app.js"
+        ) in response.text
+    assert not app.state.db.rows("SELECT * FROM usage")
+    assert c.get("/api/workspace/documents", headers=navigation).status_code == 403
+    app.state.db.rotate_token()
+    assert 'id="login"' in c.get("/workspace?view=settings").text
+    assert c.get("/api/workspace/documents").status_code == 401
+
+
+def test_html_navigation_exception_rejects_embeds_fetches_api_and_mutations(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path))
+    c = TestClient(app)
+    h = {
+        "sec-fetch-site": "cross-site",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+    }
+    assert c.post("/login", json={"token": app.state.db.token}).status_code == 200
+    for path in ["/", "/workspace?view=customers", "/workspace/", "/legacy"]:
+        for changes in [
+            {"sec-fetch-dest": "iframe"},
+            {"sec-fetch-dest": "frame"},
+            {"sec-fetch-dest": "embed"},
+            {"sec-fetch-dest": "object"},
+            {"sec-fetch-dest": "empty"},
+            {"sec-fetch-mode": "cors"},
+            {"sec-fetch-mode": "no-cors"},
+            {"origin": "https://outside.invalid"},
+        ]:
+            assert c.get(path, headers=h | changes).status_code == 403
+        assert c.post(path, headers=h, json={}).status_code == 403
+    for path in [
+        "/api/state",
+        "/api/workspace/documents",
+        "/api/workspace/settings",
+        "/static/workspace.js",
+        "/workspace/not-an-entry",
+    ]:
+        assert c.get(path, headers=h).status_code == 403
+    assert (
+        c.post(
+            "/api/workspace/automation", headers=h, json={"enabled": True}
+        ).status_code
+        == 403
+    )
+    assert (
+        c.post("/login", headers=h, json={"token": app.state.db.token}).status_code
+        == 403
+    )
+    assert (
+        c.get("/workspace", headers=h | {"host": "outside.invalid"}).status_code == 400
+    )
+    assert (
+        c.post("/api/workspace/automation", json={"enabled": True}).status_code == 403
+    )

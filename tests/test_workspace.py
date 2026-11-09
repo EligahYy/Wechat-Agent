@@ -226,7 +226,7 @@ def test_api_auth_scope_and_version(pilot):
     ctx, p = proposal(pilot)
     d = commit(pilot, "merchant", p, ctx, snapshot(pilot, "merchant"))
     c = TestClient(create_app(pilot.settings))
-    assert c.get("/workspace").status_code == 401
+    assert 'id="login"' in c.get("/workspace").text
     h = {"Authorization": "Bearer " + pilot.token}
     assert c.get("/workspace", headers=h).status_code == 200
     assert (

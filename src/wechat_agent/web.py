@@ -25,6 +25,7 @@ from .ingestion import enqueue, ingest
 
 def create_app(settings=None, source_factory=None, background=False):
     db = DB(settings or Settings())
+    page_paths = {"/", "/workspace", "/workspace/", "/legacy", "/legacy/"}
 
     @asynccontextmanager
     async def lifespan(app):
@@ -66,11 +67,12 @@ def create_app(settings=None, source_factory=None, background=False):
         origin = request.headers.get("origin")
         if origin and origin != f"{request.url.scheme}://{request.headers.get('host')}":
             return JSONResponse({"error": "invalid_origin"}, 403)
-        # A user following an external link may legitimately navigate to the
-        # entry page. Never extend this exception to API reads or mutations.
+        # Top-level navigation is valid for each HTML entry, including history
+        # URLs restored/reloaded after opening the app from an external link.
+        # Never extend this exception to API reads, embeds or mutations.
         entry_navigation = (
             request.method == "GET"
-            and request.url.path == "/"
+            and request.url.path in page_paths
             and request.headers.get("sec-fetch-mode") == "navigate"
             and request.headers.get("sec-fetch-dest") == "document"
         )
@@ -100,7 +102,8 @@ def create_app(settings=None, source_factory=None, background=False):
         bearer = request.headers.get("authorization", "").removeprefix("Bearer ")
         token = bearer or request.cookies.get("wa_session", "")
         authenticated = bool(token) and hmac.compare_digest(token, current_token)
-        if request.url.path not in {"/login", "/"} and not authenticated:
+        public_page = request.method == "GET" and request.url.path in page_paths
+        if request.url.path != "/login" and not public_page and not authenticated:
             return JSONResponse({"error": "请登录本地会话"}, 401)
         if (
             request.method not in {"GET", "HEAD", "OPTIONS"}
@@ -153,23 +156,23 @@ def create_app(settings=None, source_factory=None, background=False):
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request):
-        template = "workspace.html" if request.state.authenticated else "login.html"
-        return env.get_template(template).render(
+        return render_page(request, "workspace.html")
+
+    def render_page(request, template):
+        return env.get_template(
+            template if request.state.authenticated else "login.html"
+        ).render(
             csrf=request.state.csrf if request.state.authenticated else "",
             nonce=request.state.nonce,
         )
 
     @app.get("/legacy", response_class=HTMLResponse)
     def legacy_workspace(request: Request):
-        return env.get_template("dashboard.html").render(
-            csrf=request.state.csrf, nonce=request.state.nonce
-        )
+        return render_page(request, "dashboard.html")
 
     @app.get("/workspace", response_class=HTMLResponse)
     def workspace(request: Request):
-        return env.get_template("workspace.html").render(
-            csrf=request.state.csrf, nonce=request.state.nonce
-        )
+        return render_page(request, "workspace.html")
 
     @app.get("/api/workspace/runs")
     def workspace_runs():
