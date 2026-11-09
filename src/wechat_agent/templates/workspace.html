@@ -4,31 +4,31 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="csrf" content="{{ csrf }}" />
-    <title>客户工作台 · M1 试点</title>
+    <title>半托管欧区备货用户助手</title>
     <link rel="stylesheet" href="/static/workspace.css" />
     <script nonce="{{ nonce }}" src="/static/workspace.js" defer></script>
   </head>
   <body>
     <aside>
       <div class="brand">
-        半托管欧区<br />备货用户助手<small>客户文档 · M1 试点</small>
+        半托管欧区<br />备货用户助手<small>完整客户资料与今日行动</small>
       </div>
       <nav aria-label="工作台">
         <button data-view="today" aria-current="page">今日</button
         ><button data-view="customers">客户</button
         ><button data-view="review">待确认</button
-        ><button data-view="pilot">试点与进度</button>
+        ><button data-view="pilot">整理与进度</button>
       </nav>
-      <a class="sidebar-link" href="/">返回原工作台</a>
+      <a class="sidebar-link" href="/?page=settings">设置与接入</a>
     </aside>
     <main>
       <div class="top">
-        <span class="demo">新引擎试点 · 真实归档</span
+        <span class="demo">客户工作台 · 本地归档</span
         ><span>微信仍由你发送</span>
       </div>
       <h1 id="title">今日</h1>
       <p class="subtitle">
-        同一联系人，一份持续更新的档案。试点结果与旧客户库独立。
+        从首次接触到每个备货批次，完整保留客户线索。
       </p>
       <p id="status" role="status"></p>
       <div id="content"></div>

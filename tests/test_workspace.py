@@ -418,7 +418,7 @@ def test_v10_backup_keeps_archive_and_budget(pilot):
     with sqlite3.connect(backups[-1]) as c:
         assert c.execute("PRAGMA user_version").fetchone()[0] == 9
         assert c.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == count
-    assert migrated.rows("PRAGMA user_version")[0]["user_version"] == 11
+    assert migrated.rows("PRAGMA user_version")[0]["user_version"] == 12
     assert len(migrated.rows("SELECT * FROM messages")) == count
 
 
@@ -1008,7 +1008,7 @@ def test_v11_migration_backs_up_existing_v10(pilot):
     with sqlite3.connect(backup) as c:
         assert c.execute("PRAGMA user_version").fetchone()[0] == 10
         assert c.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
-    assert pilot.rows("PRAGMA user_version")[0]["user_version"] == 11
+    assert pilot.rows("PRAGMA user_version")[0]["user_version"] == 12
 
 
 def test_small_nickname_does_not_destroy_business_code(pilot, record):
@@ -1025,3 +1025,26 @@ def test_small_nickname_does_not_destroy_business_code(pilot, record):
     )
     ctx = build(pilot, "merchant")
     assert any("ZTHS1026" in m["text"] for m in ctx["payload"]["messages"])
+
+
+def test_contact_label_cannot_redact_transport_mode(pilot, record):
+    with pilot.tx() as c:
+        c.execute(
+            "INSERT INTO identity_metadata VALUES('account','sea-provider','海运','海运','',?)",
+            ("2026-11-09",),
+        )
+    ingest(
+        pilot,
+        [
+            record
+            | {
+                "source_id": "sea-question",
+                "sender_id": "merchant",
+                "text": "卡航可以，然后海运呢",
+            }
+        ],
+    )
+    context = build(pilot, "merchant")
+    assert any(
+        m["text"] == "卡航可以，然后海运呢" for m in context["payload"]["messages"]
+    )

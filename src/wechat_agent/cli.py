@@ -44,8 +44,9 @@ def parser():
     start.add_argument(
         "--pilot",
         action="store_true",
-        help="保留采集，暂停旧模型后台，仅手动运行新工作台试点",
+        help="保留采集，仅手动运行客户分析，不启动自动队列",
     )
+    start.add_argument("--legacy", action="store_true", help="显式恢复旧分析后台")
     archive = s.add_parser("archive", help="全量私信与群聊本地初始化，不依赖导出文件")
     archive.add_argument(
         "action", choices=["discover", "init-all", "resume", "repair", "status"]
@@ -70,8 +71,11 @@ def parser():
     serve.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1"])
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--pilot", action="store_true")
+    serve.add_argument("--legacy", action="store_true")
     worker = s.add_parser("worker")
-    worker.add_argument("--engine", choices=["deepseek"], default="deepseek")
+    worker.add_argument(
+        "--engine", choices=["workspace", "deepseek"], default="workspace"
+    )
     worker.add_argument("--once", action="store_true")
     source = s.add_parser("source")
     source.add_argument("action", choices=["validate"])
@@ -222,8 +226,11 @@ def main():
 
             from .web import create_app
 
-            if args.pilot:
-                settings.analysis_mode = "pilot"
+            if args.pilot and args.legacy:
+                raise ValueError("--pilot与--legacy不能同时使用")
+            settings.analysis_mode = (
+                "pilot" if args.pilot else "legacy" if args.legacy else "workspace"
+            )
             uvicorn.run(
                 create_app(settings, background=True),
                 host="127.0.0.1",
@@ -329,7 +336,12 @@ def main():
                 source.client.close()
         elif args.command == "worker":
             while True:
-                worked = run_once(db)
+                if args.engine == "workspace":
+                    from .workspace.queue import step
+
+                    worked = step(db)
+                else:
+                    worked = run_once(db)
                 if args.once:
                     break
                 if not worked:

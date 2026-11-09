@@ -35,7 +35,7 @@ class Settings:
     model: str = field(
         default_factory=lambda: os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
     )
-    analysis_mode: str = "legacy"
+    analysis_mode: str = "workspace"
     daily_token_limit: int = 100000
     max_output_tokens: int = 4000
 

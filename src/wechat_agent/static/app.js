@@ -91,6 +91,10 @@ function showDetail(title, html) {
   if (!$("#detail").open) $("#detail").showModal();
 }
 function go(page) {
+  if (location.pathname !== "/legacy" && ["today","customers","reviews","analysis"].includes(page)) {
+    location.href = "/workspace?view=" + ({reviews:"review",analysis:"pilot"}[page] || page);
+    return;
+  }
   currentPage = page;
   document
     .querySelectorAll(".page")
@@ -550,7 +554,7 @@ $("#policy-form").onsubmit = safe(async (e) => {
   });
   await load();
   go("today");
-  notice("已开始自动整理，后台分批运行；无需手动建客户。");
+  notice("文本分析授权已保存；可在客户工作台的整理与进度中开启或恢复自动整理。");
 });
 $("#pause-analysis").onclick = safe(async () => {
   await api("/api/crm/configure", { enabled: false });

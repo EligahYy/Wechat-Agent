@@ -16,8 +16,9 @@ const fs = require("fs");
     .readFileSync(process.env.WA_BROWSER_DATA_DIR + "/session-token", "utf8")
     .trim();
   await page.request.post("http://127.0.0.1:8768/login", { data: { token } });
-  await page.goto("http://127.0.0.1:8768/workspace");
-  await page.getByRole("button", { name: "试点与进度", exact: true }).click();
+  await page.goto("http://127.0.0.1:8768/");
+  await page.getByRole("button", { name: "整理与进度", exact: true }).waitFor();
+  await page.getByRole("button", { name: "整理与进度", exact: true }).click();
   await page.locator('[data-candidate="merchant"]').click();
   await page.getByText(/尚未开启文本分析授权/).waitFor();
   if (!(await page.locator("#analyze").isDisabled()))
@@ -36,7 +37,7 @@ const fs = require("fs");
   );
   if (!authorized.ok()) throw Error("fixture authorization failed");
   await page.goto("http://127.0.0.1:8768/workspace");
-  await page.getByRole("button", { name: "试点与进度", exact: true }).click();
+  await page.getByRole("button", { name: "整理与进度", exact: true }).click();
   await page.getByRole("textbox", { name: "搜索联系人" }).fill("not-a-contact");
   await page.getByRole("textbox", { name: "搜索联系人" }).press("Enter");
   await page.getByText("没有匹配的联系人", { exact: true }).waitFor();
@@ -91,6 +92,36 @@ const fs = require("fs");
     fullPage: true,
     animations: "disabled",
   });
+  await page.getByRole("button", { name: "整理与进度", exact: true }).click();
+  await page.getByRole("button", { name: "开启自动整理", exact: true }).click();
+  await page
+    .getByRole("button", { name: "暂停自动整理", exact: true })
+    .waitFor();
+  await page.locator("#queue-details > summary").click();
+  await page
+    .getByRole("button", { name: "刷新会话与队列", exact: true })
+    .click();
+  if (!((await page.locator("#queue-details").getAttribute("open")) !== null))
+    throw Error("queue details collapsed unexpectedly");
+  const advanced = await page.request.post(
+    "http://127.0.0.1:8768/__test__/advance-queue",
+    { headers: { "X-CSRF-Token": csrf }, data: {} },
+  );
+  if (!(await advanced.json()).worked)
+    throw Error("automatic queue did not work");
+  const docs = await (
+    await page.request.get("http://127.0.0.1:8768/api/workspace/documents")
+  ).json();
+  if (
+    docs.items[0].body.coverage.processed_messages !== 2 ||
+    !docs.items[0].body.paused
+  )
+    throw Error("incremental update or manual pause lost");
+  await page.getByRole("button", { name: "暂停自动整理", exact: true }).click();
+  await page
+    .getByRole("button", { name: "开启自动整理", exact: true })
+    .waitFor();
+  await page.getByRole("button", { name: "客户", exact: true }).click();
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "查看档案" }).click();
@@ -118,7 +149,7 @@ const fs = require("fs");
       },
     }),
   );
-  await page.getByRole("button", { name: "试点与进度", exact: true }).click();
+  await page.getByRole("button", { name: "整理与进度", exact: true }).click();
   await page.getByText("暂无正常跟进会话", { exact: true }).waitFor();
   if (await page.locator("#contact").count())
     throw Error("empty select still shown");
@@ -128,7 +159,7 @@ const fs = require("fs");
   await page.locator("#page-scope").waitFor({ state: "visible" });
   await browser.close();
   console.log(
-    "Workspace authentication, real persistence, mocked model, evidence, completion, pause, candidate authorization, search, empty state, settings links and mobile passed.",
+    "Workspace authentication, real persistence, mocked model, evidence, completion, pause, automatic queue controls, incremental updates, candidate search, empty state, settings links and mobile passed.",
   );
 })().catch((e) => {
   console.error(e);

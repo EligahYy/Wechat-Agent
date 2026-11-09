@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 11:
+            if version > 12:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -216,6 +216,24 @@ class DB:
                 CREATE TABLE IF NOT EXISTS workspace_scans(account_id TEXT NOT NULL,source_id TEXT NOT NULL,fingerprint TEXT NOT NULL,status TEXT NOT NULL,phase TEXT NOT NULL,total_pages INTEGER NOT NULL,completed_pages INTEGER NOT NULL,source_messages INTEGER NOT NULL,processed_messages INTEGER NOT NULL,error TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(account_id,source_id));
                 CREATE TABLE IF NOT EXISTS workspace_packets(cache_key TEXT PRIMARY KEY,account_id TEXT NOT NULL,source_id TEXT NOT NULL,kind TEXT NOT NULL,read_set TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL);
                 PRAGMA user_version=11; COMMIT;""")
+            if version < 12:
+                if version:
+                    target = settings.data_dir / (
+                        "pre-v12-"
+                        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                        + ".sqlite3"
+                    )
+                    backup = sqlite3.connect(target)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    target.chmod(0o600)
+                connection.executescript("""BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS workspace_automation(account_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL DEFAULT 0,budget_stamp TEXT NOT NULL DEFAULT '',gate_error TEXT,gate_until TEXT,updated_at TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS workspace_queue(account_id TEXT NOT NULL,source_id TEXT NOT NULL,input_revision TEXT NOT NULL,status TEXT NOT NULL,priority INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,error TEXT,available_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(account_id,source_id));
+                CREATE INDEX IF NOT EXISTS workspace_queue_due ON workspace_queue(account_id,status,priority,available_at);
+                PRAGMA user_version=12; COMMIT;""")
         finally:
             connection.close()
         self.path.chmod(0o600)

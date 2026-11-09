@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from ..db import dumps
 from .order_links import link_index, linked_keys
-from .quality import ENGINE_VERSION
+from .quality import ENGINE_VERSION, MODES
 from .store import allowed_chats, eligible, legacy_paused, raw, stable, valid_refs
 
 
@@ -35,7 +35,8 @@ def snapshot(db, source_id, include_document=True):
     )
     doc = raw(db, source_id)
     policy = db.rows(
-        "SELECT * FROM crm_policies WHERE account_id=?", (db.settings.source_account,)
+        "SELECT account_id,enabled,include_new,version FROM crm_policies WHERE account_id=?",
+        (db.settings.source_account,),
     )
     exclusions = db.rows(
         "SELECT * FROM actor_exclusions WHERE account_id=? ORDER BY source_id",
@@ -49,6 +50,29 @@ def snapshot(db, source_id, include_document=True):
         exclusions,
         legacy_paused(db, source_id),
         doc["version"] if doc and include_document else 0,
+    )
+
+
+def authority(db, source_id):
+    # Message additions do not revoke a pinned read. Scope, edits and manual
+    # decisions do: they are checked separately before each request/publication.
+    doc = raw(db, source_id)
+    return stable(
+        allowed_chats(db),
+        db.rows(
+            "SELECT account_id,enabled,include_new,version FROM crm_policies WHERE account_id=?",
+            (db.settings.source_account,),
+        ),
+        db.rows(
+            "SELECT * FROM actor_exclusions WHERE account_id=? ORDER BY source_id",
+            (db.settings.source_account,),
+        ),
+        legacy_paused(db, source_id),
+        db.rows(
+            "SELECT id FROM events WHERE entity_id=? AND kind='workspace_retry' ORDER BY rowid DESC LIMIT 1",
+            ("workspace-retry:" + stable(db.settings.source_account, source_id),),
+        ),
+        doc["version"] if doc else 0,
     )
 
 
@@ -101,6 +125,8 @@ def build(db, source_id, search=None):
 
     def redact(value):
         for name in sorted(replacements, key=len, reverse=True):
+            if name in MODES:
+                continue  # A business term is not an identity to redact.
             # Avoid replacing a short nickname inside order/warehouse codes.
             if re.fullmatch(r"[A-Za-z0-9_.-]+", name) or len(name) == 1:
                 value = re.sub(

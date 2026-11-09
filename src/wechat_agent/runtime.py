@@ -83,12 +83,29 @@ class Runtime:
             self.stop.wait(10)
 
     def analyze(self):
+        reconciled_at = 0
         while not self.stop.is_set():
             if self.db.settings.analysis_mode == "pilot":
                 self.db.heartbeat("worker", "pilot_manual")
                 self.stop.wait(5)
                 continue
             try:
+                if self.db.settings.analysis_mode == "workspace":
+                    from .workspace.queue import report, step
+
+                    refresh = time.monotonic() - reconciled_at > 60
+                    self.db.heartbeat("worker", "workspace_running")
+                    worked = step(self.db, refresh=refresh, stop=self.stop.is_set)
+                    if refresh:
+                        reconciled_at = time.monotonic()
+                    state = report(self.db)
+                    self.db.heartbeat(
+                        "worker",
+                        state["gate"]
+                        or ("workspace_running" if worked else "workspace_idle"),
+                    )
+                    self.stop.wait(0.5 if worked else 5)
+                    continue
                 policy = self.db.rows(
                     "SELECT enabled FROM crm_policies WHERE account_id=?",
                     (self.db.settings.source_account,),

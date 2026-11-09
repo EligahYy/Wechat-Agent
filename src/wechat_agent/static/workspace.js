@@ -11,7 +11,14 @@ const $ = (s) => document.querySelector(s),
           "'": "&#39;",
         })[c],
     );
-let view = "today",
+let view = ["today", "customers", "review", "pilot"].includes(
+    new URLSearchParams(location.search).get("view"),
+  )
+    ? new URLSearchParams(location.search).get("view")
+    : "today",
+  taskView = "today",
+  queuePage = 1,
+  queueExpanded = false,
   documents = [],
   selected,
   focusBefore,
@@ -55,7 +62,9 @@ async function refresh() {
   render();
 }
 function active(d) {
-  return (d.today_action_ids || []).map((id) => [id, d.body.actions[id]]);
+  const ids =
+    taskView === "today" ? d.today_action_ids : d.task_groups?.[taskView];
+  return (ids || []).map((id) => [id, d.body.actions[id]]);
 }
 function render() {
   document
@@ -70,7 +79,7 @@ function render() {
     today: "今天该联系谁",
     customers: "客户",
     review: "待确认",
-    pilot: "试点与进度",
+    pilot: "整理与进度",
   }[view];
   if (view === "pilot") {
     pilot();
@@ -85,6 +94,21 @@ function render() {
         : d.body.relationship === "merchant",
   );
   $("#content").innerHTML =
+    (view === "today"
+      ? `<div class="toolbar segments" role="tablist" aria-label="待办状态">${Object.entries(
+          {
+            today: "今日到期",
+            upcoming: "后续安排",
+            waiting: "等待回复",
+            done: "已完成",
+          },
+        )
+          .map(
+            ([key, label]) =>
+              `<button role="tab" data-task-view="${key}" aria-selected="${taskView === key}">${label}</button>`,
+          )
+          .join("")}</div>`
+      : "") +
     '<div class="cards">' +
     (list
       .map(
@@ -100,7 +124,7 @@ function render() {
           )}</p></article>`,
       )
       .join("") ||
-      '<div class="empty"><h2>当前没有可展示的结果</h2><p class="muted">在“试点与进度”选择一位联系人分析。无必要行动、身份未明确或覆盖不足时，不会强行创建待办。</p></div>') +
+      '<div class="empty"><h2>当前没有可展示的结果</h2><p class="muted">可在“整理与进度”开启自动整理，或选择一位联系人分析。无必要行动、身份未明确或覆盖不足时，不会强行创建待办。</p></div>') +
     "</div>";
 }
 const candidateBlocks = {
@@ -137,6 +161,7 @@ const emptyCandidates = {
 function updateCandidateButton() {
   const option = candidateItems.find((c) => c.source_id === candidateSource);
   const reason = option?.blocked_reason;
+  if (!option) candidateSource = "";
   if (!$("#analyze")) return;
   $("#analyze").disabled = busy || !option || !!reason;
   $("#candidate-readiness").textContent = reason
@@ -156,16 +181,22 @@ async function scanProgress() {
     summarize: "总结客户档案",
     done: "已完成",
   };
-  target.innerHTML =
-    scans
-      .map(
-        (s) =>
-          `<article class="insight-card"><p>${esc(s.name || s.source_id)} · ${esc(names[s.phase] || s.phase)}${s.status === "paused" ? " · 已暂停，可继续分析" : s.status === "failed" ? " · 需要处理" : ""}</p><p>分册 ${s.completed_pages} / ${s.total_pages} · 已整理 ${s.processed_messages} / ${s.source_messages} 条 · 价值过滤 0 条</p>${s.error ? `<p class="meta">${esc(s.error)}</p>` : ""}</article>`,
-      )
-      .join("") || "<p>尚未开始客户资料整理。</p>";
+  const visible = candidateSource
+    ? scans.filter((s) => s.source_id === candidateSource)
+    : scans.slice(0, 10);
+  const cards = visible
+    .map(
+      (s) =>
+        `<article class="insight-card"><p>${esc(s.name || s.source_id)} · ${esc(names[s.phase] || s.phase)}${s.status === "paused" ? " · 已暂停，可继续分析" : s.status === "failed" ? " · 需要处理" : ""}</p><p>分册 ${s.completed_pages} / ${s.total_pages} · 已整理 ${s.processed_messages} / ${s.source_messages} 条 · 价值过滤 0 条</p>${s.error ? `<p class="meta">${esc(s.error)}</p>` : ""}</article>`,
+    )
+    .join("");
+  target.innerHTML = `<p class="meta">${candidateSource ? "当前选中联系人的进度" : "最近10位联系人的进度；完整状态见联系人队列"}</p>${cards || "<p>尚未开始客户资料整理。</p>"}`;
 }
 setInterval(() => {
-  if (view === "pilot") scanProgress().catch(() => {});
+  if (view === "pilot" && !$("#auto-queue :focus")) {
+    scanProgress().catch(() => {});
+    queueProgress().catch(() => {});
+  }
 }, 5000);
 async function pilot() {
   const ticket = ++candidateRequest;
@@ -188,9 +219,10 @@ async function pilot() {
       ? `<div class="candidate-results" aria-label="匹配联系人">${data.items.map((c) => `<button type="button" data-candidate="${esc(c.source_id)}" aria-pressed="${c.source_id === candidateSource}"><strong>${esc(c.name)}</strong><small>${esc(c.source_id)}</small></button>`).join("")}</div><div class="toolbar spaced"><button id="prev" ${candidatePage === 1 ? "disabled" : ""}>上一页</button><span>第 ${candidatePage} 页 · ${data.total} 位来源联系人 · 每页最多 50 位</span><button id="next" ${!data.has_more ? "disabled" : ""}>下一页</button></div><p id="candidate-readiness" class="muted" role="status"></p><button class="primary spaced" id="analyze" disabled>${busy ? "正在分析，请稍候…" : "分析此联系人"}</button>`
       : `<div class="candidate-empty spaced" role="status"><h3>${empty ? empty[0] : "没有匹配的联系人"}</h3><p>${empty ? empty[1] : "请尝试其他备注、昵称或微信 ID，或清空搜索后重试。"}</p>${empty ? `<a href="/?page=${empty[2]}">${empty[2] === "settings" ? "前往连接与模型设置" : "检查会话范围与人物白名单"} →</a>` : '<button id="clear-candidate-search">清空搜索</button>'}</div>`;
     $("#content").innerHTML =
-      `<div class="card"><div class="toolbar"><h2>选择一位真实联系人</h2><button id="refresh-candidates">刷新联系人</button></div><p class="muted">联系人从本机归档读取，查看列表不调用模型。点击分析才会调用 DeepSeek，计入已有预算，先完整整理来源分册，再总结；预算不足可续跑。</p><p class="meta">当前账号已归档 ${d.archived_messages} 条消息 · 正常跟进 ${d.scope_conversations} 个会话 · 可识别 ${d.contacts} 位联系人</p>${search}${picker}<div class="toolbar spaced"><a href="/?page=settings">模型与分析授权设置 →</a><a href="/?page=scope">会话范围与白名单 →</a></div><p class="meta">修改设置后返回刷新。不会启动全库重建。图片保留占位；长历史分册整理，暂停后可继续。</p></div><section class="card spaced"><h2>客户资料整理进度</h2><div id="scan-progress" role="status">正在读取进度…</div></section><section class="card spaced"><h2>最近运行</h2>${runs.map((r) => `<p>${esc(new Date(r.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))} 北京时间 · ${esc({ succeeded: "已完成", failed: "未完成", running: "处理中", paused: "已暂停，可续跑" }[r.status] || r.status)} · ${r.calls} 次请求</p>${r.error ? `<p class="error">${esc(r.error === "workspace_customer_anchor_required" ? "无法确认这条结论属于当前客户，未写入档案。请更新后重新分析；不会自动归属服务商或其他商家的消息。" : r.error === "workspace_transport_term" ? "运输表述与业务术语不一致。请升级后重新分析；0 次请求表示复用缓存，未新增模型调用。" : r.error)}</p>` : ""}`).join("") || "<p>尚未运行试点分析。</p>"}</section>`;
+      `<div id="auto-queue"></div><div class="card spaced"><div class="toolbar"><h2>手动分析一位联系人</h2><button id="refresh-candidates">刷新联系人</button></div><p class="muted">联系人从本机归档读取，查看列表不调用模型。点击分析才会调用 DeepSeek，计入已有预算，先完整整理来源分册，再总结；预算不足可续跑。</p><p class="meta">当前账号已归档 ${d.archived_messages} 条消息 · 正常跟进 ${d.scope_conversations} 个会话 · 可识别 ${d.contacts} 位联系人</p>${search}${picker}<div class="toolbar spaced"><a href="/?page=settings">模型与分析授权设置 →</a><a href="/?page=scope">会话范围与白名单 →</a></div><p class="meta">修改设置后返回刷新。不会启动全库重建。图片保留占位；长历史分册整理，暂停后可继续。</p></div><section class="card spaced"><h2>客户资料整理进度</h2><div id="scan-progress" role="status">正在读取进度…</div></section><section class="card spaced"><h2>最近运行</h2>${runs.map((r) => `<p>${esc(new Date(r.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))} 北京时间 · ${esc({ succeeded: "已完成", failed: "未完成", running: "处理中", paused: "已暂停，可续跑" }[r.status] || r.status)} · ${r.calls} 次请求</p>${r.error ? `<p class="error">${esc(r.error === "workspace_customer_anchor_required" ? "无法确认这条结论属于当前客户，未写入档案。请更新后重新分析；不会自动归属服务商或其他商家的消息。" : r.error === "workspace_transport_term" ? "运输表述与业务术语不一致。请升级后重新分析；0 次请求表示复用缓存，未新增模型调用。" : r.error)}</p>` : ""}`).join("") || "<p>尚未运行试点分析。</p>"}</section>`;
     if (data.items.length) updateCandidateButton();
     await scanProgress();
+    await queueProgress();
   } catch (e) {
     if (view === "pilot" && ticket === candidateRequest)
       $("#status").textContent = e.message;
@@ -213,6 +245,13 @@ document.addEventListener("input", (e) => {
     }
   }, 250);
 });
+document.addEventListener(
+  "toggle",
+  (e) => {
+    if (e.target.id === "queue-details") queueExpanded = e.target.open;
+  },
+  true,
+);
 document.addEventListener("change", (e) => {
   if (e.target.id === "contact") updateCandidateButton();
 });
@@ -233,6 +272,36 @@ function evidence(refs, d) {
         `<div class="evidence"><p class="meta">${esc(m.conversation)} · ${esc(new Date(m.event_time).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))}</p><p>${esc(m.text)}</p></div>`,
     )
     .join("")}</details>`;
+}
+async function queueProgress() {
+  const q = await api("queue?page=" + queuePage);
+  const target = $("#auto-queue");
+  if (!target || view !== "pilot") return;
+  const gateNames = {
+    paused: "自动整理已暂停",
+    manual_mode: "当前启动方式仅支持手动分析；使用 start 启动可运行自动队列",
+    awaiting_account: "请先绑定工作微信",
+    legacy_mode: "当前为旧分析模式，使用 start 启动新客户队列",
+    blocked_policy: "请先在设置开启文本分析授权",
+    blocked_credentials: "请先配置 DeepSeek key",
+  };
+  const reasons = {
+    blocked_budget: "今日预算不足，次日自动续跑；调高预算后也会恢复",
+    call_limit: "本轮资料已保存，后台稍后继续",
+    automation_paused: "已暂停自动整理",
+    HTTP_401: "模型认证失败，请检查 key 后恢复队列",
+    HTTP_402: "模型账户余额不足，请充值后恢复队列",
+    HTTP_429: "模型限流，稍后自动复查",
+    workspace_stale_input: "来源或人工判断已变化，将重新检查",
+  };
+  const states = {
+    queued: "等待整理",
+    running: "正在整理",
+    paused: "保存进度等待续跑",
+    succeeded: "资料已完成",
+    failed: "需要处理",
+  };
+  target.innerHTML = `<section class="card"><div class="toolbar"><div><h2>按客户自动整理</h2><p class="muted">优先处理近15天活跃联系人，每位联系人都从完整历史开始；分册可复用。只对已授权、未加入白名单的来源调用模型。</p></div><button class="${q.enabled ? "" : "primary"}" id="automation-toggle" data-enabled="${!q.enabled}">${q.enabled ? "暂停自动整理" : "开启自动整理"}</button></div><p role="status">${esc(q.gate ? gateNames[q.gate] || reasons[q.gate] || q.gate : "队列运行中；新消息将更新对应客户")}${!q.background ? " · 此服务未启用后台，请使用 wechat-agent start" : ""}</p><p class="meta">待整理 ${q.counts.queued || 0} · 整理中 ${q.counts.running || 0} · 等待续跑 ${q.counts.paused || 0} · 已完成 ${q.counts.succeeded || 0} · 需要处理 ${q.counts.failed || 0}</p><div class="toolbar"><button id="queue-refresh">刷新会话与队列</button>${q.enabled && q.gate && !["manual_mode", "legacy_mode", "blocked_policy", "blocked_credentials", "blocked_budget"].includes(q.gate) ? '<button id="queue-resume">问题已处理，恢复队列</button>' : ""}</div><details id="queue-details" class="queue-disclosure" ${queueExpanded ? "open" : ""}><summary>查看联系人队列（${q.total}位）</summary>${q.items.map((i) => `<article class="queue-row"><div><strong>${esc(i.name)}</strong><p class="meta">${esc(states[i.status] || i.status)} · ${i.priority === 0 ? "近15天活跃" : "历史联系人"}${i.error ? " · " + esc(reasons[i.error] || i.error) : ""}</p></div>${["failed", "paused"].includes(i.status) ? `<button data-queue-retry="${esc(i.source_id)}">重试此联系人</button>` : ""}</article>`).join("") || "<p>尚无待整理联系人；确认工作账号和会话范围后刷新。</p>"}<div class="toolbar spaced"><button id="queue-prev" ${queuePage === 1 ? "disabled" : ""}>上一页队列</button><span>第 ${queuePage} 页 · 共 ${q.total} 位来源联系人 · 每页50位</span><button id="queue-next" ${q.has_more ? "" : "disabled"}>下一页队列</button></div></details></section>`;
 }
 function fieldWarning(item) {
   return item.quality_warnings?.length
@@ -291,12 +360,38 @@ document.addEventListener("click", async (e) => {
   const b = e.target.closest("button");
   if (!b) return;
   try {
+    if (b.dataset.taskView) {
+      taskView = b.dataset.taskView;
+      render();
+    }
+    if (b.id === "automation-toggle" || b.id === "queue-resume") {
+      b.disabled = true;
+      await api("automation", {
+        enabled: b.id === "queue-resume" || b.dataset.enabled === "true",
+      });
+      await queueProgress();
+    }
+    if (b.id === "queue-refresh") {
+      b.disabled = true;
+      await api("queue/refresh", {});
+      await queueProgress();
+    }
+    if (b.id === "queue-prev" || b.id === "queue-next") {
+      queuePage += b.id === "queue-next" ? 1 : -1;
+      await queueProgress();
+    }
+    if (b.dataset.queueRetry) {
+      b.disabled = true;
+      await api("queue/retry", { source_id: b.dataset.queueRetry });
+      await queueProgress();
+    }
     if (b.dataset.candidate) {
       candidateSource = b.dataset.candidate;
       document
         .querySelectorAll("[data-candidate]")
         .forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
       updateCandidateButton();
+      scanProgress().catch(() => {});
     }
     if (b.dataset.view) {
       view = b.dataset.view;
@@ -378,8 +473,18 @@ document.addEventListener("click", async (e) => {
       await refresh();
     }
   } catch (e) {
+    if (e.message === "workspace_version_conflict") await refresh();
+    const messages = {
+      workspace_version_conflict:
+        "档案已被后台更新，本次修改尚未保存。请关闭详情，重新核对后保存。",
+      workspace_closed_batch: "该批次已走货或结束，不能恢复备货待办。",
+      workspace_role_required: "请先确认该联系人是商家。",
+      workspace_already_running:
+        "此联系人正在后台整理，可在进度区查看，无需重复启动。",
+      workspace_invalid_date: "请选择今天或之后的有效日期。",
+    };
     ($("dialog").open ? $("#detail-status") : $("#status")).textContent =
-      e.message;
+      messages[e.message] || e.message;
     b.disabled = false;
   }
 });
@@ -388,3 +493,7 @@ $("dialog").addEventListener("cancel", (e) => {
   close();
 });
 refresh().catch((e) => ($("#status").textContent = e.message));
+
+setInterval(() => {
+  if (view !== "pilot" && !$("dialog").open && !busy) refresh().catch(() => {});
+}, 30000);

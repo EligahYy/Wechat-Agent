@@ -21,10 +21,26 @@ class ModelSession:
         self.db, self.source_id, self.client = db, source_id, client
         self.key, self.fingerprint, self.run_id = key, fingerprint, run_id
         self.limit, self.calls = limit, 0
+        retries = db.rows(
+            "SELECT id FROM events WHERE entity_id=? AND kind='workspace_retry' ORDER BY rowid DESC LIMIT 1",
+            ("workspace-retry:" + stable(db.settings.source_account, source_id),),
+        )
+        self.retry_epoch = retries[0]["id"] if retries else None
+        self.guard = None
+        self.should_stop = None
+
+    def ensure_active(self):
+        if self.should_stop:
+            if self.should_stop():
+                raise Paused("automation_paused")
+            self.db.heartbeat("worker", "workspace_running")
+        if self.guard and not self.guard():
+            raise ValueError("workspace_stale_input")
 
     def request(self, prompt, payload):
         db = self.db
-        if snapshot(db, self.source_id) != self.fingerprint:
+        self.ensure_active()
+        if self.guard is None and snapshot(db, self.source_id) != self.fingerprint:
             raise ValueError("workspace_stale_input")
         if len(dumps(payload)) > 90000:
             raise ValueError("workspace_context_limit")
@@ -33,6 +49,7 @@ class ModelSession:
             db.settings.model,
             db.settings.source_account,
             self.source_id,
+            self.retry_epoch,
             prompt,
             payload,
         )

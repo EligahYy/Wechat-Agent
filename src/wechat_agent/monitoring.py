@@ -58,6 +58,13 @@ def snapshot(db, source_factory, background):
         "idle": "等待新任务",
         "awaiting_account": "等待绑定工作账号",
         "awaiting_authorization": "等待分析授权",
+        "workspace_running": "按客户整理完整资料",
+        "workspace_idle": "等待客户新消息",
+        "paused": "自动整理已暂停",
+        "blocked_policy": "等待文本分析授权",
+        "blocked_credentials": "等待配置模型 key",
+        "blocked_budget": "等待预算恢复后续跑",
+        "pilot_manual": "手动分析模式",
     }
     policy = db.rows(
         "SELECT enabled FROM crm_policies WHERE account_id=?",
@@ -65,6 +72,10 @@ def snapshot(db, source_factory, background):
     )
     running = db.rows(
         "SELECT created_at FROM jobs WHERE status='running' ORDER BY created_at DESC LIMIT 1"
+    )
+    queue_running = db.rows(
+        "SELECT 1 FROM workspace_queue WHERE status='running' AND account_id=? LIMIT 1",
+        (db.settings.source_account,),
     )
     for name, title in (
         ("collector", "消息采集与历史补齐"),
@@ -84,13 +95,21 @@ def snapshot(db, source_factory, background):
             ).total_seconds()
             raw = row["status"]
             threshold = (
-                660 if name == "worker" and raw == "running" and running else 180
+                660
+                if name == "worker"
+                and (
+                    (raw == "running" and running)
+                    or (raw == "workspace_running" and queue_running)
+                )
+                else 180
             )
             status = (
                 "error"
                 if raw.startswith("error:")
                 else "warning"
                 if age > threshold
+                or raw.startswith(("HTTP_", "blocked_", "Connect", "Proxy", "Read"))
+                or raw in {"paused", "pilot_manual"}
                 else "ok"
             )
             detail = labels.get(raw, raw) + (

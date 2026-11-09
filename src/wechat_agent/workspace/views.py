@@ -14,34 +14,7 @@ def candidates(db, q="", page=1):
         raise ValueError("workspace_invalid_query")
     account = db.settings.source_account
     ids = [v["id"] for v in source_chats(db)]
-    # A private peer is known even if only our outgoing messages were archived.
-    # Group membership comes from a real sender, never from a group ID/name.
-    rows = db.rows(
-        """WITH sources AS (
-          SELECT CASE WHEN v.kind='private' THEN v.source_id ELSE m.sender_id END source_id,
-                 v.egress, CASE WHEN v.kind='private' THEN NULLIF(v.title,v.source_id) END title,
-                 m.type, m.completeness
-          FROM messages m JOIN conversations v ON v.id=m.conversation_id
-          WHERE v.id IN (SELECT value FROM json_each(?))
-            AND (v.kind='private' OR (v.kind='group' AND m.direction<>'outgoing'))
-        )
-        SELECT s.source_id,
-          COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),MAX(NULLIF(s.title,'')),'姓名待同步') name,
-          MAX(s.egress) authorized,
-          MAX(s.egress=1 AND s.type='text' AND s.completeness='full') has_text
-        FROM sources s
-        LEFT JOIN identity_metadata i ON i.account_id=? AND i.source_id=s.source_id
-        WHERE s.source_id NOT IN ('unknown','',?,?) AND s.source_id NOT LIKE '%@chatroom'
-          AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=? AND e.source_id=s.source_id)
-        GROUP BY s.source_id ORDER BY name,s.source_id""",
-        (
-            dumps(ids),
-            account,
-            account,
-            db.settings.self_id,
-            account,
-        ),
-    )
+    rows = source_people(db)
     policy = db.rows("SELECT enabled FROM crm_policies WHERE account_id=?", (account,))
     enabled = bool(policy and policy[0]["enabled"])
     key = bool(secret("DEEPSEEK_API_KEY"))
@@ -95,6 +68,40 @@ def candidates(db, q="", page=1):
         "has_more": len(rows) > page * 50,
         "diagnostics": diagnostics,
     }
+
+
+def source_people(db):
+    account = db.settings.source_account
+    ids = [v["id"] for v in source_chats(db)]
+    # A private peer is known even if only our outgoing messages were archived.
+    # Group membership comes from a real sender, never from a group ID/name.
+    return db.rows(
+        """WITH sources AS (
+          SELECT CASE WHEN v.kind='private' THEN v.source_id ELSE m.sender_id END source_id,
+                 v.egress,m.event_time, CASE WHEN v.kind='private' THEN NULLIF(v.title,v.source_id) END title,
+                 m.type, m.completeness
+          FROM messages m JOIN conversations v ON v.id=m.conversation_id
+          WHERE v.id IN (SELECT value FROM json_each(?))
+            AND (v.kind='private' OR (v.kind='group' AND m.direction<>'outgoing'))
+        )
+        SELECT s.source_id,
+          COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),MAX(NULLIF(s.title,'')),'姓名待同步') name,
+          MAX(s.event_time) latest_event,
+          MAX(s.egress) authorized,
+          MAX(s.egress=1 AND s.type='text' AND s.completeness='full') has_text
+        FROM sources s
+        LEFT JOIN identity_metadata i ON i.account_id=? AND i.source_id=s.source_id
+        WHERE s.source_id NOT IN ('unknown','',?,?) AND s.source_id NOT LIKE '%@chatroom'
+          AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=? AND e.source_id=s.source_id)
+        GROUP BY s.source_id ORDER BY name,s.source_id""",
+        (
+            dumps(ids),
+            account,
+            account,
+            db.settings.self_id,
+            account,
+        ),
+    )
 
 
 def details(db, source_id):
@@ -151,6 +158,21 @@ def details(db, source_id):
         and a["state"] == "open"
         and (not a["due_date"] or a["due_date"] <= today)
     ]
+    doc["task_groups"] = {"upcoming": [], "waiting": [], "done": []}
+    for key, action in doc["body"]["actions"].items():
+        if action["state"] == "done":
+            doc["task_groups"]["done"].append(key)
+        elif doc["can_followup"] and (
+            doc["body"]["coverage"]["complete_context"] or action.get("confirmed")
+        ):
+            if action["state"] == "waiting":
+                doc["task_groups"]["waiting"].append(key)
+            elif (
+                action["state"] == "open"
+                and action.get("due_date")
+                and action["due_date"] > today
+            ):
+                doc["task_groups"]["upcoming"].append(key)
     return doc
 
 

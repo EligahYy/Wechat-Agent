@@ -153,10 +153,24 @@ def create_app(settings=None, source_factory=None, background=False):
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request):
-        template = "dashboard.html" if request.state.authenticated else "login.html"
+        template = (
+            (
+                "dashboard.html"
+                if request.query_params.get("page") in {"settings", "scope"}
+                else "workspace.html"
+            )
+            if request.state.authenticated
+            else "login.html"
+        )
         return env.get_template(template).render(
             csrf=request.state.csrf if request.state.authenticated else "",
             nonce=request.state.nonce,
+        )
+
+    @app.get("/legacy", response_class=HTMLResponse)
+    def legacy_workspace(request: Request):
+        return env.get_template("dashboard.html").render(
+            csrf=request.state.csrf, nonce=request.state.nonce
         )
 
     @app.get("/workspace", response_class=HTMLResponse)
@@ -190,6 +204,37 @@ def create_app(settings=None, source_factory=None, background=False):
         from .workspace.views import packets
 
         return packets(db, source_id, page)
+
+    @app.get("/api/workspace/queue")
+    def workspace_queue(page: int = 1):
+        from .workspace.queue import report
+
+        result = report(db, page)
+        result["background"] = bool(background)
+        return result
+
+    @app.post("/api/workspace/automation")
+    async def workspace_automation(request: Request):
+        from .workspace.queue import configure
+
+        body = await request.json()
+        return await run_in_threadpool(configure, db, body.get("enabled"))
+
+    @app.post("/api/workspace/queue/refresh")
+    async def workspace_queue_refresh():
+        from .workspace.queue import reconcile, report
+
+        await run_in_threadpool(reconcile, db)
+        return report(db)
+
+    @app.post("/api/workspace/queue/retry")
+    async def workspace_queue_retry(request: Request):
+        from .workspace.queue import retry
+
+        body = await request.json()
+        if not isinstance(body.get("source_id"), str):
+            raise ValueError("workspace_invalid_identity")
+        return await run_in_threadpool(retry, db, body["source_id"])
 
     @app.get("/api/workspace/candidates")
     def workspace_candidates(q: str = "", page: int = 1):

@@ -110,7 +110,12 @@ def commit(db, source_id, proposal, context, fingerprint):
     validate_proposal(proposal, context)
     with db.tx() as c:
         eligible(db, source_id)
-        if snapshot(db, source_id) != fingerprint:
+        unchanged = (
+            context["input_guard"]()
+            if context.get("input_guard")
+            else snapshot(db, source_id) == fingerprint
+        )
+        if not unchanged:
             raise Conflict("workspace_stale_input")
         previous = raw(db, source_id)
         usable = previous and valid_refs(db, json.loads(previous["read_set"]))
@@ -361,7 +366,9 @@ def commit(db, source_id, proposal, context, fingerprint):
                 or (k == "role" and body["relationship"] != "merchant")
             }
         body["engine_version"] = ENGINE_VERSION
-        body["source_revision"] = snapshot(db, source_id, False)
+        body["source_revision"] = context.get("source_revision") or snapshot(
+            db, source_id, False
+        )
         body["coverage"] = {
             "complete_context": context["complete"],
             "messages": len(evidence),

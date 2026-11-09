@@ -111,4 +111,28 @@ if __name__ == "__main__":
     agent.create_client = lambda: httpx.Client(
         base_url="https://api.deepseek.com", transport=httpx.MockTransport(fake_model)
     )
+
+    @app.post("/__test__/advance-queue")
+    def advance_queue():
+        from wechat_agent.workspace.queue import step
+
+        ingest(
+            db,
+            [
+                {
+                    "source": "fixture",
+                    "account_id": "work",
+                    "conversation_id": "group",
+                    "conversation_type": "group",
+                    "source_id": "m2",
+                    "sender_id": "merchant",
+                    "direction": "incoming",
+                    "event_time": datetime.now(UTC).isoformat(),
+                    "message_type": "text",
+                    "text": "补充该客户的最新沟通记录",
+                }
+            ],
+        )
+        return {"worked": step(db)}
+
     uvicorn.run(app, host="127.0.0.1", port=8768, access_log=False)
