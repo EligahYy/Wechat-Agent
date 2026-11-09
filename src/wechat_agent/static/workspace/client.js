@@ -45,6 +45,11 @@ export async function copy(text) {
 export function errorText(code) {
   return (
     {
+      workspace_clue_not_pending:
+        "这条线索已被处理，请重新打开档案查看最新结果。",
+      workspace_clue_not_resolved: "这条线索已恢复，请查看待核实列表。",
+      workspace_clue_verification_required:
+        "请填写核对后的资料，并确认它属于当前客户。",
       workspace_draft_running:
         "这位客户的草稿正在准备，请稍后查看，无需重复生成。",
       workspace_draft_not_ready:

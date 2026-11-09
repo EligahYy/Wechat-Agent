@@ -90,7 +90,8 @@ function render() {
       ? active(d).length
       : view === "review"
         ? Object.values(d.body.decisions).some((q) => !q.resolved) ||
-          Object.values(d.body.actions).some((a) => a.state === "proposed")
+          Object.values(d.body.actions).some((a) => a.state === "proposed") ||
+          !!d.body.unattributed?.length
         : d.body.relationship === "merchant",
   );
   if (view === "customers")
@@ -298,6 +299,16 @@ document.addEventListener(
   "toggle",
   (e) => {
     if (e.target.id === "queue-details") queueExpanded = e.target.open;
+    if (e.target.id === "packet-disclosure") {
+      $("#packet-label").textContent = e.target.open
+        ? "收起已保存资料分册"
+        : "查看已保存资料分册";
+      if (e.target.open && !e.target.dataset.loaded)
+        loadPackets(1).catch(
+          (error) =>
+            ($("#detail-status").textContent = errorText(error.message)),
+        );
+    }
   },
   true,
 );
@@ -317,6 +328,32 @@ document.addEventListener("change", (e) => {
   if (e.target.id === "contact") updateCandidateButton();
 });
 document.addEventListener("submit", async (e) => {
+  if (e.target.dataset.clueReview) {
+    e.preventDefault();
+    const form = e.target,
+      b = form.querySelector("button");
+    b.disabled = true;
+    try {
+      const f = new FormData(form);
+      await api("command", {
+        source_id: selected.source_id,
+        version: selected.version,
+        operation: "resolve_clue",
+        target: form.dataset.clueReview,
+        value: {
+          choice: "confirmed",
+          text: f.get("text"),
+          belongs_to_customer: f.has("belongs"),
+        },
+      });
+      await api("queue/refresh", {});
+      await reloadClues("已核实并保存到客户资料；未创建待办。");
+    } catch (error) {
+      $("#detail-status").textContent = errorText(error.message);
+      if (b.isConnected) b.disabled = false;
+    }
+    return;
+  }
   if (e.target.id === "customer-search") {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -404,6 +441,65 @@ async function queueProgress() {
   target.innerHTML = `<section class="card"><div class="toolbar"><div><h2>按客户自动整理</h2><p class="muted">优先处理近15天活跃联系人，每位联系人都从完整历史开始；分册可复用。只对已授权、未加入白名单的来源调用模型。</p></div><button class="${q.enabled ? "" : "primary"}" id="automation-toggle" data-enabled="${!q.enabled}">${q.enabled ? "暂停自动整理" : "开启自动整理"}</button></div><p role="status">${esc(q.gate ? gateNames[q.gate] || reasons[q.gate] || q.gate : "队列运行中；新消息将更新对应客户")}${!q.background ? " · 此服务未启用后台，请使用 wechat-agent start" : ""}</p><p class="meta">待整理 ${q.counts.queued || 0} · 整理中 ${q.counts.running || 0} · 等待续跑 ${q.counts.paused || 0} · 已完成 ${q.counts.succeeded || 0} · 需要处理 ${q.counts.failed || 0}</p><div class="toolbar"><button id="queue-refresh">刷新会话与队列</button>${q.enabled && q.gate && !["manual_mode", "legacy_mode", "blocked_policy", "blocked_credentials", "blocked_budget"].includes(q.gate) ? '<button id="queue-resume">问题已处理，恢复队列</button>' : ""}</div><details id="queue-details" class="queue-disclosure" ${queueExpanded ? "open" : ""}><summary>查看联系人队列（${q.total}位）</summary>${q.items.map((i) => `<article class="queue-row"><div><strong>${esc(i.name)}</strong><p class="meta">${esc(states[i.status] || i.status)} · ${i.priority === 0 ? "近15天活跃" : "历史联系人"}${i.error ? " · " + esc(reasons[i.error] || i.error) : ""}</p></div>${["failed", "paused"].includes(i.status) ? `<button data-queue-retry="${esc(i.source_id)}">重试此联系人</button>` : ""}</article>`).join("") || "<p>尚无待整理联系人；确认工作账号和会话范围后刷新。</p>"}<div class="toolbar spaced"><button id="queue-prev" ${queuePage === 1 ? "disabled" : ""}>上一页队列</button><span>第 ${queuePage} 页 · 共 ${q.total} 位来源联系人 · 每页50位</span><button id="queue-next" ${q.has_more ? "" : "disabled"}>下一页队列</button></div></details></section>`;
 }
 
+async function loadPackets(page) {
+  const target = $("#packet-ledger"),
+    disclosure = $("#packet-disclosure"),
+    source = selected.source_id;
+  disclosure.dataset.loaded = "loading";
+  target.setAttribute("aria-busy", "true");
+  if (!target.childNodes.length) target.textContent = "正在读取已保存资料…";
+  try {
+    const data = await api(
+      "packets?" + new URLSearchParams({ source_id: source, page }),
+    );
+    if (!target.isConnected || selected.source_id !== source) return;
+    target.innerHTML = `<p class="meta">资料分册历史 · 第${page}页；我方是你的工作微信。其他参与人或归属不明的内容不等于客户事实。</p>${data.items.map((p) => `<section class="insight-card"><h4>${p.kind === "extract" ? "原始资料整理" : "分册汇总"}</h4>${p.body.facts.map((f) => `<article class="evidence"><p class="meta">${esc(f.subject_label || { customer: "关联客户", other: "其他参与人", unclear: "归属待核实" }[f.subject])}</p><p>${esc(f.text)}</p>${evidence(f.evidence, p)}</article>`).join("")}</section>`).join("") || "<p>暂无可展示的有效分册。</p>"}<div class="button-group">${page > 1 ? `<button data-packets="${page - 1}">上一页分册</button>` : ""}${data.has_more ? `<button data-packets="${page + 1}">下一页分册</button>` : ""}</div>`;
+    disclosure.dataset.loaded = "ready";
+  } catch (error) {
+    if (target.isConnected) {
+      delete disclosure.dataset.loaded;
+      target.innerHTML = `<p>${esc(errorText(error.message))}</p><button data-packets="${page}">重新加载资料分册</button>`;
+    }
+  } finally {
+    target.removeAttribute("aria-busy");
+  }
+}
+async function reloadClues(message) {
+  const source = selected.source_id,
+    scroll = $("dialog").scrollTop;
+  const drafts = [...document.querySelectorAll("[data-clue-review]")].map(
+    (form) => ({
+      id: form.dataset.clueReview,
+      text: form.elements.text.value,
+      belongs: form.elements.belongs.checked,
+      open: form.parentElement.open,
+    }),
+  );
+  await refresh();
+  selected = await api(
+    "customer?" + new URLSearchParams({ source_id: source }),
+  );
+  closeImage();
+  $("#detail").innerHTML = customerHTML(selected);
+  detailTab("overview");
+  for (const draft of drafts) {
+    const form = document.querySelector(
+      '[data-clue-review="' + draft.id + '"]',
+    );
+    if (form) {
+      form.elements.text.value = draft.text;
+      form.elements.belongs.checked = draft.belongs;
+      form.parentElement.open = draft.open;
+    }
+  }
+  for (const id of ["#clue-disclosure", "#reviewed-clues"])
+    if ($(id)) $(id).open = true;
+  $("dialog").scrollTop = scroll;
+  $("#detail-status").textContent = message;
+  const summary =
+    $("#reviewed-clues > summary") || $("#clue-disclosure > summary");
+  summary?.focus({ preventScroll: true });
+}
 async function openDetail(id) {
   const summary = documents.find((d) => d.id === id);
   selected = await api(
@@ -413,10 +509,7 @@ async function openDetail(id) {
   focusBefore = document.activeElement;
   $("#detail-title").textContent = d.name;
   $("#detail-status").textContent = "";
-  ((timelineQuery = ""),
-    (customerQuery = ""),
-    (customerStage = "all"),
-    (customerPage = 1));
+  timelineQuery = "";
   closeImage();
   $("#detail").innerHTML = customerHTML(d);
   $("dialog").showModal();
@@ -428,11 +521,10 @@ function detailTab(key) {
   document
     .querySelectorAll("[data-detail-panel]")
     .forEach((panel) => (panel.hidden = panel.dataset.detailPanel !== key));
-  document
-    .querySelectorAll("[data-detail-tab]")
-    .forEach((b) =>
-      b.setAttribute("aria-selected", String(b.dataset.detailTab === key)),
-    );
+  document.querySelectorAll("[data-detail-tab]").forEach((b) => {
+    b.setAttribute("aria-selected", String(b.dataset.detailTab === key));
+    b.tabIndex = b.dataset.detailTab === key ? 0 : -1;
+  });
 }
 async function loadJournal(page = 1) {
   const data = await api(
@@ -463,6 +555,24 @@ document.addEventListener("click", async (e) => {
       render();
     }
     if (b.dataset.detailTab) detailTab(b.dataset.detailTab);
+    if (b.dataset.dismissClue || b.dataset.restoreClue) {
+      b.disabled = true;
+      const restore = !!b.dataset.restoreClue;
+      await api("command", {
+        source_id: selected.source_id,
+        version: selected.version,
+        operation: restore ? "restore_clue" : "resolve_clue",
+        target: b.dataset.restoreClue || b.dataset.dismissClue,
+        ...(restore ? {} : { value: { choice: "dismissed" } }),
+      });
+      await api("queue/refresh", {});
+      await reloadClues(
+        restore
+          ? "已撤销判断，恢复为待核实线索。"
+          : "已不采纳，可在已处理线索中撤销。",
+      );
+      return;
+    }
     if (b.id === "copy-contact-name")
       await copy(
         selected.location.remark ||
@@ -573,14 +683,8 @@ document.addEventListener("click", async (e) => {
     }
     if (b.dataset.packets) {
       b.disabled = true;
-      const page = Number(b.dataset.packets);
-      const data = await api(
-        "packets?" +
-          new URLSearchParams({ source_id: selected.source_id, page }),
-      );
-      $("#packet-ledger").innerHTML =
-        `<p class="meta">资料分册历史（含可复用旧分册）· 第 ${page} 页；其中他人或归属不明的内容不等于客户事实。</p>${data.items.map((p) => `<section class="insight-card"><h4>${p.kind === "extract" ? "原始资料整理" : "分册汇总"}</h4>${p.body.facts.map((f) => `<article class="evidence"><p class="meta">${esc(f.subject === "customer" ? "关联客户" : f.subject === "other" ? "其他参与人" : "归属待核实")}</p><p>${esc(f.text)}</p>${evidence(f.evidence, p)}</article>`).join("")}</section>`).join("") || "<p>暂无可展示的有效分册。</p>"}${page > 1 ? `<button data-packets="${page - 1}">上一页分册</button>` : ""}${data.has_more ? `<button data-packets="${page + 1}">下一页分册</button>` : ""}`;
-      b.disabled = false;
+      await loadPackets(Number(b.dataset.packets));
+      if (b.isConnected) b.disabled = false;
     }
     if (b.dataset.ledger) {
       b.disabled = true;
@@ -695,4 +799,22 @@ addEventListener("popstate", () => {
     : "today";
   if ($("dialog").open) close();
   refresh().catch((e) => ($("#status").textContent = e.message));
+});
+
+document.addEventListener("keydown", (e) => {
+  const tab = e.target.closest("[data-detail-tab]");
+  if (!tab || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key))
+    return;
+  e.preventDefault();
+  const tabs = [...document.querySelectorAll("[data-detail-tab]")],
+    index = tabs.indexOf(tab);
+  const next =
+    e.key === "Home"
+      ? 0
+      : e.key === "End"
+        ? tabs.length - 1
+        : (index + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+          tabs.length;
+  detailTab(tabs[next].dataset.detailTab);
+  tabs[next].focus();
 });

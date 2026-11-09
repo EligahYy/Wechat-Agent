@@ -68,9 +68,7 @@ const fs = require("fs");
     .click();
   await page.getByText("全部相关会话共 1 条 · 第 1 页 · 每页 50 条").waitFor();
   await page.getByRole("tab", { name: "资料概览", exact: true }).click();
-  await page
-    .getByRole("button", { name: "查看已保存资料分册", exact: true })
-    .click();
+  await page.locator("#packet-disclosure > summary").click();
   await page
     .locator("#packet-ledger")
     .getByText("原始资料整理", { exact: true })

@@ -141,6 +141,7 @@ def commit(db, source_id, proposal, context, fingerprint):
         )
         prior_body = json.loads(previous["body"]) if previous else {}
         body["history"] = prior_body.get("history", [])
+        body["clue_resolutions"] = prior_body.get("clue_resolutions", {})
         body["batch_overrides"] = prior_body.get("batch_overrides", {})
         body["locks"] = prior_body.get("locks", {})
         body["locks"].update(
@@ -151,6 +152,14 @@ def commit(db, source_id, proposal, context, fingerprint):
             }
         )
         if previous and not usable:
+            # An unrelated chat edit must not erase still-valid human reviews.
+            body["notes"].update(
+                {
+                    ident: item
+                    for ident, item in prior_body.get("notes", {}).items()
+                    if item.get("manual_verified") and valid_refs(db, item["evidence"])
+                }
+            )
             body["paused"] = prior_body.get("paused", False)
             body["pause_override"] = prior_body.get("pause_override", False)
             if "manual_role" in prior_body:
@@ -371,7 +380,6 @@ def commit(db, source_id, proposal, context, fingerprint):
                     "resolved": False,
                 },
             )
-        body["quality_issues"] = context.get("quality_issues", [])
         body["unattributed"] = [
             {
                 "section": entry["section"],
@@ -385,6 +393,10 @@ def commit(db, source_id, proposal, context, fingerprint):
             }
             for entry in context.get("unattributed", [])
         ]
+        from .clues import pending, sync_issues
+
+        body["unattributed"] = pending(body)
+        sync_issues(body)
 
         if post_shipment_only:
             for action in body["actions"].values():
@@ -444,6 +456,14 @@ def command(db, source_id, expected_version, operation, target=None, value=None)
         if operation == "pause" and type(value) is bool:
             body["paused"] = value
             body["pause_override"] = True
+        elif operation == "resolve_clue":
+            from .clues import resolve
+
+            resolve(db, body, target, value)
+        elif operation == "restore_clue":
+            from .clues import restore
+
+            restore(db, body, target)
         elif operation == "followup":
             entry = Followup.model_validate(value)
             if not entry.note.strip():

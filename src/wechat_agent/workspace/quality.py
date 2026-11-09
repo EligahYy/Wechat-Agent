@@ -11,8 +11,10 @@ MODES = ("海运", "卡航", "班列")
 
 def display_text(text):
     # Only internal actor aliases; never perform Chinese spelling substitutions.
-    text = re.sub(r"(?<![A-Za-z])CUSTOMER(?![A-Za-z])", "该联系人", text)
-    return re.sub(r"(?<![A-Za-z])SELF(?![A-Za-z])", "我方", text)
+    text = re.sub(
+        r"(?<![A-Za-z0-9_])CUSTOMER(?![A-Za-z0-9_])", "该联系人", text, flags=re.I
+    )
+    return re.sub(r"(?<![A-Za-z0-9_])SELF(?![A-Za-z0-9_])", "我方", text, flags=re.I)
 
 
 def validate_refs(keys, context):

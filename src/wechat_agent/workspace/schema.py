@@ -91,3 +91,9 @@ class Followup(Strict):
 class Draft(Strict):
     text: str = Field(min_length=1, max_length=1200)
     evidence: list[str] = Field(min_length=1, max_length=12)
+
+
+class ClueResolution(Strict):
+    choice: Literal["confirmed", "dismissed"]
+    text: str = Field(default="", max_length=500)
+    belongs_to_customer: bool = Field(default=False, strict=True)

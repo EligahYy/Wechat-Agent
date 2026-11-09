@@ -179,6 +179,23 @@ def build(db, source_id, search=None):
             "history": prior.get("history", []),
             "batch_overrides": prior.get("batch_overrides", {}),
             "manual_role": prior.get("manual_role"),
+            "notes": {
+                ident: item
+                for ident, item in prior.get("notes", {}).items()
+                if item.get("manual_verified") and valid_refs(db, item["evidence"])
+            },
+            "clue_resolutions": prior.get("clue_resolutions", {}),
+        }
+    if memory is not None:
+        memory["clue_resolutions"] = {
+            ident: {
+                "choice": result["choice"],
+                "text": memory.get("notes", {})
+                .get(result.get("note_id"), {})
+                .get("text", result["text"]),
+            }
+            for ident, result in memory.get("clue_resolutions", {}).items()
+            if valid_refs(db, result["original"]["evidence"])
         }
 
     # IDs remain stable aliases; source names and raw account IDs stay local.

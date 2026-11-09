@@ -6,7 +6,7 @@ from ..config import secret
 from ..db import dumps
 from ..identity import location
 from .quality import display_text
-from .store import allowed_chats, legacy_paused, read, source_chats
+from .store import allowed_chats, legacy_paused, read, source_chats, valid_refs
 
 
 def candidates(db, q="", page=1):
@@ -108,6 +108,16 @@ def details(db, source_id, include_evidence=True):
     doc = read(db, source_id)
     if not doc:
         raise ValueError("workspace_not_found")
+    from .clues import pending
+
+    doc["body"]["unattributed"] = [
+        item | {"text": display_text(item["text"])} for item in pending(doc["body"])
+    ]
+    doc["body"]["clue_resolutions"] = {
+        ident: result | {"text": display_text(result["text"])}
+        for ident, result in doc["body"].get("clue_resolutions", {}).items()
+        if valid_refs(db, result["original"]["evidence"])
+    }
     if not doc["body"].get("pause_override"):
         doc["body"]["paused"] = legacy_paused(db, source_id)
     locator = location(db, source_id)
@@ -130,6 +140,11 @@ def details(db, source_id, include_evidence=True):
         r["id"]
         for item in doc["body"].get("unattributed", [])
         for r in item.get("evidence", [])
+    )
+    ids.update(
+        r["id"]
+        for result in doc["body"]["clue_resolutions"].values()
+        for r in result["original"]["evidence"]
     )
     doc["evidence"] = []
     if include_evidence:
@@ -255,11 +270,26 @@ def packets(db, source_id, page=1):
         body = json.loads(r["body"])
         for fact in body["facts"]:
             fact["evidence"] = [mapping[k] for k in fact["evidence"] if k in mapping]
+            fact["text"] = display_text(fact["text"])
         ids = [ref["id"] for ref in refs]
         evidence = db.rows(
-            "SELECT m.id,m.text,m.type,m.completeness,m.event_time,v.title conversation FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.event_time,m.id",
+            "SELECT m.id,m.text,m.type,m.direction,m.completeness,m.event_time,v.title conversation FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.event_time,m.id",
             (dumps(ids),),
         )
+        directions = {m["id"]: m["direction"] for m in evidence}
+        for fact in body["facts"]:
+            speakers = {directions[ref["id"]] for ref in fact["evidence"]}
+            fact["subject_label"] = (
+                "我方（工作微信）"
+                if fact["subject"] == "other" and speakers == {"outgoing"}
+                else "多方沟通"
+                if fact["subject"] == "other" and "outgoing" in speakers
+                else {
+                    "customer": "关联客户",
+                    "other": "其他参与人",
+                    "unclear": "归属待核实",
+                }[fact["subject"]]
+            )
         items.append(
             {
                 "kind": r["kind"],

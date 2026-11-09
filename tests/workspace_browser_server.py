@@ -159,6 +159,89 @@ if __name__ == "__main__":
     drafts.create_client = agent.create_client
     ocr.recognize_bytes = lambda data: ("海运报价候选，需核对原图", "synthetic-local")
 
+    @app.post("/__test__/review-fixture")
+    def review_fixture():
+        from wechat_agent.db import dumps, now
+        from wechat_agent.workspace.context import build
+        from wechat_agent.workspace.store import raw, read, reference, save, stable
+
+        ingest(
+            db,
+            [
+                {
+                    "source": "fixture",
+                    "account_id": "work",
+                    "conversation_id": "group",
+                    "conversation_type": "group",
+                    "source_id": "self1",
+                    "sender_id": "work",
+                    "direction": "outgoing",
+                    "event_time": datetime.now(UTC).isoformat(),
+                    "message_type": "text",
+                    "text": "我方已对接卡航，等待确认报价。",
+                }
+            ],
+        )
+        agent.run(db, "merchant")
+        ctx = build(db, "merchant")
+        own_key, own = next(
+            (k, v) for k, v in ctx["evidence"].items() if v["direction"] == "outgoing"
+        )
+        anchor = next(v for v in ctx["evidence"].values() if v["anchor"])
+        doc = read(db, "merchant")
+        body = doc["body"]
+        body["unattributed"] = [
+            {
+                "section": "notes",
+                "code": "workspace_customer_anchor_required",
+                "text": "SELF已对接卡航，客户的意向待核实",
+                "evidence": [reference(anchor), reference(own)],
+            },
+            {
+                "section": "notes",
+                "code": "workspace_customer_anchor_required",
+                "text": "客户货型是否服装，需要核对",
+                "evidence": [reference(anchor)],
+            },
+        ]
+        body["quality_issues"] = [
+            {"section": "notes", "code": "workspace_customer_anchor_required"}
+        ] * 2
+        with db.tx() as c:
+            save(
+                c,
+                db,
+                "merchant",
+                body,
+                json.loads(raw(db, "merchant")["read_set"]),
+                doc["version"] + 1,
+                "fixture",
+            )
+            c.execute(
+                "INSERT INTO workspace_packets VALUES(?,?,?,?,?,?,?)",
+                (
+                    stable("self-fixture"),
+                    "work",
+                    "merchant",
+                    "extract",
+                    dumps([reference(own)]),
+                    dumps(
+                        {
+                            "facts": [
+                                {
+                                    "subject": "other",
+                                    "kind": "quote",
+                                    "text": "SELF提到卡航，等待报价反馈",
+                                    "evidence": [own_key],
+                                }
+                            ]
+                        }
+                    ),
+                    now(),
+                ),
+            )
+        return {"ok": True}
+
     @app.post("/__test__/add-image")
     def add_image():
         allow_conversation(
