@@ -23,7 +23,7 @@ def raster_type(data):
     raise ValueError("上游未返回支持的图片格式；不展示 HTML、SVG 或未知文件")
 
 
-def local_image(db, mid, factory):
+def local_image(db, mid, factory, refresh=False):
     rows = db.rows(
         "SELECT m.*,c.source,c.source_id chat_id,c.account_id,c.allowlisted FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=?",
         (mid,),
@@ -35,9 +35,11 @@ def local_image(db, mid, factory):
     ):
         raise ValueError("此消息不是可读取的真实微信图片")
     message = rows[0]
+    if message["account_id"] != db.settings.source_account:
+        raise ValueError("图片不属于当前工作账号")
     directory = db.settings.data_dir / "media"
     cached = db.rows("SELECT * FROM attachments WHERE message_id=?", (mid,))
-    if cached:
+    if cached and not refresh:
         meta = cached[0]
         path = directory / (meta["sha256"] + ".bin")
         if path.is_file() and not path.is_symlink():

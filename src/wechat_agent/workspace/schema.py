@@ -37,6 +37,7 @@ class Action(Item):
 
 class Decision(Item):
     key: Literal["role", "batch", "timing", "other"]
+    batch: str | None = None
     blocks_followup: bool = False
     impact: str = Field(default="", max_length=500)
 
@@ -77,3 +78,16 @@ class Fact(Item):
 
 class FactBook(Strict):
     facts: list[Fact] = Field(max_length=80)
+
+
+class Followup(Strict):
+    outcome: Literal["contacted", "replied", "no_reply", "note"]
+    note: str = Field(min_length=1, max_length=1000)
+    action_id: str | None = None
+    action_state: Literal["keep", "waiting", "done", "cancelled"] = "keep"
+    next_date: str | None = None
+
+
+class Draft(Strict):
+    text: str = Field(min_length=1, max_length=1200)
+    evidence: list[str] = Field(min_length=1, max_length=12)

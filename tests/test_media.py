@@ -116,7 +116,7 @@ def test_v2_migration_preserves_database(tmp_path):
     c.close()
     db = DB(Settings(data_dir=tmp_path))
     assert db.rows("SELECT * FROM merchants")[0]["name"] == "旧商家"
-    assert db.rows("PRAGMA user_version")[0]["user_version"] == 12
+    assert db.rows("PRAGMA user_version")[0]["user_version"] == 13
     assert "source_locator" in {
         r["name"] for r in db.rows("PRAGMA table_info(messages)")
     }

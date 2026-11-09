@@ -6,7 +6,11 @@
     <meta name="csrf" content="{{ csrf }}" />
     <title>半托管欧区备货用户助手</title>
     <link rel="stylesheet" href="/static/workspace.css" />
-    <script nonce="{{ nonce }}" src="/static/workspace.js" defer></script>
+    <script
+      nonce="{{ nonce }}"
+      src="/static/workspace.js"
+      type="module"
+    ></script>
   </head>
   <body>
     <aside>
@@ -17,9 +21,11 @@
         <button data-view="today" aria-current="page">今日</button
         ><button data-view="customers">客户</button
         ><button data-view="review">待确认</button
-        ><button data-view="pilot">整理与进度</button>
+        ><button data-view="pilot">整理与进度</button
+        ><button data-view="scope">会话范围</button
+        ><button data-view="settings">设置</button>
       </nav>
-      <a class="sidebar-link" href="/?page=settings">设置与接入</a>
+      <span class="sidebar-link">本机归档 · 人工发送</span>
     </aside>
     <main>
       <div class="top">
@@ -27,9 +33,7 @@
         ><span>微信仍由你发送</span>
       </div>
       <h1 id="title">今日</h1>
-      <p class="subtitle">
-        从首次接触到每个备货批次，完整保留客户线索。
-      </p>
+      <p class="subtitle">从首次接触到每个备货批次，完整保留客户线索。</p>
       <p id="status" role="status"></p>
       <div id="content"></div>
     </main>

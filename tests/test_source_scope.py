@@ -141,7 +141,7 @@ def test_migration_preserves_archive_and_starts_empty_exemption_list(db, record)
         c.execute("PRAGMA user_version=6")
     migrated = DB(db.settings)
     assert counts(migrated)["selected"] == 1
-    assert migrated.rows("PRAGMA user_version")[0]["user_version"] == 12
+    assert migrated.rows("PRAGMA user_version")[0]["user_version"] == 13
     assert len(migrated.rows("SELECT * FROM messages")) == 1
     backups = list(db.settings.data_dir.glob("pre-v8-*.sqlite3"))
     assert len(backups) == 1 and backups[0].stat().st_mode & 0o777 == 0o600

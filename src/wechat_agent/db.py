@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 12:
+            if version > 13:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -234,6 +234,22 @@ class DB:
                 CREATE TABLE IF NOT EXISTS workspace_queue(account_id TEXT NOT NULL,source_id TEXT NOT NULL,input_revision TEXT NOT NULL,status TEXT NOT NULL,priority INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,error TEXT,available_at TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(account_id,source_id));
                 CREATE INDEX IF NOT EXISTS workspace_queue_due ON workspace_queue(account_id,status,priority,available_at);
                 PRAGMA user_version=12; COMMIT;""")
+            if version < 13:
+                if version:
+                    target = settings.data_dir / (
+                        "pre-v13-"
+                        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                        + ".sqlite3"
+                    )
+                    backup = sqlite3.connect(target)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    target.chmod(0o600)
+                connection.executescript("""BEGIN IMMEDIATE;
+                CREATE TABLE IF NOT EXISTS message_extractions(message_id TEXT PRIMARY KEY REFERENCES messages(id),source_revision INTEGER NOT NULL,sha256 TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 0,confirmed_text TEXT NOT NULL DEFAULT '',candidate_text TEXT NOT NULL DEFAULT '',engine TEXT NOT NULL,updated_at TEXT NOT NULL);
+                PRAGMA user_version=13; COMMIT;""")
         finally:
             connection.close()
         self.path.chmod(0o600)

@@ -659,3 +659,251 @@ select {
   padding: 10px 0;
   color: var(--blue);
 }
+
+/* Shared settings, source controls and the customer lifecycle. */
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  width: 100%;
+  resize: vertical;
+  min-height: 96px;
+}
+textarea:focus-visible,
+summary:focus-visible {
+  outline: 3px solid #338bee;
+  outline-offset: 3px;
+}
+form label {
+  margin: 14px 0 8px;
+}
+form label input,
+form label select,
+form label textarea {
+  display: block;
+  margin-top: 6px;
+}
+button,
+summary {
+  touch-action: manipulation;
+}
+.detail-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  margin: 24px -4px 0;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--bg);
+}
+.detail-tabs button {
+  white-space: nowrap;
+  border: 0;
+  background: transparent;
+  flex: 1;
+}
+.detail-tabs button[aria-selected="true"] {
+  background: var(--surface);
+  color: var(--blue);
+  box-shadow: 0 1px 4px #0002;
+}
+.customer-heading p {
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.customer-heading .toolbar {
+  justify-content: flex-start;
+  margin: 18px 0;
+  gap: 8px;
+}
+.settings-grid {
+  display: grid;
+  gap: 20px;
+}
+.check-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.check-label input {
+  width: 18px;
+  min-height: 18px;
+  margin-top: 4px;
+  accent-color: var(--blue);
+  flex-shrink: 0;
+}
+.monitor-row {
+  display: flex;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 0;
+  align-items: flex-start;
+}
+.monitor-row:last-child {
+  border: 0;
+}
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  margin-top: 8px;
+  flex-shrink: 0;
+}
+.status-dot.ok,
+.status-dot.healthy {
+  background: var(--green);
+}
+.status-dot.error,
+.status-dot.failed {
+  background: #c84c34;
+}
+.status-dot.warning,
+.status-dot.degraded {
+  background: #bc801e;
+}
+.monitor-row p,
+.monitor-row small {
+  color: var(--muted);
+  font-size: 13px;
+}
+.usage-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  min-height: 215px;
+  margin: 24px 0 0;
+}
+.usage-day {
+  flex: 1;
+  text-align: center;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.usage-day span {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.usage-column {
+  height: 140px;
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  gap: 1px;
+  background: var(--bg);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.usage-column i {
+  background: var(--blue);
+  display: block;
+  min-height: 1px;
+}
+.usage-column b {
+  background: var(--blue);
+  opacity: 0.3;
+  display: block;
+}
+.scope-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+.scope-row input[type="checkbox"] {
+  width: 18px;
+  min-height: 18px;
+  accent-color: var(--blue);
+  flex-shrink: 0;
+}
+.scope-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.scope-name details {
+  margin-top: 2px;
+}
+.scope-name summary {
+  min-height: 28px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.scope-row > button {
+  flex-shrink: 0;
+}
+.segments button[aria-pressed="true"] {
+  background: var(--surface);
+  box-shadow: 0 1px 4px #0002;
+}
+.source-image {
+  display: block;
+  max-width: 100%;
+  max-height: 440px;
+  object-fit: contain;
+  border-radius: 12px;
+  margin: 16px auto;
+  background: var(--surface);
+}
+.verified-text {
+  margin-top: 14px;
+  padding: 12px;
+  background: var(--tint);
+  border-radius: 10px;
+}
+.verified-text p,
+.evidence p,
+#customer-journal p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.attention {
+  color: var(--blue);
+  background: var(--tint);
+}
+@media (max-width: 760px) {
+  nav {
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+  nav button {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .usage-chart {
+    gap: 6px;
+  }
+  .scope-row {
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .scope-name {
+    min-width: 160px;
+  }
+  .detail-tabs button {
+    padding: 9px 12px;
+  }
+  .toolbar {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 760px) {
+  aside > .sidebar-link {
+    display: none;
+  }
+  nav {
+    scrollbar-width: none;
+  }
+  nav::-webkit-scrollbar {
+    display: none;
+  }
+}

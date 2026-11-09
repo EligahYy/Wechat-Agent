@@ -153,15 +153,7 @@ def create_app(settings=None, source_factory=None, background=False):
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request):
-        template = (
-            (
-                "dashboard.html"
-                if request.query_params.get("page") in {"settings", "scope"}
-                else "workspace.html"
-            )
-            if request.state.authenticated
-            else "login.html"
-        )
+        template = "workspace.html" if request.state.authenticated else "login.html"
         return env.get_template(template).render(
             csrf=request.state.csrf if request.state.authenticated else "",
             nonce=request.state.nonce,
@@ -194,10 +186,12 @@ def create_app(settings=None, source_factory=None, background=False):
         )
 
     @app.get("/api/workspace/sources")
-    def workspace_sources(source_id: str, page: int = 1):
+    def workspace_sources(
+        source_id: str, page: int = 1, order: str = "oldest", q: str = ""
+    ):
         from .workspace.views import sources
 
-        return sources(db, source_id, page)
+        return sources(db, source_id, page, order, q)
 
     @app.get("/api/workspace/packets")
     def workspace_packets(source_id: str, page: int = 1):
@@ -246,7 +240,80 @@ def create_app(settings=None, source_factory=None, background=False):
     def workspace_documents():
         from .workspace.views import listing
 
-        return listing(db)
+        return listing(db, compact=True)
+
+    @app.get("/api/workspace/customer")
+    def workspace_customer(source_id: str):
+        from .workspace.views import details
+
+        return details(db, source_id)
+
+    @app.get("/api/workspace/settings")
+    def workspace_settings():
+        from .workspace.presentation import settings
+
+        return settings(db, background)
+
+    @app.get("/api/workspace/journal")
+    def workspace_journal(source_id: str, page: int = 1):
+        from .workspace.presentation import journal
+
+        return journal(db, source_id, page)
+
+    @app.get("/api/workspace/history")
+    def workspace_history(source_id: str):
+        from .workspace.presentation import history
+
+        return history(db, source_id)
+
+    @app.post("/api/workspace/draft")
+    async def workspace_draft(request: Request):
+        from .workspace.drafts import generate
+
+        body = await request.json()
+        if (
+            not isinstance(body.get("source_id"), str)
+            or not isinstance(body.get("action_id"), str)
+            or type(body.get("version")) is not int
+        ):
+            raise ValueError("workspace_invalid_command")
+        return await run_in_threadpool(
+            generate, db, body["source_id"], body["action_id"], body["version"]
+        )
+
+    @app.get("/api/workspace/images/{mid}")
+    def workspace_image(mid: str, refresh: bool = False):
+        from .media import local_image
+        from .workspace.ocr import message
+
+        message(db, mid)
+        result = local_image(db, mid, source_factory, refresh=refresh)
+        return Response(
+            result["bytes"],
+            media_type=result["mime"],
+            headers={"X-Wechat-Media-Quality": result["quality"]},
+        )
+
+    @app.get("/api/workspace/images/{mid}/text")
+    def workspace_image_text(mid: str):
+        from .workspace.ocr import state
+
+        return state(db, mid)
+
+    @app.post("/api/workspace/images/{mid}/recognize")
+    async def workspace_recognize(mid: str):
+        from .workspace.ocr import candidate
+
+        return await run_in_threadpool(candidate, db, mid, source_factory)
+
+    @app.post("/api/workspace/images/{mid}/text")
+    async def workspace_verify_text(mid: str, request: Request):
+        from .workspace.ocr import confirm
+
+        body = await request.json()
+        return await run_in_threadpool(
+            confirm, db, mid, body.get("version"), body.get("text"), source_factory
+        )
 
     @app.post("/api/workspace/analyze")
     async def workspace_analyze(request: Request):
@@ -288,7 +355,7 @@ def create_app(settings=None, source_factory=None, background=False):
     def health():
         return {
             "database": "ok",
-            "schema": 9,
+            "schema": db.rows("PRAGMA user_version")[0]["user_version"],
             "runtime": db.rows("SELECT * FROM runtime"),
             "gaps": db.rows("SELECT COUNT(*) n FROM sync_windows WHERE status='gap'")[
                 0
@@ -1061,15 +1128,15 @@ def create_app(settings=None, source_factory=None, background=False):
             or not 1 <= page <= 100000
         ):
             raise ValueError("筛选参数无效")
-        where = "n.account_id=? AND (instr(n.name,?)>0 OR instr(n.source_id,?)>0) AND EXISTS(SELECT 1 FROM actor_exclusions x WHERE x.account_id=n.account_id AND x.source_id=n.source_id) = ?"
+        where = "n.account_id=? AND (instr(lower(COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),n.name)),lower(?))>0 OR instr(lower(n.source_id),lower(?))>0) AND EXISTS(SELECT 1 FROM actor_exclusions x WHERE x.account_id=n.account_id AND x.source_id=n.source_id) = ?"
         args = (db.settings.source_account, q, q, int(scope == "archive"))
-        total = db.rows("SELECT COUNT(*) n FROM crm_contacts n WHERE " + where, args)[
-            0
-        ]["n"]
+        joins = " FROM crm_contacts n LEFT JOIN identity_metadata i ON i.account_id=n.account_id AND i.source_id=n.source_id WHERE "
+        total = db.rows("SELECT COUNT(*) n" + joins + where, args)[0]["n"]
         rows = db.rows(
-            "SELECT n.*,? excluded FROM crm_contacts n WHERE "
+            "SELECT n.id,n.source_id,n.account_id,n.role,COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),n.name) name,? excluded"
+            + joins
             + where
-            + " ORDER BY n.name,n.id LIMIT 50 OFFSET ?",
+            + " ORDER BY name,n.id LIMIT 50 OFFSET ?",
             (int(scope == "archive"), *args, (page - 1) * 50),
         )
         return {

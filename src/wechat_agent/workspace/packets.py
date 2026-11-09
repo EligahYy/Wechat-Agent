@@ -5,7 +5,7 @@ import json
 from ..db import dumps, now
 from .quality import ENGINE_VERSION
 from .schema import FactBook
-from .store import stable
+from .store import reference, stable
 
 EXTRACT = """按客户归集资料。输入是同一相关会话按时间排列的完整分片，保留上下文、疑问、回答、报价、货品、时间、承诺、订单和运输进展。不要以价值判断过滤，也不要只提待办。群里其他人的事实保留subject=other或unclear，不能都归给CUSTOMER。
 区分问题/计划/实际状态；客户问没发出去不代表未发货，后续发出去了/已发车/已出境是实际已走货，系统出库可能滞后。订单号原样保留。媒体占位只记内容未知，不能猜图。
@@ -95,10 +95,7 @@ def prepare(db, source_id, context, session):
         if not book.facts and payload.get("messages"):
             raise ValueError("workspace_empty_factbook")
         body = book.model_dump()
-        refs = [
-            {"id": evidence[r]["id"], "revision": evidence[r]["revision"]}
-            for r in sorted(allowed)
-        ]
+        refs = [reference(evidence[r]) for r in sorted(allowed)]
         with db.tx() as c:
             c.execute(
                 "INSERT OR REPLACE INTO workspace_packets VALUES(?,?,?,?,?,?,?)",

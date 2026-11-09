@@ -94,6 +94,9 @@ def reconcile(db):
                     now(),
                 )
             )
+        elif not done and previous["status"] == "succeeded":
+            # Manual feedback can invalidate the document without changing chats.
+            updates.append((account, ident, revision, "queued", priority, now(), now()))
         elif (
             done
             and previous["status"] != "succeeded"

@@ -1,20 +1,21 @@
-const $ = (s) => document.querySelector(s),
-  esc = (s) =>
-    String(s ?? "").replace(
-      /[&<>"']/g,
-      (c) =>
-        ({
-          "&": "&amp;",
-          "<": "&lt;",
-          ">": "&gt;",
-          '"': "&quot;",
-          "'": "&#39;",
-        })[c],
-    );
-let view = ["today", "customers", "review", "pilot"].includes(
-    new URLSearchParams(location.search).get("view"),
+import { $, esc, api, copy, time, errorText } from "./workspace/client.js";
+import { renderSettings } from "./workspace/settings.js";
+import { renderScope } from "./workspace/scope.js";
+import { customerHTML, evidence, mediaControls } from "./workspace/customer.js";
+import { closeImage } from "./workspace/media.js";
+let view = [
+    "today",
+    "customers",
+    "review",
+    "pilot",
+    "settings",
+    "scope",
+  ].includes(
+    new URLSearchParams(location.search).get("view") ||
+      new URLSearchParams(location.search).get("page"),
   )
-    ? new URLSearchParams(location.search).get("view")
+    ? new URLSearchParams(location.search).get("view") ||
+      new URLSearchParams(location.search).get("page")
     : "today",
   taskView = "today",
   queuePage = 1,
@@ -28,7 +29,11 @@ let view = ["today", "customers", "review", "pilot"].includes(
   candidateSource = "",
   candidateRequest = 0,
   candidateItems = [],
-  candidateTimer;
+  candidateTimer,
+  timelineQuery = "",
+  customerQuery = "",
+  customerStage = "all",
+  customerPage = 1;
 const stages = {
   needs: "需求确认",
   quoting: "报价沟通",
@@ -38,28 +43,15 @@ const stages = {
   reported_shipped: "已报告发货",
   closed: "已结束",
 };
-async function api(path, body) {
-  const r = await fetch("/api/workspace/" + path, {
-    method: body ? "POST" : "GET",
-    headers: body
-      ? {
-          "Content-Type": "application/json",
-          "X-CSRF-Token": $("meta[name=csrf]").content,
-        }
-      : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const d = await r.json();
-  if (!r.ok) throw Error(d.error || "请求失败");
-  return d;
-}
 async function refresh() {
+  const current = view;
   const data = await api("documents");
   documents = data.items;
-  $("#status").textContent = data.stale_documents
-    ? `${data.stale_documents} 份档案依据已变化，已暂时退出展示，请重新分析。`
-    : "";
-  render();
+  if (current === view)
+    $("#status").textContent = data.stale_documents
+      ? `${data.stale_documents} 份档案依据已变化，已暂时退出展示，请重新分析。`
+      : "";
+  if (current === view) render();
 }
 function active(d) {
   const ids =
@@ -80,12 +72,20 @@ function render() {
     customers: "客户",
     review: "待确认",
     pilot: "整理与进度",
+    settings: "设置与接入",
+    scope: "会话范围",
   }[view];
+  if (view === "settings" || view === "scope") {
+    (view === "settings" ? renderSettings() : renderScope()).catch(
+      (e) => ($("#status").textContent = e.message),
+    );
+    return;
+  }
   if (view === "pilot") {
     pilot();
     return;
   }
-  const list = documents.filter((d) =>
+  let list = documents.filter((d) =>
     view === "today"
       ? active(d).length
       : view === "review"
@@ -93,7 +93,36 @@ function render() {
           Object.values(d.body.actions).some((a) => a.state === "proposed")
         : d.body.relationship === "merchant",
   );
+  if (view === "customers")
+    list = list.filter(
+      (d) =>
+        [
+          d.name,
+          d.source_id,
+          ...d.location.conversations.map((c) => c.title),
+        ].some((t) =>
+          t.toLocaleLowerCase().includes(customerQuery.toLocaleLowerCase()),
+        ) &&
+        (customerStage === "all" ||
+          Object.values(d.body.batches).some((b) => b.stage === customerStage)),
+    );
+  const total = list.length;
+  customerPage = Math.min(customerPage, Math.max(1, Math.ceil(total / 50)));
+  if (view === "customers")
+    list = list.slice((customerPage - 1) * 50, customerPage * 50);
   $("#content").innerHTML =
+    (view === "customers"
+      ? `<form id="customer-search" class="toolbar"><label class="candidate-search">搜索客户<input name="q" maxlength="200" placeholder="姓名、备注或来源群名" value="${esc(customerQuery)}"></label><label>备货阶段<select name="stage"><option value="all">全部阶段</option>${Object.entries(
+          stages,
+        )
+          .map(
+            ([k, n]) =>
+              `<option value="${k}" ${customerStage === k ? "selected" : ""}>${n}</option>`,
+          )
+          .join(
+            "",
+          )}</select></label><button>查找客户</button></form><p class="meta">${total}位商家 · 每页最多50位 · 白名单内人物不展示</p>`
+      : "") +
     (view === "today"
       ? `<div class="toolbar segments" role="tablist" aria-label="待办状态">${Object.entries(
           {
@@ -125,7 +154,10 @@ function render() {
       )
       .join("") ||
       '<div class="empty"><h2>当前没有可展示的结果</h2><p class="muted">可在“整理与进度”开启自动整理，或选择一位联系人分析。无必要行动、身份未明确或覆盖不足时，不会强行创建待办。</p></div>') +
-    "</div>";
+    "</div>" +
+    (view === "customers"
+      ? `<div class="toolbar spaced"><button id="customers-prev" ${customerPage > 1 ? "" : "disabled"}>上一页客户</button><span>第${customerPage}页</span><button id="customers-next" ${customerPage * 50 < total ? "" : "disabled"}>下一页客户</button></div>`
+      : "");
 }
 const candidateBlocks = {
   analysis_disabled:
@@ -139,12 +171,12 @@ const candidateBlocks = {
 const emptyCandidates = {
   account_unbound: [
     "尚未绑定工作微信",
-    "请在原工作台设置中检测连接并确认工作账号。",
+    "请在设置与接入中检测连接并确认工作账号。",
     "settings",
   ],
   no_archive: [
     "当前账号尚无归档消息",
-    "请在原工作台设置中检查 wx-cli 与采集状态；已有归档时，请核对绑定账号和启动时的数据目录，无需重复导入。",
+    "请在设置与接入中检查 wx-cli 与采集状态；已有归档时，请核对绑定账号和启动时的数据目录，无需重复导入。",
     "settings",
   ],
   scope_excluded: [
@@ -217,9 +249,26 @@ async function pilot() {
     const search = `<form id="candidate-search" class="toolbar spaced"><label class="candidate-search">搜索联系人<input name="q" maxlength="100" value="${esc(candidateQuery)}" placeholder="备注、昵称或微信 ID"></label></form>`;
     const picker = data.items.length
       ? `<div class="candidate-results" aria-label="匹配联系人">${data.items.map((c) => `<button type="button" data-candidate="${esc(c.source_id)}" aria-pressed="${c.source_id === candidateSource}"><strong>${esc(c.name)}</strong><small>${esc(c.source_id)}</small></button>`).join("")}</div><div class="toolbar spaced"><button id="prev" ${candidatePage === 1 ? "disabled" : ""}>上一页</button><span>第 ${candidatePage} 页 · ${data.total} 位来源联系人 · 每页最多 50 位</span><button id="next" ${!data.has_more ? "disabled" : ""}>下一页</button></div><p id="candidate-readiness" class="muted" role="status"></p><button class="primary spaced" id="analyze" disabled>${busy ? "正在分析，请稍候…" : "分析此联系人"}</button>`
-      : `<div class="candidate-empty spaced" role="status"><h3>${empty ? empty[0] : "没有匹配的联系人"}</h3><p>${empty ? empty[1] : "请尝试其他备注、昵称或微信 ID，或清空搜索后重试。"}</p>${empty ? `<a href="/?page=${empty[2]}">${empty[2] === "settings" ? "前往连接与模型设置" : "检查会话范围与人物白名单"} →</a>` : '<button id="clear-candidate-search">清空搜索</button>'}</div>`;
+      : `<div class="candidate-empty spaced" role="status"><h3>${empty ? empty[0] : "没有匹配的联系人"}</h3><p>${empty ? empty[1] : "请尝试其他备注、昵称或微信 ID，或清空搜索后重试。"}</p>${empty ? `<a href="/workspace?view=${empty[2]}">${empty[2] === "settings" ? "前往连接与模型设置" : "检查会话范围与人物白名单"} →</a>` : '<button id="clear-candidate-search">清空搜索</button>'}</div>`;
     $("#content").innerHTML =
-      `<div id="auto-queue"></div><div class="card spaced"><div class="toolbar"><h2>手动分析一位联系人</h2><button id="refresh-candidates">刷新联系人</button></div><p class="muted">联系人从本机归档读取，查看列表不调用模型。点击分析才会调用 DeepSeek，计入已有预算，先完整整理来源分册，再总结；预算不足可续跑。</p><p class="meta">当前账号已归档 ${d.archived_messages} 条消息 · 正常跟进 ${d.scope_conversations} 个会话 · 可识别 ${d.contacts} 位联系人</p>${search}${picker}<div class="toolbar spaced"><a href="/?page=settings">模型与分析授权设置 →</a><a href="/?page=scope">会话范围与白名单 →</a></div><p class="meta">修改设置后返回刷新。不会启动全库重建。图片保留占位；长历史分册整理，暂停后可继续。</p></div><section class="card spaced"><h2>客户资料整理进度</h2><div id="scan-progress" role="status">正在读取进度…</div></section><section class="card spaced"><h2>最近运行</h2>${runs.map((r) => `<p>${esc(new Date(r.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))} 北京时间 · ${esc({ succeeded: "已完成", failed: "未完成", running: "处理中", paused: "已暂停，可续跑" }[r.status] || r.status)} · ${r.calls} 次请求</p>${r.error ? `<p class="error">${esc(r.error === "workspace_customer_anchor_required" ? "无法确认这条结论属于当前客户，未写入档案。请更新后重新分析；不会自动归属服务商或其他商家的消息。" : r.error === "workspace_transport_term" ? "运输表述与业务术语不一致。请升级后重新分析；0 次请求表示复用缓存，未新增模型调用。" : r.error)}</p>` : ""}`).join("") || "<p>尚未运行试点分析。</p>"}</section>`;
+      `<div id="auto-queue"></div><div class="card spaced"><div class="toolbar"><h2>手动分析一位联系人</h2><button id="refresh-candidates">刷新联系人</button></div><p class="muted">联系人从本机归档读取，查看列表不调用模型。点击分析才会调用 DeepSeek，计入已有预算，先完整整理来源分册，再总结；预算不足可续跑。</p><p class="meta">当前账号已归档 ${d.archived_messages} 条消息 · 正常跟进 ${d.scope_conversations} 个会话 · 可识别 ${d.contacts} 位联系人</p>${search}${picker}<div class="toolbar spaced"><a href="/workspace?view=settings">模型与分析授权设置 →</a><a href="/workspace?view=scope">会话范围与白名单 →</a></div><p class="meta">修改设置后返回刷新。不会启动全库重建。图片保留占位；长历史分册整理，暂停后可继续。</p></div><section class="card spaced"><h2>客户资料整理进度</h2><div id="scan-progress" role="status">正在读取进度…</div></section><section class="card spaced"><h2>最近运行</h2>${
+        runs
+          .map(
+            (r) =>
+              `<p>${esc(new Date(r.created_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))} 北京时间 · ${esc(
+                {
+                  succeeded: "已完成",
+                  draft_succeeded: "草稿已生成",
+                  draft_failed: "草稿未完成",
+                  draft_running: "正在准备草稿",
+                  failed: "未完成",
+                  running: "处理中",
+                  paused: "已暂停，可续跑",
+                }[r.status] || r.status,
+              )} · ${r.calls} 次请求</p>${r.error ? `<p class="error">${esc(r.error === "workspace_customer_anchor_required" ? "无法确认这条结论属于当前客户，未写入档案。请更新后重新分析；不会自动归属服务商或其他商家的消息。" : r.error === "workspace_transport_term" ? "运输表述与业务术语不一致。请升级后重新分析；0 次请求表示复用缓存，未新增模型调用。" : r.error)}</p>` : ""}`,
+          )
+          .join("") || "<p>尚未运行试点分析。</p>"
+      }</section>`;
     if (data.items.length) updateCandidateButton();
     await scanProgress();
     await queueProgress();
@@ -253,9 +302,70 @@ document.addEventListener(
   true,
 );
 document.addEventListener("change", (e) => {
+  if (
+    e.target.name === "action_id" &&
+    e.target.closest("#customer-followup-form")
+  ) {
+    const f = e.target.form;
+    f.elements.action_state.disabled = !e.target.value;
+    f.elements.next_date.disabled = !e.target.value;
+    if (!e.target.value) {
+      f.elements.action_state.value = "keep";
+      f.elements.next_date.value = "";
+    }
+  }
   if (e.target.id === "contact") updateCandidateButton();
 });
 document.addEventListener("submit", async (e) => {
+  if (e.target.id === "customer-search") {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    customerQuery = f.get("q").trim();
+    customerStage = f.get("stage");
+    customerPage = 1;
+    render();
+    return;
+  }
+  if (e.target.id === "customer-timeline-search") {
+    e.preventDefault();
+    timelineQuery = new FormData(e.target).get("q").trim();
+    document.querySelector('[data-ledger="1"]').click();
+    return;
+  }
+  if (e.target.id === "customer-followup-form") {
+    e.preventDefault();
+    const form = e.target;
+    const b = form.querySelector("button");
+    b.disabled = true;
+    try {
+      const f = new FormData(form),
+        value = {
+          outcome: f.get("outcome"),
+          note: f.get("note"),
+          action_id: f.get("action_id") || null,
+          action_state: f.get("action_state") || "keep",
+          next_date: f.get("next_date") || null,
+        };
+      const id = selected.id;
+      await api("command", {
+        source_id: selected.source_id,
+        version: selected.version,
+        operation: "followup",
+        value,
+      });
+      await api("queue/refresh", {});
+      close();
+      await refresh();
+      await openDetail(id);
+      detailTab("journal");
+      await loadJournal();
+      $("#detail-status").textContent = "人工跟进已保存。";
+    } catch (error) {
+      $("#detail-status").textContent = error.message;
+      if (b.isConnected) b.disabled = false;
+    }
+    return;
+  }
   if (e.target.id !== "candidate-search") return;
   e.preventDefault();
   candidateQuery = new FormData(e.target).get("q").trim();
@@ -263,16 +373,6 @@ document.addEventListener("submit", async (e) => {
   pilot();
 });
 
-function evidence(refs, d) {
-  const ids = new Set(refs.map((r) => r.id));
-  return `<details><summary>查看来源</summary>${d.evidence
-    .filter((m) => ids.has(m.id))
-    .map(
-      (m) =>
-        `<div class="evidence"><p class="meta">${esc(m.conversation)} · ${esc(new Date(m.event_time).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))}</p><p>${esc(m.text)}</p></div>`,
-    )
-    .join("")}</details>`;
-}
 async function queueProgress() {
   const q = await api("queue?page=" + queuePage);
   const target = $("#auto-queue");
@@ -303,63 +403,130 @@ async function queueProgress() {
   };
   target.innerHTML = `<section class="card"><div class="toolbar"><div><h2>按客户自动整理</h2><p class="muted">优先处理近15天活跃联系人，每位联系人都从完整历史开始；分册可复用。只对已授权、未加入白名单的来源调用模型。</p></div><button class="${q.enabled ? "" : "primary"}" id="automation-toggle" data-enabled="${!q.enabled}">${q.enabled ? "暂停自动整理" : "开启自动整理"}</button></div><p role="status">${esc(q.gate ? gateNames[q.gate] || reasons[q.gate] || q.gate : "队列运行中；新消息将更新对应客户")}${!q.background ? " · 此服务未启用后台，请使用 wechat-agent start" : ""}</p><p class="meta">待整理 ${q.counts.queued || 0} · 整理中 ${q.counts.running || 0} · 等待续跑 ${q.counts.paused || 0} · 已完成 ${q.counts.succeeded || 0} · 需要处理 ${q.counts.failed || 0}</p><div class="toolbar"><button id="queue-refresh">刷新会话与队列</button>${q.enabled && q.gate && !["manual_mode", "legacy_mode", "blocked_policy", "blocked_credentials", "blocked_budget"].includes(q.gate) ? '<button id="queue-resume">问题已处理，恢复队列</button>' : ""}</div><details id="queue-details" class="queue-disclosure" ${queueExpanded ? "open" : ""}><summary>查看联系人队列（${q.total}位）</summary>${q.items.map((i) => `<article class="queue-row"><div><strong>${esc(i.name)}</strong><p class="meta">${esc(states[i.status] || i.status)} · ${i.priority === 0 ? "近15天活跃" : "历史联系人"}${i.error ? " · " + esc(reasons[i.error] || i.error) : ""}</p></div>${["failed", "paused"].includes(i.status) ? `<button data-queue-retry="${esc(i.source_id)}">重试此联系人</button>` : ""}</article>`).join("") || "<p>尚无待整理联系人；确认工作账号和会话范围后刷新。</p>"}<div class="toolbar spaced"><button id="queue-prev" ${queuePage === 1 ? "disabled" : ""}>上一页队列</button><span>第 ${queuePage} 页 · 共 ${q.total} 位来源联系人 · 每页50位</span><button id="queue-next" ${q.has_more ? "" : "disabled"}>下一页队列</button></div></details></section>`;
 }
-function fieldWarning(item) {
-  return item.quality_warnings?.length
-    ? '<p class="meta">数字字段待核对；此摘要不能直接作为报价或数量依据，请查看原文。</p>'
-    : "";
-}
-function correction(section, id, item) {
-  return `<details><summary>纠正这条内容</summary><label>核对来源后的表述<input maxlength="500" id="correct-${id}" value="${esc(item.text)}"></label><button data-operation="correct" data-target="${section}:${id}" data-input="correct-${id}">保存纠正</button></details>`;
-}
-function openDetail(id) {
-  selected = documents.find((d) => d.id === id);
+
+async function openDetail(id) {
+  const summary = documents.find((d) => d.id === id);
+  selected = await api(
+    "customer?" + new URLSearchParams({ source_id: summary.source_id }),
+  );
   const d = selected;
   focusBefore = document.activeElement;
   $("#detail-title").textContent = d.name;
   $("#detail-status").textContent = "";
-  $("#detail").innerHTML =
-    `${d.body.quality_issues?.length ? `<section class="insight-card" role="status"><h3>部分内容需要核实</h3><p>${d.body.quality_issues.length} 条内容未通过来源校验，已隔离；仅展示通过校验的资料。独立通过校验的行动保留为待确认建议，请核对来源。</p><ul>${d.body.quality_issues.map((i) => `<li>${esc({ notes: "资料", batches: "批次", actions: "行动", decisions: "确认" }[i.section] || i.section)}：${esc({ workspace_customer_anchor_required: "缺少客户关联证据", workspace_transport_term: "运输术语不一致", workspace_transport_evidence: "运输方式没有对应原文", workspace_number_evidence: "数字与所引原文不一致", workspace_internal_alias: "含内部代号" }[i.code] || i.code)}</li>`).join("")}</ul></section>` : ""}<section class="section"><h3>本次资料覆盖</h3><p>相关归档 ${d.body.coverage.source_messages ?? "未知"} 条 · 已整理 ${d.body.coverage.processed_messages ?? d.body.coverage.messages} 条 · 分册 ${d.body.coverage.pages ?? 0} · 价值过滤 0 条</p><p class="meta">${d.body.coverage.complete_context ? "已完成相关归档的分册整理，汇总结果可回到原文核对。" : "相关来源已分册整理，但包含未识别媒体或待核实内容，不能把未提取解释为没有需求。"}</p>${d.body.unattributed?.length ? `<details><summary>查看未归入档案的原始线索（${d.body.unattributed.length}）</summary>${d.body.unattributed.map((x) => `<article class="insight-card"><p>待核实推断：${esc(x.text)}</p>${evidence(x.evidence, d)}</article>`).join("")}</details>` : ""}</section><section class="section"><h3>全部来源资料</h3><button data-ledger="1">查看全部聊天记录</button><button data-packets="1">查看已保存资料分册</button><div id="source-ledger"></div><div id="packet-ledger"></div></section><section class="section"><h3>微信定位</h3><p>${esc(d.location.remark || d.location.nickname || "姓名待同步")}</p><p class="meta">${d.location.conversations.map((c) => esc(c.title)).join(" / ")}</p><button data-operation="pause" data-value="${!d.body.paused}">${d.body.paused ? "恢复联系建议" : "暂停联系建议"}</button></section><section class="section"><h3>客户资料与来源事实</h3>${
-      Object.entries(d.body.notes)
-        .map(
-          ([id, n]) =>
-            `<article class="insight-card"><p>${esc(n.text)}</p>${fieldWarning(n)}${evidence(n.evidence, d)}${correction("notes", id, n)}</article>`,
-        )
-        .join("") ||
-      "<p>本次尚未形成已核实资料，请查看覆盖范围和待核实内容。</p>"
-    }</section><section class="section"><h3>备货批次</h3>${
-      Object.entries(d.body.batches)
-        .map(
-          ([id, b]) =>
-            `<article class="insight-card"><span class="meta">${stages[b.stage]}</span><p>${esc(b.text)}</p>${fieldWarning(b)}${evidence(b.evidence, d)}${correction("batches", id, b)}</article>`,
-        )
-        .join("") || "<p>尚无具体批次。</p>"
-    }</section><section class="section"><h3>下一步</h3>${
-      Object.entries(d.body.actions)
-        .map(
-          ([id, a]) =>
-            `<article class="insight-card"><p>${esc(a.text)} · ${esc({ open: "待处理", waiting: "等待回复", done: "已完成", cancelled: "已取消", proposed: "待确认建议", historical_unresolved: "历史待核实" }[a.state] || a.state)}</p><p class="meta">${esc(a.reason)} ${esc(a.due_date || "未约定日期")}</p>${evidence(a.evidence, d)}${a.state === "proposed" ? `<p class="meta">来源覆盖或责任归属尚需确认，请核对原文。</p><button data-operation="confirm_action" data-target="${id}" data-value="true">确认由我跟进</button>` : ""}${["open", "waiting"].includes(a.state) ? `<button data-operation="action" data-target="${id}" data-value="done">标记已处理</button><button data-operation="action" data-target="${id}" data-value="waiting">等待回复</button><label>下次联系日期<input type="date" id="schedule-${id}"></label><button data-operation="schedule" data-target="${id}">保存日期</button>` : ""}</article>`,
-        )
-        .join("") ||
-      `<p>${d.body.coverage.complete_context ? "当前文本未识别出明确的未完成行动。" : "上下文含未读媒体或历史截断，不能判定无需行动。请核对来源后重新分析。"}</p>`
-    }</section><section class="section"><h3>关键确认</h3>${
-      Object.entries(d.body.decisions)
-        .filter(([, q]) => !q.resolved)
-        .map(
-          ([id, q]) =>
-            `<article class="insight-card"><h4>${esc(q.text)}</h4>${q.impact ? `<p class="meta">确认用途：${esc(q.impact)}</p>` : ""}<label>你的判断${id === "role" ? `<select id="decision-${id}"><option value="merchant">商家</option><option value="non_target">非目标客户（同事／服务商等）</option><option value="candidate">暂不能确定</option></select>` : `<input id="decision-${id}" maxlength="500" placeholder="填写明确判断；保存为人工约束">`}</label>${evidence(q.evidence, d)}<button data-operation="decision" data-target="${id}">保存判断</button></article>`,
-        )
-        .join("") || "<p>暂无待确认。</p>"
-    }</section>`;
+  ((timelineQuery = ""),
+    (customerQuery = ""),
+    (customerStage = "all"),
+    (customerPage = 1));
+  closeImage();
+  $("#detail").innerHTML = customerHTML(d);
   $("dialog").showModal();
+  $("dialog").scrollTop = 0;
+  const initial = view === "today" || view === "review" ? "work" : "overview";
+  detailTab(initial);
 }
+function detailTab(key) {
+  document
+    .querySelectorAll("[data-detail-panel]")
+    .forEach((panel) => (panel.hidden = panel.dataset.detailPanel !== key));
+  document
+    .querySelectorAll("[data-detail-tab]")
+    .forEach((b) =>
+      b.setAttribute("aria-selected", String(b.dataset.detailTab === key)),
+    );
+}
+async function loadJournal(page = 1) {
+  const data = await api(
+    "journal?" + new URLSearchParams({ source_id: selected.source_id, page }),
+  );
+  $("#customer-journal").innerHTML =
+    data.items
+      .map(
+        (r) =>
+          `<article class="insight-card"><p class="meta">${esc(time(r.created_at))} 北京时间 · 人工记录 · ${esc({ contacted: "已联系", replied: "已收到反馈", no_reply: "暂未回复", note: "备注" }[r.outcome])}</p><p>${esc(r.note)}</p>${r.next_date ? `<p>下次联系：${esc(r.next_date)}</p>` : ""}</article>`,
+      )
+      .join("") || "<p>暂无人工跟进记录。</p>";
+  $("#customer-journal").innerHTML +=
+    `${page > 1 ? `<button data-journal="${page - 1}">上一页记录</button>` : ""}${data.has_more ? `<button data-journal="${page + 1}">下一页记录</button>` : ""}`;
+}
+
 function close() {
   $("dialog").close();
+  closeImage();
   if (focusBefore?.isConnected) focusBefore.focus();
 }
 document.addEventListener("click", async (e) => {
   const b = e.target.closest("button");
   if (!b) return;
   try {
+    if (b.id === "customers-prev" || b.id === "customers-next") {
+      customerPage += b.id === "customers-next" ? 1 : -1;
+      render();
+    }
+    if (b.dataset.detailTab) detailTab(b.dataset.detailTab);
+    if (b.id === "copy-contact-name")
+      await copy(
+        selected.location.remark ||
+          selected.location.nickname ||
+          selected.source_id,
+      );
+    if (b.id === "exempt-customer") {
+      b.disabled = true;
+      await api(
+        "/api/crm/people/" +
+          encodeURIComponent(selected.actor_id) +
+          "/exclusion",
+        { enabled: true },
+      );
+      await api("queue/refresh", {});
+      close();
+      await refresh();
+      $("#status").textContent = "已加入免跟进白名单，完整原始记录保留。";
+    }
+    if (b.id === "load-customer-history") {
+      const rows = await api(
+        "history?" + new URLSearchParams({ source_id: selected.source_id }),
+      );
+      $("#customer-history").innerHTML = rows
+        .map(
+          (r) =>
+            `<p class="meta">版本 ${r.version} · ${esc(r.reason === "agent" ? "自动整理" : "人工修改")} · ${esc(time(r.created_at))} 北京时间</p>`,
+        )
+        .join("");
+    }
+    if (b.dataset.saveStage) {
+      const id = b.dataset.saveStage;
+      b.disabled = true;
+      await api("command", {
+        source_id: selected.source_id,
+        version: selected.version,
+        operation: "batch_stage",
+        target: id,
+        value: {
+          stage: $("#stage-" + id).value,
+          note: $("#stage-note-" + id).value,
+        },
+      });
+      close();
+      await refresh();
+      $("#status").textContent = "批次判断已保存，后台将按人工约束继续整理。";
+    }
+    if (b.dataset.draft) {
+      const id = b.dataset.draft;
+      b.disabled = true;
+      b.textContent = "正在准备草稿…";
+      const draft = await api("draft", {
+        source_id: selected.source_id,
+        version: selected.version,
+        action_id: id,
+      });
+      $("#draft-" + id).innerHTML =
+        `<label>人工核对并编辑<textarea id="draft-text-${id}" rows="4" maxlength="1200">${esc(draft.text)}</textarea></label>${evidence(draft.evidence, selected)}<button data-copy-draft="${id}">复制草稿</button><p class="meta">尚未发送，也不会自动标记已联系。确认发送后可到人工跟进中记录。</p>`;
+      b.textContent = "重新查看草稿";
+      b.disabled = false;
+    }
+    if (b.dataset.copyDraft)
+      await copy($("#draft-text-" + b.dataset.copyDraft).value);
+    if (b.dataset.journal) await loadJournal(Number(b.dataset.journal));
     if (b.dataset.taskView) {
       taskView = b.dataset.taskView;
       render();
@@ -395,9 +562,15 @@ document.addEventListener("click", async (e) => {
     }
     if (b.dataset.view) {
       view = b.dataset.view;
-      render();
+      history.pushState({}, "", "/workspace?view=" + view);
+      if (["today", "customers", "review"].includes(view)) await refresh();
+      else render();
     }
-    if (b.dataset.open) openDetail(b.dataset.open);
+    if (b.dataset.open) {
+      b.disabled = true;
+      await openDetail(b.dataset.open);
+      b.disabled = false;
+    }
     if (b.dataset.packets) {
       b.disabled = true;
       const page = Number(b.dataset.packets);
@@ -414,10 +587,15 @@ document.addEventListener("click", async (e) => {
       const page = Number(b.dataset.ledger);
       const data = await api(
         "sources?" +
-          new URLSearchParams({ source_id: selected.source_id, page }),
+          new URLSearchParams({
+            source_id: selected.source_id,
+            page,
+            order: "oldest",
+            q: timelineQuery,
+          }),
       );
       $("#source-ledger").innerHTML =
-        `<p class="meta">全部相关会话共 ${data.total} 条 · 第 ${data.page} 页 · 每页 50 条</p>${data.items.map((m) => `<article class="insight-card"><p class="meta">${esc(m.conversation)} · ${esc(m.direction === "outgoing" ? "我方" : m.sender_name || m.sender_id)} · ${esc(new Date(m.event_time).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))}</p><p>${esc(m.text)}</p></article>`).join("")}${page > 1 ? `<button data-ledger="${page - 1}">上一页来源</button>` : ""}${data.has_more ? `<button data-ledger="${page + 1}">下一页来源</button>` : ""}`;
+        `<p class="meta">全部相关会话共 ${data.total} 条 · 第 ${data.page} 页 · 每页 50 条</p>${data.items.map((m) => `<article class="insight-card"><p class="meta">${esc(m.conversation)} · ${esc(m.direction === "outgoing" ? "我方" : m.sender_name || m.sender_id)} · ${esc(new Date(m.event_time).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false }))}</p><p>${esc(m.text)}</p>${mediaControls(m)}</article>`).join("")}${page > 1 ? `<button data-ledger="${page - 1}">上一页来源</button>` : ""}${data.has_more ? `<button data-ledger="${page + 1}">下一页来源</button>` : ""}`;
       b.disabled = false;
     }
     if (b.id === "close") close();
@@ -484,7 +662,7 @@ document.addEventListener("click", async (e) => {
       workspace_invalid_date: "请选择今天或之后的有效日期。",
     };
     ($("dialog").open ? $("#detail-status") : $("#status")).textContent =
-      messages[e.message] || e.message;
+      messages[e.message] || errorText(e.message);
     b.disabled = false;
   }
 });
@@ -495,5 +673,26 @@ $("dialog").addEventListener("cancel", (e) => {
 refresh().catch((e) => ($("#status").textContent = e.message));
 
 setInterval(() => {
-  if (view !== "pilot" && !$("dialog").open && !busy) refresh().catch(() => {});
+  if (
+    ["today", "customers", "review"].includes(view) &&
+    !$("dialog").open &&
+    !busy
+  )
+    refresh().catch(() => {});
 }, 30000);
+
+addEventListener("popstate", () => {
+  const next = new URLSearchParams(location.search).get("view") || "today";
+  view = [
+    "today",
+    "customers",
+    "review",
+    "pilot",
+    "settings",
+    "scope",
+  ].includes(next)
+    ? next
+    : "today";
+  if ($("dialog").open) close();
+  refresh().catch((e) => ($("#status").textContent = e.message));
+});

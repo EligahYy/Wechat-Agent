@@ -9,6 +9,7 @@ from ..db import dumps, now, uid
 from ..services import Conflict
 from .order_links import linked_keys
 from .quality import ENGINE_VERSION, display_text, validate_proposal
+from .schema import Followup
 
 
 def stable(*parts):
@@ -67,10 +68,17 @@ def valid_refs(db, refs):
     if not refs:
         return False
     count = db.rows(
-        "SELECT COUNT(*) n FROM json_each(?) r JOIN messages m ON m.id=json_extract(r.value,'$.id') AND m.revision=json_extract(r.value,'$.revision') WHERE m.conversation_id IN (SELECT value FROM json_each(?))",
+        "SELECT COUNT(*) n FROM json_each(?) r JOIN messages m ON m.id=json_extract(r.value,'$.id') AND m.revision=json_extract(r.value,'$.revision') LEFT JOIN message_extractions x ON x.message_id=m.id AND x.source_revision=m.revision AND x.confirmed_text<>'' LEFT JOIN attachments a ON a.message_id=m.id WHERE (json_extract(r.value,'$.extraction_version') IS NULL OR (json_extract(r.value,'$.extraction_version')=x.version AND a.sha256=x.sha256)) AND m.conversation_id IN (SELECT value FROM json_each(?))",
         (dumps(refs), dumps(allowed)),
     )[0]["n"]
     return count == len(refs)
+
+
+def reference(message):
+    ref = {"id": message["id"], "revision": message["revision"]}
+    if message.get("extraction_version"):
+        ref["extraction_version"] = message["extraction_version"]
+    return ref
 
 
 def read(db, source_id):
@@ -133,6 +141,7 @@ def commit(db, source_id, proposal, context, fingerprint):
         )
         prior_body = json.loads(previous["body"]) if previous else {}
         body["history"] = prior_body.get("history", [])
+        body["batch_overrides"] = prior_body.get("batch_overrides", {})
         body["locks"] = prior_body.get("locks", {})
         body["locks"].update(
             {
@@ -166,7 +175,7 @@ def commit(db, source_id, proposal, context, fingerprint):
             selected = [evidence[k] for k in linked_keys(keys, evidence)]
             if not any(m["anchor"] for m in selected):
                 raise ValueError("workspace_customer_anchor_required")
-            return [{"id": m["id"], "revision": m["revision"]} for m in selected]
+            return [reference(m) for m in selected]
 
         refs(proposal.evidence)
         body["relationship"] = body.get("manual_role", proposal.relationship)
@@ -206,10 +215,21 @@ def commit(db, source_id, proposal, context, fingerprint):
                 or (old["stage"] == "reported_shipped" and item.stage != "closed")
             ):
                 continue
+            override = body["batch_overrides"].get(ident)
+            if override:
+                item.stage = override["stage"]
+            elif old and old.get("stage_locked"):
+                item.stage = old["stage"]
             body["batches"][ident] = {
                 "text": old["text"] if old and old.get("text_locked") else item.text,
                 "text_locked": bool(old and old.get("text_locked")),
                 "stage": item.stage,
+                "stage_locked": bool(override or (old and old.get("stage_locked"))),
+                "manual_stage_note": override["note"]
+                if override
+                else old.get("manual_stage_note", "")
+                if old
+                else "",
                 "quality_warnings": context.get("field_warnings", {}).get(
                     item.text, []
                 ),
@@ -316,9 +336,25 @@ def commit(db, source_id, proposal, context, fingerprint):
                 not item.blocks_followup or not item.impact.strip()
             ):
                 continue
-            if body["decisions"].get(item.key, {}).get("resolved"):
+            batch = new_batches.get(item.batch, item.batch)
+            if batch and batch not in body["batches"]:
+                raise ValueError("workspace_unknown_batch")
+            if batch and body["batches"][batch]["stage"] in {
+                "fulfillment",
+                "reported_shipped",
+                "closed",
+            }:
                 continue
-            body["decisions"][item.key] = {
+            decision_id = (
+                "role"
+                if item.key == "role"
+                else stable("decision", item.key, batch or "customer")
+            )
+            if body["decisions"].get(decision_id, {}).get("resolved"):
+                continue
+            body["decisions"][decision_id] = {
+                "key": item.key,
+                "batch": batch,
                 "text": item.text,
                 "impact": item.impact,
                 "evidence": refs(item.evidence),
@@ -342,7 +378,7 @@ def commit(db, source_id, proposal, context, fingerprint):
                 "code": entry["code"],
                 "text": entry["item"]["text"],
                 "evidence": [
-                    {"id": evidence[k]["id"], "revision": evidence[k]["revision"]}
+                    reference(evidence[k])
                     for k in entry["item"]["evidence"]
                     if k in evidence
                 ],
@@ -381,12 +417,7 @@ def commit(db, source_id, proposal, context, fingerprint):
         read_set = (
             {r["id"]: r for r in json.loads(previous["read_set"])} if usable else {}
         )
-        read_set.update(
-            {
-                m["id"]: {"id": m["id"], "revision": m["revision"]}
-                for m in evidence.values()
-            }
-        )
+        read_set.update({m["id"]: reference(m) for m in evidence.values()})
         return save(
             c,
             db,
@@ -413,6 +444,90 @@ def command(db, source_id, expected_version, operation, target=None, value=None)
         if operation == "pause" and type(value) is bool:
             body["paused"] = value
             body["pause_override"] = True
+        elif operation == "followup":
+            entry = Followup.model_validate(value)
+            if not entry.note.strip():
+                raise ValueError("workspace_followup_note_required")
+            entry.note = entry.note.strip()
+            if entry.next_date:
+                try:
+                    when = date.fromisoformat(entry.next_date)
+                except ValueError:
+                    raise ValueError("workspace_invalid_date") from None
+                if (
+                    when.isoformat() != entry.next_date
+                    or when < datetime.now(ZoneInfo("Asia/Shanghai")).date()
+                ):
+                    raise ValueError("workspace_invalid_date")
+            if entry.action_id:
+                if entry.action_id not in body["actions"]:
+                    raise ValueError("workspace_unknown_action")
+                action = body["actions"][entry.action_id]
+                if entry.action_state == "waiting" and action["state"] in {
+                    "proposed",
+                    "historical_unresolved",
+                }:
+                    raise ValueError("workspace_confirmation_required")
+                if entry.action_state != "keep":
+                    if (
+                        entry.action_state == "waiting"
+                        and action.get("batch")
+                        and body["batches"][action["batch"]]["stage"]
+                        in {"fulfillment", "reported_shipped", "closed"}
+                    ):
+                        raise ValueError("workspace_closed_batch")
+                    action.update(state=entry.action_state, locked=True)
+                    if entry.action_state == "done":
+                        action["completed_at"] = now()
+                if entry.next_date:
+                    action["due_date"] = entry.next_date
+                    action["locked"] = True
+            elif entry.action_state != "keep" or entry.next_date:
+                raise ValueError("workspace_action_required")
+            db.event(c, document["id"], "workspace_followup", entry.model_dump())
+            body["source_revision"] = None
+        elif (
+            operation == "batch_stage"
+            and target in body["batches"]
+            and isinstance(value, dict)
+        ):
+            stage = value.get("stage")
+            if stage not in {
+                "needs",
+                "quoting",
+                "decision",
+                "preparing",
+                "fulfillment",
+                "reported_shipped",
+                "closed",
+                "auto",
+            }:
+                raise ValueError("workspace_invalid_stage")
+            batch = body["batches"][target]
+            if stage == "auto":
+                batch["stage_locked"] = False
+                batch["manual_stage_note"] = ""
+                body.setdefault("batch_overrides", {}).pop(target, None)
+            else:
+                note = value.get("note")
+                if not isinstance(note, str) or not 1 <= len(note.strip()) <= 500:
+                    raise ValueError("workspace_stage_note_required")
+                batch.update(
+                    stage=stage, stage_locked=True, manual_stage_note=note.strip()
+                )
+                body.setdefault("batch_overrides", {})[target] = {
+                    "stage": stage,
+                    "note": note.strip(),
+                }
+                if stage in {"fulfillment", "reported_shipped", "closed"}:
+                    for action in body["actions"].values():
+                        if action.get("batch") == target and action["state"] in {
+                            "open",
+                            "waiting",
+                            "proposed",
+                        }:
+                            action["state"] = "cancelled"
+            body["source_revision"] = None
         elif (
             operation == "correct"
             and isinstance(value, str)

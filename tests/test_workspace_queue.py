@@ -246,7 +246,7 @@ def test_queue_api_auth_and_home_is_customer_workspace(ready):
     assert c.get("/api/workspace/queue").status_code == 401
     h = {"Authorization": "Bearer " + ready.token}
     assert "完整客户资料与今日行动" in c.get("/", headers=h).text
-    assert "page-settings" in c.get("/?page=settings", headers=h).text
+    assert 'type="module"' in c.get("/?page=settings", headers=h).text
     assert (
         c.post(
             "/api/workspace/automation", headers=h, json={"enabled": True}

@@ -26,6 +26,13 @@ def related_chats(db, source_id):
     ]
 
 
+def extractions(db, ids):
+    return db.rows(
+        "SELECT x.message_id,x.version,x.confirmed_text FROM message_extractions x JOIN messages m ON m.id=x.message_id AND m.revision=x.source_revision JOIN attachments a ON a.message_id=m.id AND a.sha256=x.sha256 WHERE x.confirmed_text<>'' AND m.conversation_id IN (SELECT value FROM json_each(?)) ORDER BY x.message_id",
+        (dumps(ids),),
+    )
+
+
 def snapshot(db, source_id, include_document=True):
     chats = related_chats(db, source_id)
     ids = [v["id"] for v in chats]
@@ -46,6 +53,7 @@ def snapshot(db, source_id, include_document=True):
         ENGINE_VERSION,
         chats,
         rows,
+        [(x["message_id"], x["version"]) for x in extractions(db, ids)],
         policy,
         exclusions,
         legacy_paused(db, source_id),
@@ -59,6 +67,10 @@ def authority(db, source_id):
     doc = raw(db, source_id)
     return stable(
         allowed_chats(db),
+        [
+            (x["message_id"], x["version"])
+            for x in extractions(db, [c["id"] for c in allowed_chats(db)])
+        ],
         db.rows(
             "SELECT account_id,enabled,include_new,version FROM crm_policies WHERE account_id=?",
             (db.settings.source_account,),
@@ -82,7 +94,9 @@ def build(db, source_id, search=None):
     complete = True
     gaps = set()
     source_messages = 0
-    for chat in related_chats(db, source_id):
+    chats = related_chats(db, source_id)
+    recognized = {x["message_id"]: x for x in extractions(db, [c["id"] for c in chats])}
+    for chat in chats:
         if chat["kind"] == "private" and chat["source_id"] != source_id:
             continue
         if chat["kind"] == "group" and not db.rows(
@@ -107,6 +121,14 @@ def build(db, source_id, search=None):
             if m["type"] != "text" or m["completeness"] != "full":
                 complete = False
                 gaps.add("media_or_partial")
+            if m["id"] in recognized:
+                x = recognized[m["id"]]
+                m = m | {
+                    "text": m["text"]
+                    + "\n[图片文字，已人工核对]\n"
+                    + x["confirmed_text"],
+                    "extraction_version": x["version"],
+                }
             if search and search not in m["text"]:
                 continue
             selected[m["id"]] = m | {
@@ -150,13 +172,31 @@ def build(db, source_id, search=None):
         else None
     )
 
+    if document and memory is None:
+        prior = json.loads(document["body"])
+        # Human inputs remain constraints even when an old machine citation expires.
+        memory = {
+            "history": prior.get("history", []),
+            "batch_overrides": prior.get("batch_overrides", {}),
+            "manual_role": prior.get("manual_role"),
+        }
+
     # IDs remain stable aliases; source names and raw account IDs stay local.
     def clean(value):
         if isinstance(value, dict):
             return {
                 k: redact(v)
                 if k
-                in {"text", "reason", "resolution", "result_note", "impact", "value"}
+                in {
+                    "text",
+                    "reason",
+                    "resolution",
+                    "result_note",
+                    "impact",
+                    "value",
+                    "note",
+                    "manual_stage_note",
+                }
                 and isinstance(v, str)
                 else clean(v)
                 for k, v in value.items()
@@ -176,6 +216,11 @@ def build(db, source_id, search=None):
             {
                 "ref": ref,
                 "customer_related": bool(m["anchor"]),
+                **(
+                    {"image_text_version": m["extraction_version"]}
+                    if m.get("extraction_version")
+                    else {}
+                ),
                 "content_type": m["type"],
                 "completeness": m["completeness"],
                 "customer_links": [

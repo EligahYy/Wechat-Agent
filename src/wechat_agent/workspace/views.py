@@ -79,7 +79,7 @@ def source_people(db):
         """WITH sources AS (
           SELECT CASE WHEN v.kind='private' THEN v.source_id ELSE m.sender_id END source_id,
                  v.egress,m.event_time, CASE WHEN v.kind='private' THEN NULLIF(v.title,v.source_id) END title,
-                 m.type, m.completeness
+                 m.type, m.completeness, m.id message_id, m.revision, v.id conversation_id
           FROM messages m JOIN conversations v ON v.id=m.conversation_id
           WHERE v.id IN (SELECT value FROM json_each(?))
             AND (v.kind='private' OR (v.kind='group' AND m.direction<>'outgoing'))
@@ -88,7 +88,7 @@ def source_people(db):
           COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),MAX(NULLIF(s.title,'')),'姓名待同步') name,
           MAX(s.event_time) latest_event,
           MAX(s.egress) authorized,
-          MAX(s.egress=1 AND s.type='text' AND s.completeness='full') has_text
+          MAX(s.egress=1 AND (EXISTS(SELECT 1 FROM messages t WHERE t.conversation_id=s.conversation_id AND t.type='text' AND t.completeness='full') OR EXISTS(SELECT 1 FROM message_extractions x JOIN attachments a ON a.message_id=x.message_id AND a.sha256=x.sha256 WHERE x.message_id=s.message_id AND x.source_revision=s.revision AND x.confirmed_text<>''))) has_text
         FROM sources s
         LEFT JOIN identity_metadata i ON i.account_id=? AND i.source_id=s.source_id
         WHERE s.source_id NOT IN ('unknown','',?,?) AND s.source_id NOT LIKE '%@chatroom'
@@ -104,7 +104,7 @@ def source_people(db):
     )
 
 
-def details(db, source_id):
+def details(db, source_id, include_evidence=True):
     doc = read(db, source_id)
     if not doc:
         raise ValueError("workspace_not_found")
@@ -131,10 +131,20 @@ def details(db, source_id):
         for item in doc["body"].get("unattributed", [])
         for r in item.get("evidence", [])
     )
-    doc["evidence"] = db.rows(
-        "SELECT m.id,m.text,m.event_time,v.title conversation FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.event_time,m.id",
-        (dumps(list(ids)),),
+    doc["evidence"] = []
+    if include_evidence:
+        doc["evidence"] = db.rows(
+            "SELECT m.id,m.text,m.type,m.completeness,m.event_time,v.title conversation FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.event_time,m.id",
+            (dumps(list(ids)),),
+        )
+        from .presentation import enrich_images
+
+        doc["evidence"] = enrich_images(db, doc["evidence"])
+    actor = db.rows(
+        "SELECT id FROM crm_contacts WHERE account_id=? AND source_id=?",
+        (db.settings.source_account, source_id),
     )
+    doc["actor_id"] = actor[0]["id"] if actor else None
     from .context import snapshot
 
     doc["needs_update"] = doc["body"].get("source_revision") != snapshot(
@@ -176,7 +186,7 @@ def details(db, source_id):
     return doc
 
 
-def listing(db):
+def listing(db, compact=False):
     items = []
     stale = 0
     for row in db.rows(
@@ -184,7 +194,7 @@ def listing(db):
         (db.settings.source_account,),
     ):
         try:
-            d = details(db, row["source_id"])
+            d = details(db, row["source_id"], include_evidence=not compact)
         except ValueError as exc:
             stale += str(exc) == "workspace_stale_evidence"
             continue
@@ -194,23 +204,32 @@ def listing(db):
     return {"items": items, "stale_documents": stale}
 
 
-def sources(db, source_id, page=1):
+def sources(db, source_id, page=1, order="oldest", q=""):
     from .context import related_chats
     from .store import eligible
 
     eligible(db, source_id)
-    if page < 1 or page > 100000:
+    if page < 1 or page > 100000 or order not in {"oldest", "latest"} or len(q) > 200:
         raise ValueError("workspace_invalid_query")
     ids = [c["id"] for c in related_chats(db, source_id)]
-    total = db.rows(
-        "SELECT COUNT(*) n FROM messages WHERE conversation_id IN (SELECT value FROM json_each(?))",
-        (dumps(list(ids)),),
-    )[0]["n"]
+    where = "m.conversation_id IN (SELECT value FROM json_each(?)) AND (instr(lower(m.text),lower(?))>0 OR EXISTS(SELECT 1 FROM message_extractions x WHERE x.message_id=m.id AND x.source_revision=m.revision AND instr(lower(x.confirmed_text),lower(?))>0))"
+    args = (dumps(ids), q, q)
+    total = db.rows("SELECT COUNT(*) n FROM messages m WHERE " + where, args)[0]["n"]
+    direction = "ASC" if order == "oldest" else "DESC"
     rows = db.rows(
-        "SELECT m.id,m.text,m.event_time,m.type,m.completeness,m.sender_id,m.direction,COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),m.sender_id) sender_name,v.title conversation FROM messages m JOIN conversations v ON v.id=m.conversation_id LEFT JOIN identity_metadata i ON i.account_id=v.account_id AND i.source_id=m.sender_id WHERE m.conversation_id IN (SELECT value FROM json_each(?)) ORDER BY m.event_time DESC,m.id DESC LIMIT 50 OFFSET ?",
-        (dumps(ids), (page - 1) * 50),
+        "SELECT m.id,m.text,m.event_time,m.type,m.completeness,m.sender_id,m.direction,COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),m.sender_id) sender_name,v.title conversation FROM messages m JOIN conversations v ON v.id=m.conversation_id LEFT JOIN identity_metadata i ON i.account_id=v.account_id AND i.source_id=m.sender_id WHERE "
+        + where
+        + f" ORDER BY m.event_time {direction},m.id {direction} LIMIT 50 OFFSET ?",
+        (*args, (page - 1) * 50),
     )
-    return {"items": rows, "total": total, "page": page, "has_more": total > page * 50}
+    from .presentation import enrich_images
+
+    return {
+        "items": enrich_images(db, rows),
+        "total": total,
+        "page": page,
+        "has_more": total > page * 50,
+    }
 
 
 def packets(db, source_id, page=1):
@@ -238,7 +257,7 @@ def packets(db, source_id, page=1):
             fact["evidence"] = [mapping[k] for k in fact["evidence"] if k in mapping]
         ids = [ref["id"] for ref in refs]
         evidence = db.rows(
-            "SELECT m.id,m.text,m.event_time,v.title conversation FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.event_time,m.id",
+            "SELECT m.id,m.text,m.type,m.completeness,m.event_time,v.title conversation FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE m.id IN (SELECT value FROM json_each(?)) ORDER BY m.event_time,m.id",
             (dumps(ids),),
         )
         items.append(
