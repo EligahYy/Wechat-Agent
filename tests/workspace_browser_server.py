@@ -160,7 +160,7 @@ if __name__ == "__main__":
     ocr.recognize_bytes = lambda data: ("海运报价候选，需核对原图", "synthetic-local")
 
     @app.post("/__test__/review-fixture")
-    def review_fixture():
+    def review_fixture(role: bool = False):
         from wechat_agent.db import dumps, now
         from wechat_agent.workspace.context import build
         from wechat_agent.workspace.store import raw, read, reference, save, stable
@@ -207,6 +207,13 @@ if __name__ == "__main__":
         body["quality_issues"] = [
             {"section": "notes", "code": "workspace_customer_anchor_required"}
         ] * 2
+        if role:
+            body["decisions"]["role"] = {
+                "text": "确认当前联系人身份（虚构）",
+                "evidence": [reference(anchor)],
+                "resolved": False,
+            }
+
         with db.tx() as c:
             save(
                 c,

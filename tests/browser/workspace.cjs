@@ -88,11 +88,11 @@ const fs = require("fs");
     .locator("#customer-followup-form [name=note]")
     .fill("已在微信联系，等待报价反馈（虚构）");
   await page
-    .locator("#customer-followup-form [name=action_id]")
-    .selectOption({ label: "确认英国报价" });
-  await page
-    .locator("#customer-followup-form [name=action_state]")
-    .selectOption("done");
+    .getByRole("combobox", { name: "关联待办（可选）", exact: true })
+    .click();
+  await page.getByRole("option", { name: "确认英国报价", exact: true }).click();
+  await page.getByRole("combobox", { name: "待办状态", exact: true }).click();
+  await page.getByRole("option", { name: "已处理", exact: true }).click();
   await page.getByRole("button", { name: "保存人工跟进", exact: true }).click();
   await page.getByText("人工跟进已保存。", { exact: true }).waitFor();
   await page

@@ -47,4 +47,4 @@ inspect仅统计归档缺口，不调用模型。完整新装、已有密钥迁�
 - [UI规范](docs/UI_DESIGN.md) · [独立交互原型](docs/UI_PROTOTYPE.html)：目标交互，原型为虚构数据，不代表全部已接入。
 - [文档导航](docs/README.md)：历史说明和阅读入口。
 
-开发检查：`uv run pytest -q`、`uv run ruff check src tests`。新工作台浏览器测试使用独立目录、虚构聊天和模拟模型：`tests/workspace_browser_server.py`、`tests/browser/workspace.cjs`、`tests/browser/workspace-reviews.cjs`（每套使用新的数据目录）。测试不会访问真实微信或DeepSeek，不代替真实业务样本验收。
+开发检查：`uv run pytest -q`、`uv run ruff check src tests`。新工作台浏览器测试使用独立目录、虚构聊天和模拟模型：`tests/workspace_browser_server.py`、`tests/browser/workspace.cjs`、`tests/browser/workspace-reviews.cjs`、`tests/browser/workspace-select.cjs`、`tests/browser/workspace-shell.cjs`（每套使用新的数据目录）。测试不会访问真实微信或DeepSeek，不代替真实业务样本验收。

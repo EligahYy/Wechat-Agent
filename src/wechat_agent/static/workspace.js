@@ -1,3 +1,4 @@
+import "./workspace/select.js";
 import { $, esc, api, copy, time, errorText } from "./workspace/client.js";
 import { renderSettings } from "./workspace/settings.js";
 import { renderScope } from "./workspace/scope.js";
@@ -113,7 +114,7 @@ function render() {
     list = list.slice((customerPage - 1) * 50, customerPage * 50);
   $("#content").innerHTML =
     (view === "customers"
-      ? `<form id="customer-search" class="toolbar"><label class="candidate-search">搜索客户<input name="q" maxlength="200" placeholder="姓名、备注或来源群名" value="${esc(customerQuery)}"></label><label>备货阶段<select name="stage"><option value="all">全部阶段</option>${Object.entries(
+      ? `<form id="customer-search" class="search-form customer-filters"><label class="candidate-search">搜索客户<input name="q" maxlength="200" placeholder="姓名、备注或来源群名" value="${esc(customerQuery)}"></label><label>备货阶段<select name="stage"><option value="all">全部阶段</option>${Object.entries(
           stages,
         )
           .map(
@@ -372,7 +373,7 @@ document.addEventListener("submit", async (e) => {
   if (e.target.id === "customer-followup-form") {
     e.preventDefault();
     const form = e.target;
-    const b = form.querySelector("button");
+    const b = form.querySelector("button[type=submit]");
     b.disabled = true;
     try {
       const f = new FormData(form),

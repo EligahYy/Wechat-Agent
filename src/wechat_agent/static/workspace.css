@@ -1000,3 +1000,145 @@ details[open] > summary::after {
     font-size: 12px;
   }
 }
+
+/* Shared form controls and a bottom-aligned search row. */
+.search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.search-form.customer-filters {
+  grid-template-columns: minmax(180px, 1fr) minmax(200px, 240px) max-content;
+}
+.search-form > label {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  line-height: 22px;
+}
+.search-form label > input,
+.search-form label > .select-control {
+  margin-top: 0;
+}
+.search-form input,
+.search-form > button {
+  height: 48px;
+  min-height: 48px;
+}
+.search-form > button {
+  margin: 0;
+  padding: 0 18px;
+  white-space: nowrap;
+}
+.select-control {
+  display: block;
+  min-width: 0;
+  margin-top: 6px;
+}
+.select-control .select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 14px;
+  margin: 0;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.select-trigger svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 0.16s ease;
+}
+.select-trigger[aria-expanded="true"] {
+  border-color: var(--blue);
+  background: var(--tint);
+}
+.select-trigger[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+  color: var(--blue);
+}
+.select-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  z-index: 30;
+  padding: 5px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 12px 36px #0003;
+  font:
+    14px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+.select-menu:popover-open {
+  animation: enter 0.12s ease-out;
+}
+.select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.select-option > span:first-child {
+  min-width: 0;
+}
+.select-option.is-active {
+  background: var(--bg);
+}
+.select-option[aria-selected="true"] {
+  background: var(--tint);
+  color: var(--blue);
+}
+.select-option[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+}
+.select-check {
+  width: 16px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+@media (max-width: 1000px) {
+  .search-form.customer-filters {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);
+  }
+  .customer-filters > button {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 600px) {
+  .search-form.customer-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .customer-filters > button {
+    grid-column: auto;
+  }
+}
