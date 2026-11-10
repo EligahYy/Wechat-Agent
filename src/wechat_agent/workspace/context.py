@@ -46,7 +46,7 @@ def snapshot(db, source_id, include_document=True):
         (db.settings.source_account,),
     )
     exclusions = db.rows(
-        "SELECT * FROM actor_exclusions WHERE account_id=? ORDER BY source_id",
+        "SELECT * FROM effective_actor_exclusions WHERE account_id=? ORDER BY source_id,origin,group_source_id",
         (db.settings.source_account,),
     )
     return stable(
@@ -76,7 +76,7 @@ def authority(db, source_id):
             (db.settings.source_account,),
         ),
         db.rows(
-            "SELECT * FROM actor_exclusions WHERE account_id=? ORDER BY source_id",
+            "SELECT * FROM effective_actor_exclusions WHERE account_id=? ORDER BY source_id,origin,group_source_id",
             (db.settings.source_account,),
         ),
         legacy_paused(db, source_id),

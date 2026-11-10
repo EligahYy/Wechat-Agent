@@ -137,6 +137,9 @@ def register(db, sessions, until, rescan=False, preserve_paused=False):
                 "UPDATE suggestions SET status='stale' WHERE status='pending' AND job_id IN (SELECT id FROM jobs WHERE json_extract(payload,'$.conversation_id')=?)",
                 (cid,),
             )
+        from .source_scope import repair_group_exclusions
+
+        repair_group_exclusions(c)
         db.event(
             c,
             db.settings.source_account,

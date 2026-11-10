@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 15:
+            if version > 16:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -324,6 +324,33 @@ class DB:
                         (now(), now()),
                     )
                     connection.execute("PRAGMA user_version=15")
+            from .exclusions import SCHEMA as EXCLUSION_SCHEMA
+            from .exclusions import legacy_private_exclusions, repair_private_exclusions
+            from .source_scope import legacy_group_exclusions, repair_group_exclusions
+
+            if (
+                version < 16
+                or legacy_group_exclusions(connection)
+                or legacy_private_exclusions(connection)
+            ):
+                target = self.settings.data_dir / (
+                    ("pre-v16-" if version < 16 else "pre-whitelist-repair-")
+                    + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                    + ".sqlite3"
+                )
+                if version:
+                    backup = sqlite3.connect(target)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    target.chmod(0o600)
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    repair_group_exclusions(connection)
+                    repair_private_exclusions(connection)
+                    connection.execute(EXCLUSION_SCHEMA)
+                    connection.execute("PRAGMA user_version=16")
         finally:
             connection.close()
         self.path.chmod(0o600)

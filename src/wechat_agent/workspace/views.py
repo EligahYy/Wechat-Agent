@@ -92,13 +92,15 @@ def source_people(db):
         FROM sources s
         LEFT JOIN identity_metadata i ON i.account_id=? AND i.source_id=s.source_id
         WHERE s.source_id NOT IN ('unknown','',?,?) AND s.source_id NOT LIKE '%@chatroom'
-          AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=? AND e.source_id=s.source_id)
+          AND NOT EXISTS(SELECT 1 FROM conversations g WHERE g.account_id=? AND g.source_id=s.source_id AND g.kind='group')
+          AND NOT EXISTS(SELECT 1 FROM effective_actor_exclusions e WHERE e.account_id=? AND e.source_id=s.source_id)
         GROUP BY s.source_id ORDER BY name,s.source_id""",
         (
             dumps(ids),
             account,
             account,
             db.settings.self_id,
+            account,
             account,
         ),
     )

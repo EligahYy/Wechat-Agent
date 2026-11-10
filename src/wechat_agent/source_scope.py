@@ -5,6 +5,52 @@ import json
 from .db import dumps, now, uid
 
 
+def legacy_group_exclusions(c):
+    return c.execute(
+        "SELECT e.* FROM actor_exclusions e WHERE EXISTS(SELECT 1 FROM conversations v WHERE v.account_id=e.account_id AND v.source_id=e.source_id AND (v.kind='group' OR e.source_id LIKE '%@chatroom'))"
+    ).fetchall()
+
+
+def repair_group_exclusions(c):
+    """Move misfiled group exclusions without granting analysis or touching people."""
+    rows = legacy_group_exclusions(c)
+    for old in rows:
+        chats = c.execute(
+            "SELECT id,kind,followup_source FROM conversations WHERE account_id=? AND source_id=? AND (kind='group' OR source_id LIKE '%@chatroom')",
+            (old["account_id"], old["source_id"]),
+        ).fetchall()
+        for chat in chats:
+            c.execute(
+                "UPDATE conversations SET kind='group',followup_source=0 WHERE id=?",
+                (chat["id"],),
+            )
+            c.execute(
+                "UPDATE jobs SET status='excluded_source',lease_until=NULL,error='followup_exempted' WHERE json_extract(payload,'$.conversation_id')=? AND status NOT IN ('succeeded','filtered_noise','superseded','excluded_source')",
+                (chat["id"],),
+            )
+        c.execute(
+            "DELETE FROM actor_exclusions WHERE account_id=? AND source_id=?",
+            (old["account_id"], old["source_id"]),
+        )
+        c.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?)",
+            (
+                uid(),
+                old["account_id"],
+                "group_exclusion_repaired",
+                dumps(
+                    {
+                        "source_id": old["source_id"],
+                        "reason": old["reason"],
+                        "previous": [dict(v) for v in chats],
+                    }
+                ),
+                now(),
+            ),
+        )
+    return len(rows)
+
+
 def allowed_evidence(db, encoded):
     refs = json.loads(encoded) if isinstance(encoded, str) else encoded
     if not refs:
@@ -20,7 +66,7 @@ def allowed_evidence(db, encoded):
 
 def counts(db):
     row = db.rows(
-        "SELECT COUNT(*) total,COALESCE(SUM(followup_source),0) selected FROM conversations WHERE account_id=? AND allowlisted=1",
+        "SELECT COUNT(*) total,COALESCE(SUM(v.followup_source=1 AND NOT EXISTS(SELECT 1 FROM effective_actor_exclusions e WHERE e.account_id=v.account_id AND e.source_id=v.source_id)),0) selected FROM conversations v WHERE account_id=? AND allowlisted=1",
         (db.settings.source_account,),
     )[0]
     return row | {"archive_only": row["total"] - row["selected"]}
@@ -44,13 +90,13 @@ def list_sources(db, q="", kind="all", scope="all", page=1):
         where += " AND v.kind=?"
         args.append(kind)
     if scope != "all":
-        where += " AND v.followup_source=?"
+        where += " AND (v.followup_source=1 AND NOT EXISTS(SELECT 1 FROM effective_actor_exclusions e WHERE e.account_id=v.account_id AND e.source_id=v.source_id))=?"
         args.append(int(scope == "customer"))
     total = db.rows("SELECT COUNT(*) n FROM conversations v WHERE " + where, args)[0][
         "n"
     ]
     rows = db.rows(
-        "SELECT v.id,v.title,v.kind,v.source_id,v.followup_source,(SELECT kind FROM conversation_classifications WHERE conversation_id=v.id) business_kind,(SELECT COUNT(*) FROM messages m WHERE m.conversation_id=v.id) messages FROM conversations v WHERE "
+        "SELECT v.id,v.title,v.kind,v.source_id,(v.followup_source=1 AND NOT EXISTS(SELECT 1 FROM effective_actor_exclusions e WHERE e.account_id=v.account_id AND e.source_id=v.source_id)) followup_source,(SELECT kind FROM conversation_classifications WHERE conversation_id=v.id) business_kind,(SELECT COUNT(*) FROM messages m WHERE m.conversation_id=v.id) messages FROM conversations v WHERE "
         + where
         + " ORDER BY v.followup_source ASC,v.title,v.id LIMIT 50 OFFSET ?",
         [*args, (page - 1) * 50],

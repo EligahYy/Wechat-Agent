@@ -1371,6 +1371,7 @@ main {
 }
 .white-row p {
   margin: 5px 0 0;
+  overflow-wrap: anywhere;
 }
 .white-row button {
   flex-shrink: 0;

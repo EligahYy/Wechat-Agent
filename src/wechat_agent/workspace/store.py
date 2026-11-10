@@ -24,10 +24,14 @@ def eligible(db, source_id):
         or not source_id
         or source_id in {"unknown", account}
         or source_id.endswith("@chatroom")
+        or db.rows(
+            "SELECT 1 FROM conversations WHERE account_id=? AND source_id=? AND kind='group'",
+            (account, source_id),
+        )
     ):
         raise ValueError("workspace_invalid_identity")
     if db.rows(
-        "SELECT 1 FROM actor_exclusions WHERE account_id=? AND source_id=?",
+        "SELECT 1 FROM effective_actor_exclusions WHERE account_id=? AND source_id=?",
         (account, source_id),
     ):
         raise ValueError("workspace_excluded_person")
@@ -36,7 +40,7 @@ def eligible(db, source_id):
 def source_chats(db):
     """Local discovery scope; model authorization is checked separately."""
     return db.rows(
-        "SELECT * FROM conversations v WHERE account_id=? AND allowlisted=1 AND followup_source=1 AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=v.account_id AND e.source_id=v.source_id AND v.kind='private')",
+        "SELECT * FROM conversations v WHERE account_id=? AND allowlisted=1 AND followup_source=1 AND NOT EXISTS(SELECT 1 FROM effective_actor_exclusions e WHERE e.account_id=v.account_id AND e.source_id=v.source_id)",
         (db.settings.source_account,),
     )
 

@@ -9,6 +9,16 @@ def clean_name(value, source_id):
     return re.sub(r"\s*[（(]" + re.escape(source_id) + r"[）)]$", "", value).strip()
 
 
+def is_group_source(c, account, source_id):
+    """Classify stable source identities, never display names."""
+    return source_id.endswith("@chatroom") or bool(
+        c.execute(
+            "SELECT 1 FROM conversations WHERE account_id=? AND source_id=? AND kind='group'",
+            (account, source_id),
+        ).fetchone()
+    )
+
+
 def save_display(db, account, source_id, display):
     name = clean_name(display, source_id)
     if not name or name == source_id:
@@ -116,6 +126,16 @@ def set_excluded(db, actor_id, enabled, reason):
     if not rows:
         raise ValueError("联系人不存在")
     with db.tx() as c:
+        if is_group_source(c, db.settings.source_account, rows[0]["source_id"]):
+            raise ValueError("这是群聊会话，请在会话白名单中管理")
+        if (
+            not enabled
+            and c.execute(
+                "SELECT 1 FROM effective_actor_exclusions WHERE account_id=? AND source_id=? AND origin='group'",
+                (db.settings.source_account, rows[0]["source_id"]),
+            ).fetchone()
+        ):
+            raise ValueError("此人随白名单群免跟进，请先恢复所属群")
         if enabled:
             c.execute(
                 "INSERT INTO actor_exclusions VALUES(?,?,?) ON CONFLICT(account_id,source_id) DO UPDATE SET reason=excluded.reason",
@@ -126,6 +146,10 @@ def set_excluded(db, actor_id, enabled, reason):
                 "DELETE FROM actor_exclusions WHERE account_id=? AND source_id=?",
                 (db.settings.source_account, rows[0]["source_id"]),
             )
+            c.execute(
+                "UPDATE conversations SET followup_source=1 WHERE account_id=? AND source_id=? AND kind='private'",
+                (db.settings.source_account, rows[0]["source_id"]),
+            )
         db.event(
             c, actor_id, "person_exclusion", {"enabled": enabled, "reason": reason}
         )
@@ -134,7 +158,7 @@ def set_excluded(db, actor_id, enabled, reason):
 
 def audit(db):
     rows = db.rows(
-        "SELECT n.source_id,n.name FROM crm_contacts n WHERE n.account_id=?",
+        "SELECT n.source_id,n.name FROM crm_contacts n WHERE n.account_id=? AND n.source_id NOT LIKE '%@chatroom' AND NOT EXISTS(SELECT 1 FROM conversations v WHERE v.account_id=n.account_id AND v.source_id=n.source_id AND v.kind='group')",
         (db.settings.source_account,),
     )
     unresolved = sum(

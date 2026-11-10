@@ -185,6 +185,48 @@ if __name__ == "__main__":
     drafts.create_client = agent.create_client
     ocr.recognize_bytes = lambda data: ("海运报价候选，需核对原图", "synthetic-local")
 
+    @app.post("/__test__/legacy-group-whitelist")
+    def legacy_group_whitelist():
+        from wechat_agent.db import DB, now
+
+        groups = []
+        for n in range(2):
+            groups.append(
+                allow_conversation(
+                    db,
+                    "fixture",
+                    "work",
+                    f"legacy-{n}@chatroom",
+                    f"服务商对接群{n}（虚构）",
+                    "group",
+                )
+            )
+        with db.tx() as c:
+            for sid, name in [
+                ("legacy-0@chatroom", "服务商对接群0（虚构）"),
+                ("legacy-1@chatroom", "服务商对接群1（虚构）"),
+                ("pending@chatroom", "尚未同步群聊（虚构）"),
+                ("white-colleague", "同事（虚构）"),
+            ]:
+                c.execute(
+                    "INSERT INTO actor_exclusions VALUES('work',?,'旧版排除')", (sid,)
+                )
+                c.execute(
+                    "INSERT INTO identity_metadata VALUES('work',?,?,?,'',?)",
+                    (sid, name, name, now()),
+                )
+            for n in range(2):
+                c.execute(
+                    "INSERT INTO contact_roles VALUES(?,?, 'provider', ?)",
+                    (groups[n], f"group-staff-{n}", f"群成员{n}（虚构）"),
+                )
+                c.execute(
+                    "INSERT INTO identity_metadata VALUES('work',?,?,?,'',?)",
+                    (f"group-staff-{n}", f"群成员{n}（虚构）", f"群成员{n}", now()),
+                )
+        DB(db.settings)
+        return {"groups": groups}
+
     @app.post("/__test__/review-fixture")
     def review_fixture(role: bool = False):
         from wechat_agent.db import dumps, now

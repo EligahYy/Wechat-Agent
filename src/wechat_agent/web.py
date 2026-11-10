@@ -184,7 +184,7 @@ def create_app(settings=None, source_factory=None, background=False):
     @app.get("/api/workspace/scans")
     def workspace_scans():
         return db.rows(
-            "SELECT s.source_id,s.status,s.phase,s.total_pages,s.completed_pages,s.source_messages,s.processed_messages,s.error,s.updated_at,COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),s.source_id) name FROM workspace_scans s LEFT JOIN identity_metadata i ON i.account_id=s.account_id AND i.source_id=s.source_id WHERE s.account_id=? AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=s.account_id AND e.source_id=s.source_id) ORDER BY s.updated_at DESC",
+            "SELECT s.source_id,s.status,s.phase,s.total_pages,s.completed_pages,s.source_messages,s.processed_messages,s.error,s.updated_at,COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),s.source_id) name FROM workspace_scans s LEFT JOIN identity_metadata i ON i.account_id=s.account_id AND i.source_id=s.source_id WHERE s.account_id=? AND NOT EXISTS(SELECT 1 FROM effective_actor_exclusions e WHERE e.account_id=s.account_id AND e.source_id=s.source_id) ORDER BY s.updated_at DESC",
             (db.settings.source_account,),
         )
 
@@ -1177,7 +1177,7 @@ def create_app(settings=None, source_factory=None, background=False):
             or not 1 <= page <= 100000
         ):
             raise ValueError("筛选参数无效")
-        where = "n.account_id=? AND (instr(lower(COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),n.name)),lower(?))>0 OR instr(lower(n.source_id),lower(?))>0) AND EXISTS(SELECT 1 FROM actor_exclusions x WHERE x.account_id=n.account_id AND x.source_id=n.source_id) = ?"
+        where = "n.account_id=? AND n.source_id NOT LIKE '%@chatroom' AND NOT EXISTS(SELECT 1 FROM conversations v WHERE v.account_id=n.account_id AND v.source_id=n.source_id AND v.kind='group') AND (instr(lower(COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),n.name)),lower(?))>0 OR instr(lower(n.source_id),lower(?))>0) AND EXISTS(SELECT 1 FROM effective_actor_exclusions x WHERE x.account_id=n.account_id AND x.source_id=n.source_id) = ?"
         args = (db.settings.source_account, q, q, int(scope == "archive"))
         joins = " FROM crm_contacts n LEFT JOIN identity_metadata i ON i.account_id=n.account_id AND i.source_id=n.source_id WHERE "
         total = db.rows("SELECT COUNT(*) n" + joins + where, args)[0]["n"]

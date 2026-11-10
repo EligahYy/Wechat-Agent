@@ -17,7 +17,7 @@ def inspect_sources(db, *, at=None):
         chats = [
             dict(r)
             for r in c.execute(
-                "SELECT v.*, EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=v.account_id AND e.source_id=v.source_id) person_exempt FROM conversations v WHERE v.account_id=?",
+                "SELECT v.*, EXISTS(SELECT 1 FROM effective_actor_exclusions e WHERE e.account_id=v.account_id AND e.source_id=v.source_id) person_exempt FROM conversations v WHERE v.account_id=?",
                 (account,),
             )
         ]
@@ -37,7 +37,7 @@ def inspect_sources(db, *, at=None):
         excluded = {
             r[0]
             for r in c.execute(
-                "SELECT source_id FROM actor_exclusions WHERE account_id=?", (account,)
+                "SELECT source_id FROM effective_actor_exclusions WHERE account_id=?", (account,)
             )
         }
         quarantined = c.execute(

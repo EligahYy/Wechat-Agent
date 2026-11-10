@@ -21,6 +21,8 @@ from wechat_agent.web import create_app
 
 
 def setup_work_chat(db, record, kind="private", chat_id="merchant"):
+    if kind == "group" and chat_id == "merchant":
+        chat_id = "merchant-group@chatroom"
     db.settings.source_account = db.settings.self_id = "account"
     cid = allow_conversation(
         db,

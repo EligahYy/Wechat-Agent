@@ -29,13 +29,19 @@ def stable_actor(account, source_id):
 
 
 def index_contacts(c, account):
+    from .identity import is_group_source
+
     people = c.execute(
         "SELECT DISTINCT m.sender_id FROM messages m JOIN conversations v ON v.id=m.conversation_id WHERE v.account_id=? AND m.direction='incoming' AND m.sender_id NOT IN ('unknown',?) UNION SELECT source_id FROM conversations WHERE account_id=? AND kind='private'",
         (account, account, account),
     ).fetchall()
     for person in people:
         source_id = person[0]
-        if source_id == account or source_id == "unknown":
+        if (
+            source_id == account
+            or source_id == "unknown"
+            or is_group_source(c, account, source_id)
+        ):
             continue
         private = c.execute(
             "SELECT title FROM conversations WHERE account_id=? AND source_id=? AND kind='private' ORDER BY rowid DESC LIMIT 1",
@@ -178,7 +184,7 @@ def apply(c, db, chat, evidence, result, participants):
     excluded = {
         stable_actor(account, r[0])
         for r in c.execute(
-            "SELECT source_id FROM actor_exclusions WHERE account_id=?", (account,)
+            "SELECT source_id FROM effective_actor_exclusions WHERE account_id=?", (account,)
         )
     }
     private_excluded = (
@@ -508,14 +514,14 @@ def overview(db):
     excluded_actors = {
         stable_actor(account, r["source_id"])
         for r in db.rows(
-            "SELECT source_id FROM actor_exclusions WHERE account_id=?", (account,)
+            "SELECT source_id FROM effective_actor_exclusions WHERE account_id=?", (account,)
         )
     }
 
     excluded_customers = {
         r["id"]
         for r in db.rows(
-            "SELECT id FROM crm_customers WHERE contact_id IN (SELECT id FROM crm_contacts WHERE account_id=? AND source_id IN (SELECT source_id FROM actor_exclusions WHERE account_id=?))",
+            "SELECT id FROM crm_customers WHERE contact_id IN (SELECT id FROM crm_contacts WHERE account_id=? AND source_id IN (SELECT source_id FROM effective_actor_exclusions WHERE account_id=?))",
             (account, account),
         )
     }
@@ -621,7 +627,7 @@ def customer_details(db, customer_id):
     locator = location(db, identity)
     locator["excluded"] = bool(
         db.rows(
-            "SELECT 1 FROM actor_exclusions WHERE account_id=? AND source_id=?",
+            "SELECT 1 FROM effective_actor_exclusions WHERE account_id=? AND source_id=?",
             (db.settings.source_account, identity),
         )
     )

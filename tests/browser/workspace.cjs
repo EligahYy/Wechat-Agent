@@ -187,7 +187,7 @@ const fs = require("fs");
   if (errors.length) throw Error(errors.join("\n"));
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.locator("#whitelist-manager").waitFor();
-  await page.locator('[data-white-entity="conversations"]').click();
+  await page.locator('[data-white-entity="groups"]').click();
   await page.locator("#white-add-toggle").click();
   await page.locator("#white-candidates [data-white-add]").first().click();
   await page.locator("#white-rows [data-white-restore]").waitFor();

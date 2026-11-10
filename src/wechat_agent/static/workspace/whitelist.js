@@ -17,7 +17,7 @@ export async function renderWhitelist() {
   if (!active() || current !== ticket) return;
   page = data.page;
   $("#whitelist-manager").innerHTML =
-    `<div class="toolbar"><div class="segments" aria-label="白名单类型"><button data-white-entity="people" aria-pressed="${entity === "people"}">人物</button><button data-white-entity="conversations" aria-pressed="${entity === "conversations"}">会话</button></div><span class="meta">${data.total} 个免跟进对象</span><button id="white-add-toggle">${adding ? "收起添加入口" : "添加白名单"}</button></div><form id="white-search" class="search-form"><label class="candidate-search"><span class="sr-only">搜索白名单</span><input name="q" value="${esc(query)}" placeholder="搜索白名单中的姓名或会话"></label><button>搜索</button></form>${adding ? `<section class="white-add"><h3>选择需要排除的${entity === "people" ? "联系人" : "会话"}</h3><form id="white-add-search" class="search-form"><label class="candidate-search"><span class="sr-only">查找添加对象</span><input name="q" value="${esc(addQuery)}" placeholder="备注、名称或微信 ID"></label><button>查找</button></form><div id="white-candidates">正在读取…</div></section>` : ""}<div id="white-rows">${data.items.map((r) => `<article class="white-row"><div><strong>${esc(r.name)}</strong><p class="meta">${entity === "people" ? "免跟进人物" : r.kind === "group" ? "免跟进群聊" : "免跟进私信"}</p></div><button data-white-restore="${esc(r.id)}">恢复跟进</button></article>`).join("") || '<p class="empty">当前白名单为空。</p>'}</div><div class="toolbar"><button id="white-prev" ${page === 1 ? "disabled" : ""}>上一页白名单</button><span class="meta">第 ${page} / ${data.pages} 页 · 每页50条</span><button id="white-next" ${data.has_more ? "" : "disabled"}>下一页白名单</button></div>`;
+    `<div class="toolbar"><div class="segments" aria-label="白名单类型"><button data-white-entity="people" aria-pressed="${entity === "people"}">人物 ${data.counts.people}</button><button data-white-entity="groups" aria-pressed="${entity === "groups"}">群聊会话 ${data.counts.groups}</button></div><span class="meta">${data.total} 个${entity === "people" ? "免跟进人物" : "免跟进群聊"}</span><button id="white-add-toggle">${adding ? "收起添加入口" : "添加白名单"}</button></div><p class="meta">${entity === "people" ? "人物包含手动排除和随群免跟进的成员；私信统一在这里管理。" : "群聊和群内已识别成员一并免跟进；新发现的成员自动沿用，原始记录保留。"}</p><form id="white-search" class="search-form"><label class="candidate-search"><span class="sr-only">搜索白名单</span><input name="q" value="${esc(query)}" placeholder="搜索白名单中的姓名或会话"></label><button>搜索</button></form>${adding ? `<section class="white-add"><h3>选择需要排除的${entity === "people" ? "联系人" : "群聊会话"}</h3><form id="white-add-search" class="search-form"><label class="candidate-search"><span class="sr-only">查找添加对象</span><input name="q" value="${esc(addQuery)}" placeholder="备注、名称或微信 ID"></label><button>查找</button></form><div id="white-candidates">正在读取…</div></section>` : ""}<div id="white-rows">${data.items.map((r) => `<article class="white-row"><div><strong>${esc(r.name)}</strong><p class="meta">${entity === "people" ? (r.groups.length ? "人物 · 随群免跟进" : "人物 · 手动免跟进") : "群聊会话 · 群成员一并免跟进"}</p>${entity === "people" && r.groups.length ? `<p class="meta">来自群：${esc(r.groups.map((g) => g.name).join("、"))}${r.manual ? " · 同时有手动排除" : ""}</p>` : entity === "groups" && !r.pending ? `<p class="meta">已识别 ${r.members} 位成员随群免跟进</p>` : ""}${r.pending ? '<p class="meta">群聊尚未同步，排除配置已保留。</p>' : r.allowlisted === 0 ? '<p class="meta">会话已暂停采集，恢复跟进前需先恢复采集。</p>' : ""}<details><summary>微信 ID</summary><p class="meta">${esc(r.source_id)}</p></details></div>${entity === "people" && r.groups.length ? `<button data-white-group="${esc(r.groups[0].source_id)}">管理关联群</button>` : `<button data-white-restore="${esc(r.id)}">恢复跟进</button>`}</article>`).join("") || '<p class="empty">当前白名单为空。</p>'}</div><div class="toolbar"><button id="white-prev" ${page === 1 ? "disabled" : ""}>上一页白名单</button><span class="meta">第 ${page} / ${data.pages} 页 · 每页50条</span><button id="white-next" ${data.has_more ? "" : "disabled"}>下一页白名单</button></div>`;
   if (adding) await loadCandidates();
 }
 async function loadCandidates() {
@@ -43,7 +43,7 @@ async function loadCandidates() {
     data.items
       .map(
         (r) =>
-          `<article class="white-row"><div><strong>${esc(r.name)}</strong><p class="meta">${entity === "conversations" ? (r.kind === "group" ? "群聊" : "私信") : "工作联系人"}</p></div><button data-white-add="${esc(r.id)}">加入白名单</button></article>`,
+          `<article class="white-row"><div><strong>${esc(r.name)}</strong><p class="meta">${entity === "groups" ? "群聊会话" : "工作联系人"}</p></div><button data-white-add="${esc(r.id)}">加入白名单</button></article>`,
       )
       .join("") || '<p class="meta">没有匹配对象。</p>';
   $("#white-candidates").innerHTML +=
@@ -73,6 +73,7 @@ document.addEventListener("click", async (e) => {
     !b.dataset.whiteEntity &&
     !b.dataset.whiteAdd &&
     !b.dataset.whiteRestore &&
+    !b.dataset.whiteGroup &&
     ![
       "white-add-toggle",
       "white-prev",
@@ -90,6 +91,12 @@ document.addEventListener("click", async (e) => {
       page = 1;
       addQuery = "";
       addPage = 1;
+    }
+    if (b.dataset.whiteGroup) {
+      entity = "groups";
+      query = b.dataset.whiteGroup;
+      page = 1;
+      adding = false;
     }
     if (b.id === "white-add-toggle") adding = !adding;
     if (b.id === "white-prev") page--;

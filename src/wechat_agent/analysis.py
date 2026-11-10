@@ -61,7 +61,7 @@ def context(db, conversation_id, message_ids=None):
     if not chat["allowlisted"] or not chat["egress"] or not chat["followup_source"]:
         raise Blocked("blocked_policy")
     if chat["kind"] == "private" and db.rows(
-        "SELECT 1 FROM actor_exclusions WHERE account_id=? AND source_id=?",
+        "SELECT 1 FROM effective_actor_exclusions WHERE account_id=? AND source_id=?",
         (chat["account_id"], chat["source_id"]),
     ):
         raise Blocked("blocked_policy")
@@ -231,7 +231,7 @@ def context(db, conversation_id, message_ids=None):
         payload["excluded_targets"] = [
             stable_actor(chat["account_id"], r["source_id"])
             for r in db.rows(
-                "SELECT source_id FROM actor_exclusions WHERE account_id=?",
+                "SELECT source_id FROM effective_actor_exclusions WHERE account_id=?",
                 (chat["account_id"],),
             )
         ]

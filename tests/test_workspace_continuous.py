@@ -141,7 +141,7 @@ def test_v15_upgrade_preserves_packets_and_manual_pause(ready):
     assert scan["stage_completed"] == scan["stage_total"] == scan["merge_level"] == 0
     manual = ready.rows("SELECT * FROM workspace_queue WHERE source_id='manual'")[0]
     assert manual["user_paused"] == 1 and manual["status"] == "paused"
-    assert ready.rows("PRAGMA user_version")[0]["user_version"] == 15
+    assert ready.rows("PRAGMA user_version")[0]["user_version"] == 16
     assert len(ready.rows("SELECT * FROM messages")) == 1
 
 
