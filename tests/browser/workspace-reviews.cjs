@@ -31,9 +31,9 @@ const assert = require("assert/strict");
   await post("/api/crm/configure", { enabled: true });
   await post("/__test__/review-fixture");
   await page.reload();
-  await page.locator("#customer-search input").fill("张先生");
-  await page.getByRole("button", { name: "查找客户", exact: true }).click();
-  await page.getByRole("button", { name: "查看档案", exact: true }).click();
+  await page.locator("#dashboard-search input").fill("张先生");
+  await page.getByRole("button", { name: "搜索", exact: true }).click();
+  await page.locator('[data-open-source="merchant"]').first().click();
   await page.locator("dialog[open]").waitFor();
   const initialRuns = await (
     await page.request.get(base + "/api/workspace/runs")
@@ -55,7 +55,7 @@ const assert = require("assert/strict");
   assert.equal(packetRequests, 1, "reopening must reuse loaded book");
   await packet.click();
   await page.getByRole("button", { name: "关闭详情", exact: true }).click();
-  await page.getByRole("button", { name: "查看档案", exact: true }).click();
+  await page.locator('[data-open-source="merchant"]').first().click();
   await page.locator("dialog[open]").waitFor();
   let release;
   const hold = new Promise((resolve) => (release = resolve));
@@ -126,9 +126,9 @@ const assert = require("assert/strict");
     .waitFor();
   assert.equal(await page.locator("[data-clue]").count(), 0);
   await page.reload();
-  await page.locator("#customer-search input").fill("张先生");
-  await page.getByRole("button", { name: "查找客户", exact: true }).click();
-  await page.getByRole("button", { name: "查看档案", exact: true }).click();
+  await page.locator("#dashboard-search input").fill("张先生");
+  await page.getByRole("button", { name: "搜索", exact: true }).click();
+  await page.locator('[data-open-source="merchant"]').first().click();
   await page.locator("dialog[open]").waitFor();
   assert.equal(await page.locator("[data-clue]").count(), 0);
   await page.locator("#reviewed-clues > summary").click();
@@ -223,7 +223,7 @@ const assert = require("assert/strict");
   });
   await page.getByRole("button", { name: "关闭详情", exact: true }).click();
   assert.equal(
-    await page.locator("#customer-search input").inputValue(),
+    await page.locator("#dashboard-search input").inputValue(),
     "张先生",
     "opening details must preserve customer search",
   );

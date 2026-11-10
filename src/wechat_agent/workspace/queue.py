@@ -196,13 +196,13 @@ def _starting(job):
     )
 
 
-def _jobs(db, background=True):
+def _jobs(db, background=True, include_sources=False):
     """One projection shared by summary, list, actions and command responses."""
     scheduler = _scheduler(db, background)
     people = {
         p["source_id"]: p
         for p in source_people(db)
-        if p["authorized"] and p["has_text"]
+        if include_sources or p["authorized"] and p["has_text"]
     }
     account = db.settings.source_account
     scans = {
@@ -214,15 +214,26 @@ def _jobs(db, background=True):
         for q in db.rows("SELECT * FROM workspace_queue WHERE account_id=?", (account,))
     }
     items = []
-    for ident in (set(scans) | set(queued)) & set(people):
+    identities = (
+        set(people) if include_sources else (set(scans) | set(queued)) & set(people)
+    )
+    for ident in identities:
         scan, job = scans.get(ident), queued.get(ident)
         if job and job["status"] == "excluded":
             continue
-        latest = max([r for r in (scan, job) if r], key=lambda r: r["updated_at"])
+        latest = max(
+            [r for r in (scan, job) if r],
+            key=lambda r: r["updated_at"],
+            default={
+                "status": "queued",
+                "error": None,
+                "updated_at": people[ident]["latest_event"],
+            },
+        )
         active = running(db, ident)
         paused = bool(job and job["user_paused"])
         starting = _starting(job)
-        record = job or scan
+        record = job or scan or latest
         completed = record["status"] == "succeeded"
         status = (
             "stopping"
@@ -262,6 +273,8 @@ def _jobs(db, background=True):
                 "blocked_credentials",
                 "legacy_mode",
             }
+            if not people[ident]["authorized"] or not people[ident]["has_text"]:
+                action["disabled"] = True
         item = {
             "source_id": ident,
             "name": people[ident]["name"],
@@ -286,6 +299,12 @@ def _jobs(db, background=True):
             "primary_action": action,
             "priority": job["priority"] if job else 0,
             "attempts": job["attempts"] if job else 0,
+            "latest_event": people[ident]["latest_event"],
+            "action_hint": "来源尚未授权"
+            if not people[ident]["authorized"]
+            else "暂无可分析文本"
+            if not people[ident]["has_text"]
+            else None,
         }
         for key in (
             "total_pages",

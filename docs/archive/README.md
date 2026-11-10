@@ -9,9 +9,11 @@
 | AI_CRM_DESIGN.md、UX_REVIEW_PROTOTYPE | 客户文档／批次重建草案；已被当前产品与技术方案替代 | `34c5145`、`a47f99b`及以前 |
 | 旧版SOP与更新流水 | 仅试点、旧设置入口、图片只有占位、每日预算等操作说明已过期 | `9e4c509`及以前 |
 | UI_DESIGN.md | M0独立视觉规范，含“正式版仍是旧版”等过期前提；有效控件、动效、响应式要求已并入产品方案 | `eaece6c`中的同名文件 |
-| UI_PROTOTYPE.html、tests/browser/design.cjs | 虚构数据的静态交互原型及其专用测试，不能代表正式工作台；现在由真实API夹具的六组浏览器回归覆盖 | `eaece6c`中的同名路径 |
+| UI_PROTOTYPE.html、tests/browser/design.cjs | 虚构数据的静态交互原型及其专用测试，不能代表正式工作台；现在由真实API夹具的七组浏览器回归覆盖 | `eaece6c`中的同名路径 |
 | ACCEPTANCE_PLAN.md | M0–M4里程碑与B01–B26场景、质量门槛；有效场景与目标已收口到产品方案，旧阶段流水删除 | `eaece6c`中的同名文件 |
 | IMPLEMENTATION_STATUS.md | v0.7–v0.11阶段交付与限制；当前能力与未交付边界并入文档索引，避免版本描述重复 | `eaece6c`中的同名文件 |
+
+| v0.12.x多页工作台与独立scope模块 | 今日、客户、待确认、整理、范围拆页；v0.13收口为同列上下分组大屏与设置内白名单，保留详情与统一业务状态 | `3ac23e0`及以前 |
 
 2026-11-10 / v0.12.0：删除上述重复／过期正文，仅保留本概要。示例：`git show eaece6c:docs/UI_DESIGN.md`。文件历史仍可用`git log --all -- 路径`查阅。
 

@@ -194,6 +194,37 @@ def create_app(settings=None, source_factory=None, background=False):
 
         return progress(db, page, background=background)
 
+    @app.get("/api/workspace/dashboard")
+    def workspace_dashboard(
+        q: str = "",
+        selected: str = "all",
+        page: int = 1,
+        followup: str = "all",
+        followup_page: int = 1,
+    ):
+        from .workspace.dashboard import snapshot
+
+        return snapshot(db, q, selected, page, followup, followup_page, background)
+
+    @app.get("/api/workspace/whitelist")
+    def workspace_whitelist(
+        entity: str = "people", q: str = "", scope: str = "archive", page: int = 1
+    ):
+        from .workspace.whitelist import listing
+
+        return listing(db, entity, q, scope, page)
+
+    @app.post("/api/workspace/whitelist")
+    async def workspace_whitelist_change(request: Request):
+        from .workspace.whitelist import change
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("workspace_invalid_control")
+        return await run_in_threadpool(
+            change, db, body.get("entity"), body.get("id"), body.get("excluded")
+        )
+
     async def dispatch_workspace_job(request, action=None):
         from .workspace.queue import command
 

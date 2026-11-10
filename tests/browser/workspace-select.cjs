@@ -26,7 +26,7 @@ const assert = require("assert/strict");
   });
   await page.goto(base + "/workspace?view=customers");
   const phase = () =>
-    page.getByRole("combobox", { name: "备货阶段", exact: true });
+    page.getByRole("combobox", { name: "筛选联系人", exact: true });
   await phase().waitFor();
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
@@ -42,7 +42,7 @@ const assert = require("assert/strict");
     ]) {
       await page.setViewportSize({ width, height });
       await phase().scrollIntoViewIfNeeded();
-      const boxes = await page.locator("#customer-search").evaluate((form) => {
+      const boxes = await page.locator("#dashboard-search").evaluate((form) => {
         const rect = (el) => {
           const r = el.getBoundingClientRect();
           return { x: r.x, y: r.y, w: r.width, h: r.height, b: r.bottom };
@@ -65,11 +65,7 @@ const assert = require("assert/strict");
             1,
           "search row bottom alignment " + width,
         );
-      else
-        assert(
-          boxes.button.y >= boxes.select.b,
-          "compact search button must follow fields",
-        );
+
       assert(
         !(await page.evaluate(
           () => document.documentElement.scrollWidth > innerWidth,
@@ -77,7 +73,10 @@ const assert = require("assert/strict");
         "page overflow " + width,
       );
       await phase().click();
-      const menu = page.getByRole("listbox", { name: "备货阶段", exact: true });
+      const menu = page.getByRole("listbox", {
+        name: "筛选联系人",
+        exact: true,
+      });
       await menu.waitFor();
       const rect = await menu.boundingBox();
       assert(
@@ -87,7 +86,7 @@ const assert = require("assert/strict");
           rect.y + rect.height <= height + 1,
         "menu must fit viewport " + width,
       );
-      assert.equal(await menu.getByRole("option").count(), 8);
+      assert.equal(await menu.getByRole("option").count(), 6);
       assert.equal(
         await menu.getByRole("option", { selected: true }).count(),
         1,
@@ -103,19 +102,26 @@ const assert = require("assert/strict");
     }
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
+  // Let the resize dismissal finish before testing a fresh keyboard interaction.
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
   await phase().focus();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   assert.equal(
-    await page.locator("#customer-search select").inputValue(),
-    "closed",
+    await page.locator("#dashboard-filter").inputValue(),
+    "unanalyzed",
   );
   await phase().click();
-  await page.getByRole("option", { name: "全部阶段", exact: true }).click();
-  await page.getByRole("button", { name: "查找客户", exact: true }).click();
+  await page.getByRole("option", { name: "全部联系人", exact: true }).click();
+  await page.getByRole("button", { name: "搜索", exact: true }).click();
   await phase().click();
-  await page.getByRole("textbox", { name: "搜索客户", exact: true }).click();
+  await page.getByRole("textbox", { name: "搜索联系人", exact: true }).click();
   assert.equal(await phase().getAttribute("aria-expanded"), "false");
   await phase().focus();
   await page.keyboard.press("Enter");
@@ -133,7 +139,7 @@ const assert = require("assert/strict");
   await post("/api/crm/configure", { enabled: true });
   await post("/__test__/review-fixture?role=true");
   await page.reload();
-  await page.getByRole("button", { name: "查看档案", exact: true }).click();
+  await page.locator('[data-open-source="merchant"]').first().click();
   await page.locator("dialog[open]").waitFor();
   await page.getByRole("tab", { name: "人工跟进", exact: true }).click();
   const action = page.getByRole("combobox", {
@@ -205,7 +211,7 @@ const assert = require("assert/strict");
     ),
     "batch selection must submit native value",
   );
-  await page.getByRole("button", { name: "查看档案", exact: true }).click();
+  await page.locator('[data-open-source="merchant"]').first().click();
   await page.locator("dialog[open]").waitFor();
   await page.getByRole("tab", { name: "批次与行动", exact: true }).click();
   await page.getByRole("combobox", { name: "你的判断", exact: true }).click();

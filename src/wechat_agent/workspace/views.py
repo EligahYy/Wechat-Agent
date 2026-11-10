@@ -201,7 +201,7 @@ def details(db, source_id, include_evidence=True):
     return doc
 
 
-def listing(db, compact=False):
+def listing(db, compact=False, include_non_target=False):
     items = []
     stale = 0
     for row in db.rows(
@@ -213,7 +213,7 @@ def listing(db, compact=False):
         except ValueError as exc:
             stale += str(exc) == "workspace_stale_evidence"
             continue
-        if d["body"]["relationship"] == "non_target":
+        if d["body"]["relationship"] == "non_target" and not include_non_target:
             continue
         items.append(d)
     return {"items": items, "stale_documents": stale}
