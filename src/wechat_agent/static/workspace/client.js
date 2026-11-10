@@ -54,6 +54,8 @@ export function errorText(code) {
         "模型返回被截断；重试时将拆成更小的分册，保留已有进度。",
       workspace_summary_not_reduced:
         "本轮分册合并未缩减，已保留全部资料。请重试分析。",
+      workspace_pause_pending:
+        "正在等待当前请求结束；停止后再继续，无需重复点击。",
       workspace_customer_paused: "该客户已暂停，请在整理进度中点击继续分析。",
       customer_paused: "该客户已手动暂停，点击继续分析即可续跑。",
       call_limit: "本轮分册已保存，后台将继续；也可点击继续分析。",

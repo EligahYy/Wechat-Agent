@@ -192,24 +192,29 @@ def create_app(settings=None, source_factory=None, background=False):
     def workspace_progress(page: int = 1):
         from .workspace.queue import progress
 
-        return progress(db, page)
+        return progress(db, page, background=background)
+
+    async def dispatch_workspace_job(request, action=None):
+        from .workspace.queue import command
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("workspace_invalid_control")
+        return await run_in_threadpool(
+            command,
+            db,
+            body.get("source_id"),
+            action or body.get("action"),
+            background=background,
+        )
+
+    @app.post("/api/workspace/jobs/command")
+    async def workspace_job_command(request: Request):
+        return await dispatch_workspace_job(request)
 
     @app.post("/api/workspace/progress/control")
     async def workspace_progress_control(request: Request):
-        from .workspace.queue import control, settings
-
-        body = await request.json()
-        if not isinstance(body.get("source_id"), str):
-            raise ValueError("workspace_invalid_identity")
-        result = await run_in_threadpool(
-            control, db, body["source_id"], body.get("action")
-        )
-        result["automatic"] = bool(
-            background
-            and db.settings.analysis_mode == "workspace"
-            and settings(db)["enabled"]
-        )
-        return result
+        return await dispatch_workspace_job(request)
 
     @app.get("/api/workspace/sources")
     def workspace_sources(
@@ -229,9 +234,7 @@ def create_app(settings=None, source_factory=None, background=False):
     def workspace_queue(page: int = 1):
         from .workspace.queue import report
 
-        result = report(db, page)
-        result["background"] = bool(background)
-        return result
+        return report(db, page, background=background)
 
     @app.post("/api/workspace/automation")
     async def workspace_automation(request: Request):
@@ -249,12 +252,7 @@ def create_app(settings=None, source_factory=None, background=False):
 
     @app.post("/api/workspace/queue/retry")
     async def workspace_queue_retry(request: Request):
-        from .workspace.queue import retry
-
-        body = await request.json()
-        if not isinstance(body.get("source_id"), str):
-            raise ValueError("workspace_invalid_identity")
-        return await run_in_threadpool(retry, db, body["source_id"])
+        return await dispatch_workspace_job(request, "retry")
 
     @app.get("/api/workspace/candidates")
     def workspace_candidates(q: str = "", page: int = 1):
@@ -343,18 +341,7 @@ def create_app(settings=None, source_factory=None, background=False):
 
     @app.post("/api/workspace/analyze")
     async def workspace_analyze(request: Request):
-        from .workspace.agent import run
-        from .workspace.queue import reconcile
-
-        body = await request.json()
-        source_id = body.get("source_id")
-        if not isinstance(source_id, str) or not 0 < len(source_id) <= 200:
-            raise ValueError("workspace_invalid_identity")
-        result = await run_in_threadpool(run, db, source_id)
-        if not result.get("paused"):
-            # Cached manual results also finish the queued customer job.
-            await run_in_threadpool(reconcile, db)
-        return result
+        return await dispatch_workspace_job(request, "start")
 
     @app.post("/api/workspace/command")
     async def workspace_command(request: Request):

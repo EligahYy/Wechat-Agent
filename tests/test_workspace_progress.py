@@ -27,7 +27,7 @@ def test_customer_pause_stops_publication_and_resume_reuses_packets(ready, phase
             payload.get("phase") == phase or phase == "review" and "draft" in payload
         ):
             stopped.append(True)
-            queue.control(db, "merchant", "pause")
+            queue._transition(db, "merchant", "pause")
 
     queue.configure(db, True)
     with model(db, pause) as client:
@@ -46,7 +46,7 @@ def test_customer_pause_stops_publication_and_resume_reuses_packets(ready, phase
         assert len(db.rows("SELECT * FROM usage")) == calls
         with pytest.raises(Blocked, match="workspace_customer_paused"):
             agent.run(db, "merchant", client)
-        queue.control(db, "merchant", "resume")
+        queue._transition(db, "merchant", "resume")
         assert queue.step(db, client=client)
     assert read(db, "merchant")
     assert queue.progress(db)["items"] == []
@@ -60,8 +60,8 @@ def test_fast_pause_resume_does_not_publish_previous_generation(ready):
     def toggle(payload):
         if "draft" in payload and not changed:
             changed.append(True)
-            queue.control(db, "merchant", "pause")
-            queue.control(db, "merchant", "resume")
+            queue._transition(db, "merchant", "pause")
+            queue._transition(db, "merchant", "resume")
 
     queue.configure(db, True)
     with model(db, toggle) as client:
@@ -77,7 +77,7 @@ def test_fast_pause_resume_does_not_publish_previous_generation(ready):
 
 
 def test_new_messages_do_not_unpause_customer(ready, record):
-    queue.control(ready, "merchant", "pause")
+    queue._transition(ready, "merchant", "pause")
     ingest(
         ready,
         [
@@ -285,14 +285,14 @@ def test_progress_api_auth_validation_and_customer_isolation(ready):
             ).status_code
             == 422
         )
-    assert client.post(
+    assert not client.post(
         "/api/workspace/progress/control",
         headers=headers,
         json={"source_id": "merchant", "action": "pause"},
     ).json()["paused"]
-    assert client.get("/api/workspace/progress", headers=headers).json()["items"][0][
-        "user_paused"
-    ]
+    assert not client.get("/api/workspace/progress", headers=headers).json()["items"][
+        0
+    ]["user_paused"]
     assert not ready.rows("SELECT * FROM usage")
 
 
@@ -334,8 +334,8 @@ def test_cached_manual_resume_finishes_job_without_new_model_calls(ready):
     with model(ready) as client:
         agent.run(ready, "merchant", client)
     calls = len(ready.rows("SELECT * FROM usage"))
-    queue.control(ready, "merchant", "pause")
-    queue.control(ready, "merchant", "resume")
+    queue._transition(ready, "merchant", "pause")
+    queue._transition(ready, "merchant", "resume")
     client = TestClient(create_app(ready.settings))
     result = client.post(
         "/api/workspace/analyze",

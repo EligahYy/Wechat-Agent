@@ -10,7 +10,20 @@ const assert = require("assert/strict");
   const page = await browser.newPage({
     viewport: { width: 1920, height: 970 },
   });
-  const errors = [];
+  const errors = [],
+    commands = [];
+  page.on("request", (r) => {
+    if (
+      r.method() === "POST" &&
+      /\/api\/workspace\/(jobs\/command|analyze|progress\/control|queue\/retry)$/.test(
+        new URL(r.url()).pathname,
+      )
+    )
+      commands.push({
+        path: new URL(r.url()).pathname,
+        body: r.postDataJSON(),
+      });
+  });
   page.on("pageerror", (e) => errors.push(e.message));
   const base = "http://127.0.0.1:8768";
   await page.goto(base + "/");
@@ -46,7 +59,39 @@ const assert = require("assert/strict");
   await page.locator("#progress-prev").click();
   await page.locator("#progress-prev").click();
   const first = page.locator('[data-progress-source="progress-42"]');
+  assert.equal(
+    await page.getByRole("button", { name: "暂停分析", exact: true }).count(),
+    0,
+  );
+  const initial = await (
+    await page.request.get(base + "/api/workspace/progress")
+  ).json();
+  assert.equal(initial.summary.counts.ready, 43);
+  assert.equal(initial.summary.counts.running || 0, 0);
+  await page.request.post(base + "/__test__/hold-job", { headers, data: {} });
+  await first.getByRole("button", { name: "开始分析", exact: true }).click();
+  await first.getByRole("button", { name: "暂停分析", exact: true }).waitFor();
+  const running = await (
+    await page.request.get(base + "/api/workspace/progress")
+  ).json();
+  assert.equal(running.summary.counts.running, 1);
+  assert.equal(commands.length, 1);
   await first.getByRole("button", { name: "暂停分析", exact: true }).click();
+  await first.getByRole("button", { name: "正在暂停…", exact: true }).waitFor();
+  assert(
+    await first
+      .getByRole("button", { name: "正在暂停…", exact: true })
+      .isDisabled(),
+  );
+  const stopping = await (
+    await page.request.get(base + "/api/workspace/progress")
+  ).json();
+  assert.equal(stopping.summary.counts.stopping, 1);
+  assert.equal(stopping.items[0].primary_action, null);
+  await page.request.post(base + "/__test__/release-job", {
+    headers,
+    data: {},
+  });
   await first.getByRole("button", { name: "继续分析", exact: true }).waitFor();
   await page
     .getByRole("button", { name: "刷新会话与队列", exact: true })
@@ -54,13 +99,27 @@ const assert = require("assert/strict");
   await first.getByRole("button", { name: "继续分析", exact: true }).waitFor();
   await page.reload();
   await first.getByRole("button", { name: "继续分析", exact: true }).click();
-  await page.getByText("分析完成，档案已更新。", { exact: true }).waitFor();
+  await page
+    .getByText("分析完成。可在客户或待确认中查看；无业务依据时不会创建客户。", {
+      exact: true,
+    })
+    .waitFor();
   await first.waitFor({ state: "detached" });
   const progress = await (
     await page.request.get(base + "/api/workspace/progress")
   ).json();
   assert.equal(progress.total, 42);
   assert(!progress.items.some((i) => i.source_id === "progress-42"));
+  await page.locator('[data-candidate="progress-41"]').click();
+  await page.locator("#analyze").click();
+  await page
+    .locator('[data-progress-source="progress-41"]')
+    .waitFor({ state: "detached" });
+  assert.deepEqual(
+    commands.map((c) => c.body.action),
+    ["start", "pause", "resume", "start"],
+  );
+  assert(commands.every((c) => c.path === "/api/workspace/jobs/command"));
   for (const colorScheme of ["dark", "light"]) {
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     for (const width of [1920, 1440, 768, 390]) {
@@ -111,7 +170,7 @@ const assert = require("assert/strict");
   assert.deepEqual(errors, []);
   await browser.close();
   console.log(
-    "Customer progress pause/resume, 20-item pagination, completed hiding, compact tabs, and budget-free settings passed.",
+    "Unified idle/running/stopping states, one command per operation, pause/resume, completed hiding, pagination and responsive controls passed.",
   );
 })().catch((e) => {
   console.error(e);

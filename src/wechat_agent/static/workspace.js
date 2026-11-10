@@ -219,6 +219,7 @@ async function scanProgress() {
   const target = $("#scan-progress");
   if (!target || view !== "pilot" || ticket !== progressRequest) return;
   progressPage = data.page;
+  queueProgress(data.summary);
   const phases = {
     collect: "整理原始资料",
     merge: "合并资料分册",
@@ -226,13 +227,7 @@ async function scanProgress() {
     done: "等待更新",
     queued: "等待开始",
   };
-  const states = {
-    queued: "等待整理",
-    running: "正在整理",
-    paused: "已暂停",
-    failed: "需要处理",
-  };
-  target.innerHTML = `<p class="meta">按客户归纳 · 最新更新在前 · 已完成自动移出 · 每页20位</p><div class="cards">${data.items.map((s) => `<article class="insight-card progress-card" data-progress-source="${esc(s.source_id)}"><div class="row"><div><h3>${esc(s.name)}</h3><p class="meta">${esc(states[s.status] || s.status)} · ${esc(phases[s.phase] || s.phase)}</p></div><button data-progress-action="${["running", "queued"].includes(s.status) ? "pause" : "resume"}" data-source="${esc(s.source_id)}">${["running", "queued"].includes(s.status) ? "暂停分析" : s.status === "failed" ? "重试分析" : "继续分析"}</button></div>${s.total_pages ? `<p>分册 ${s.completed_pages} / ${s.total_pages} · 已整理 ${s.processed_messages} / ${s.source_messages} 条</p>` : "<p class='meta'>开始后将完整整理该客户的相关聊天。</p>"}${s.error ? `<p class="${s.status === "failed" ? "error" : "meta"}">${esc(errorText(s.error))}</p>` : ""}<p class="meta">更新于 ${esc(time(s.updated_at))} 北京时间</p></article>`).join("") || '<p class="progress-empty">当前没有进行中的整理任务。已完成的档案可在“客户”中查看。</p>'}</div><div class="toolbar progress-pagination"><button id="progress-prev" ${data.page === 1 ? "disabled" : ""}>上一页</button><span class="meta">第 ${data.page} / ${data.pages} 页 · ${data.total} 位客户</span><button id="progress-next" ${data.has_more ? "" : "disabled"}>下一页</button></div>`;
+  target.innerHTML = `<p class="meta">按客户归纳 · 最新更新在前 · 已完成自动移出 · 每页20位</p><div class="cards">${data.items.map((s) => `<article class="insight-card progress-card" data-progress-source="${esc(s.source_id)}"><div class="row"><div><h3>${esc(s.name)}</h3><p class="meta">${esc(s.status_label)} · ${esc(phases[s.phase] || s.phase)}</p></div>${s.primary_action ? `<button data-progress-action="${esc(s.primary_action.action)}" data-source="${esc(s.source_id)}" ${s.primary_action.disabled ? "disabled" : ""}>${esc(s.primary_action.label)}</button>` : s.pending_label ? `<button disabled>${esc(s.pending_label)}</button>` : ""}</div>${s.total_pages ? `<p>分册 ${s.completed_pages} / ${s.total_pages} · 已整理 ${s.processed_messages} / ${s.source_messages} 条</p>` : "<p class='meta'>开始后将完整整理该客户的相关聊天。</p>"}${s.error ? `<p class="${s.status === "failed" ? "error" : "meta"}">${esc(errorText(s.error))}</p>` : ""}<p class="meta">更新于 ${esc(time(s.updated_at))} 北京时间</p></article>`).join("") || '<p class="progress-empty">当前没有进行中的整理任务。已完成的档案可在“客户”中查看。</p>'}</div><div class="toolbar progress-pagination"><button id="progress-prev" ${data.page === 1 ? "disabled" : ""}>上一页</button><span class="meta">第 ${data.page} / ${data.pages} 页 · ${data.total} 位客户</span><button id="progress-next" ${data.has_more ? "" : "disabled"}>下一页</button></div>`;
 }
 setInterval(() => {
   if (
@@ -241,7 +236,6 @@ setInterval(() => {
     !$("#scan-progress :focus")
   ) {
     scanProgress().catch(() => {});
-    queueProgress().catch(() => {});
   }
 }, 5000);
 async function pilot() {
@@ -269,7 +263,6 @@ async function pilot() {
     );
     if (data.items.length) updateCandidateButton();
     await scanProgress();
-    await queueProgress();
   } catch (e) {
     if (view === "pilot" && ticket === candidateRequest)
       $("#status").textContent = e.message;
@@ -406,19 +399,38 @@ document.addEventListener("submit", async (e) => {
   pilot();
 });
 
-async function queueProgress() {
-  const q = await api("queue");
+function queueProgress(q) {
   const target = $("#auto-queue");
   if (!target || view !== "pilot") return;
   const gates = {
-    paused: "自动整理已暂停；可单独继续一位客户",
+    paused: "自动整理已暂停；可单独开始或继续一位客户",
+    no_background:
+      "当前服务未启用自动后台；可单独分析客户，或使用 wechat-agent start 启动后台",
     manual_mode: "当前仅支持手动分析；使用 wechat-agent start 启动自动整理",
     awaiting_account: "请先绑定工作微信",
     legacy_mode: "请使用 wechat-agent start 启动客户整理",
     blocked_policy: "请先在设置开启文本分析授权",
     blocked_credentials: "请先配置 DeepSeek key",
   };
-  target.innerHTML = `<section class="card"><h2>按客户自动整理</h2><p class="muted">先完整整理每位客户的历史，再总结档案。优先近15天活跃客户，已完成分册可复用。</p><div class="toolbar"><button class="${q.enabled ? "" : "primary"}" id="automation-toggle" data-enabled="${!q.enabled}">${q.enabled ? "暂停自动整理" : "开启自动整理"}</button><button id="queue-refresh">刷新会话与队列</button>${q.enabled && q.gate && !["manual_mode", "legacy_mode", "blocked_policy", "blocked_credentials"].includes(q.gate) ? '<button id="queue-resume">问题已处理，恢复队列</button>' : ""}</div><p role="status">${esc(q.gate ? gates[q.gate] || errorText(q.gate) : "队列运行中；新消息将更新对应客户")}${!q.background ? " · 当前服务未启用后台，请使用 wechat-agent start" : ""}</p><p class="meta">待整理 ${q.counts.queued || 0} · 整理中 ${q.counts.running || 0} · 暂停或等待续跑 ${q.counts.paused || 0} · 需要处理 ${q.counts.failed || 0}</p><p class="meta">单客户暂停不影响其他客户；继续时复用已整理分册。仅记录用量，不设每日 Token 上限。</p></section>`;
+  target.innerHTML = `<section class="card"><h2>按客户自动整理</h2><p class="muted">先完整整理每位客户的历史，再总结档案。优先近15天活跃客户，已完成分册可复用。</p><div class="toolbar"><button class="${q.enabled ? "" : "primary"}" id="automation-toggle" data-enabled="${!q.enabled}">${q.enabled ? "暂停自动整理" : "开启自动整理"}</button><button id="queue-refresh">刷新会话与队列</button>${q.enabled && q.gate && !["manual_mode", "legacy_mode", "blocked_policy", "blocked_credentials", "no_background"].includes(q.gate) ? '<button id="queue-resume">问题已处理，恢复队列</button>' : ""}</div><p role="status">${esc(q.gate ? gates[q.gate] || errorText(q.gate) : "队列运行中；新消息将更新对应客户")}</p><p class="meta">待分析 ${q.counts.ready || 0} · 排队中 ${q.counts.queued || 0} · 正在启动 ${q.counts.starting || 0} · 整理中 ${q.counts.running || 0} · 正在暂停 ${q.counts.stopping || 0} · 已暂停 ${q.counts.paused || 0} · 需要处理 ${q.counts.failed || 0}</p><p class="meta">单客户暂停不影响其他客户；继续时复用已整理分册。仅记录用量，不设每日 Token 上限。</p></section>`;
+}
+
+async function submitJob(source, action) {
+  notice(action === "pause" ? "正在暂停该客户…" : "正在提交客户整理任务…");
+  const result = await api("jobs/command", { source_id: source, action });
+  await refresh();
+  await scanProgress();
+  notice(
+    {
+      completed: "分析完成。可在客户或待确认中查看；无业务依据时不会创建客户。",
+      paused: "资料整理已保存并暂停。可在整理进度中继续分析。",
+      stopping: "正在暂停该客户；当前请求结束后停止，已整理分册保留。",
+      running: "该客户正在分析，无需重复启动。",
+      starting: "该客户正在启动，无需重复提交。",
+      queued: "已加入整理队列，后台将优先处理该客户。",
+      ready: "该客户当前未运行，可在进度中开始或继续分析。",
+    }[result.execution] || "客户整理状态已更新。",
+  );
 }
 
 async function loadPackets(page) {
@@ -626,13 +638,11 @@ document.addEventListener("click", async (e) => {
       await api("automation", {
         enabled: b.id === "queue-resume" || b.dataset.enabled === "true",
       });
-      await queueProgress();
       await scanProgress();
     }
     if (b.id === "queue-refresh") {
       b.disabled = true;
       await api("queue/refresh", {});
-      await queueProgress();
       await scanProgress();
     }
     if (b.id === "progress-prev" || b.id === "progress-next") {
@@ -641,31 +651,7 @@ document.addEventListener("click", async (e) => {
     }
     if (b.dataset.progressAction) {
       b.disabled = true;
-      const source = b.dataset.source;
-      const action = b.dataset.progressAction;
-      const result = await api("progress/control", {
-        source_id: source,
-        action,
-      });
-      await scanProgress();
-      await queueProgress();
-      if (action === "resume" && !result.automatic) {
-        notice("正在继续分析，已整理分册会复用。");
-        const analyzed = await api("analyze", { source_id: source });
-        await refresh();
-        notice(
-          analyzed.paused
-            ? "进度已保存，可继续分析。"
-            : "分析完成，档案已更新。",
-        );
-        await scanProgress();
-      } else {
-        notice(
-          action === "pause"
-            ? "已暂停该客户；当前请求结束后停止，已整理分册保留。"
-            : "已安排继续分析，复用已整理分册。",
-        );
-      }
+      await submitJob(b.dataset.source, b.dataset.progressAction);
     }
     if (b.dataset.candidate) {
       candidateSource = b.dataset.candidate;
@@ -727,11 +713,7 @@ document.addEventListener("click", async (e) => {
       b.textContent = "正在分析，请稍候…";
       $("#status").textContent = "正在检索并整理该联系人…";
       try {
-        const result = await api("analyze", { source_id: source });
-        await refresh();
-        $("#status").textContent = result.paused
-          ? "资料整理已保存并暂停。可在整理进度中继续分析。"
-          : "分析完成。可在客户或待确认中查看；无业务依据时不会创建客户。";
+        await submitJob(source, "start");
       } finally {
         busy = false;
         if (view === "pilot") pilot();

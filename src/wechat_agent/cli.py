@@ -177,11 +177,11 @@ def main():
             if args.action == "inspect":
                 print(dumps(inspect_sources(db)))
             else:
-                from .workspace.agent import run
+                from .workspace.queue import command
 
                 if not args.contact:
                     raise ValueError("试点分析需要 --contact")
-                print(dumps(run(db, args.contact)))
+                print(dumps(command(db, args.contact, "start", background=False)))
         elif args.command == "diagnose":
             from .diagnostics import snapshot
 

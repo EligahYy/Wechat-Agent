@@ -10,6 +10,7 @@ from ..config import secret
 from ..db import now
 from .agent import run
 from .context import snapshot
+from .control import command_lock, running
 from .store import raw, stable
 from .views import source_people
 
@@ -117,10 +118,12 @@ def reconcile(db):
             )
 
 
-def control(db, source_id, action):
-    if action not in {"pause", "resume"}:
+def _transition(db, source_id, action, *, reconciled=False):
+    """Single durable transition for user commands; callers decide execution."""
+    if action not in {"start", "pause", "resume", "retry"}:
         raise ValueError("workspace_invalid_control")
-    reconcile(db)
+    if not reconciled:
+        reconcile(db)
     with db.tx() as c:
         row = c.execute(
             "SELECT status,user_paused FROM workspace_queue WHERE account_id=? AND source_id=?",
@@ -128,9 +131,7 @@ def control(db, source_id, action):
         ).fetchone()
         if not row or row["status"] == "excluded":
             raise ValueError("workspace_excluded_person")
-        if action == "resume" and row["status"] == "running" and not row["user_paused"]:
-            raise ValueError("workspace_already_running")
-        if action == "resume":
+        if action == "retry" or action != "pause" and row["status"] == "failed":
             db.event(
                 c,
                 "workspace-retry:" + stable(db.settings.source_account, source_id),
@@ -149,21 +150,59 @@ def control(db, source_id, action):
                 source_id,
             ),
         )
-    return {"source_id": source_id, "paused": action == "pause"}
 
 
-def retry(db, source_id):
-    control(db, source_id, "resume")
-    return report(db)
+def _scheduler(db, background):
+    state = settings(db)
+    policy = db.rows(
+        "SELECT enabled FROM crm_policies WHERE account_id=?",
+        (db.settings.source_account,),
+    )
+    gate = (
+        "awaiting_account"
+        if not db.settings.source_account
+        else "blocked_policy"
+        if not policy or not policy[0]["enabled"]
+        else "blocked_credentials"
+        if not secret("DEEPSEEK_API_KEY")
+        else "legacy_mode"
+        if db.settings.analysis_mode == "legacy"
+        else "manual_mode"
+        if db.settings.analysis_mode == "pilot"
+        else "no_background"
+        if not background
+        else "paused"
+        if not state["enabled"]
+        else state.get("gate_error")
+        if state.get("gate_until") is None or state["gate_until"] > now()
+        else None
+    )
+    return {
+        "enabled": bool(state["enabled"]),
+        "gate": gate,
+        "background": bool(background),
+    }
 
 
-def progress(db, page=1):
-    """One active job per customer, newest first. Reading never invokes a model."""
-    if not 1 <= page <= 100000:
-        raise ValueError("workspace_invalid_query")
-    people = {p["source_id"]: p for p in source_people(db)}
-    allowed = {
-        p["source_id"] for p in people.values() if p["authorized"] and p["has_text"]
+def _starting(job):
+    return bool(
+        job
+        and job["status"] == "running"
+        and 0
+        <= (
+            datetime.now(UTC) - datetime.fromisoformat(job["updated_at"])
+        ).total_seconds()
+        < 15
+    )
+
+
+def _jobs(db, background=True):
+    """One projection shared by summary, list, actions and command responses."""
+    scheduler = _scheduler(db, background)
+    people = {
+        p["source_id"]: p
+        for p in source_people(db)
+        if p["authorized"] and p["has_text"]
     }
     account = db.settings.source_account
     scans = {
@@ -175,26 +214,78 @@ def progress(db, page=1):
         for q in db.rows("SELECT * FROM workspace_queue WHERE account_id=?", (account,))
     }
     items = []
-    for ident in (set(scans) | set(queued)) & allowed:
+    for ident in (set(scans) | set(queued)) & set(people):
         scan, job = scans.get(ident), queued.get(ident)
-        latest = max([r for r in (scan, job) if r], key=lambda r: r["updated_at"])
-        status = latest["status"]
         if job and job["status"] == "excluded":
             continue
-        if job and job["user_paused"]:
-            status = "paused"
-        if status == "succeeded":
-            continue
+        latest = max([r for r in (scan, job) if r], key=lambda r: r["updated_at"])
+        active = running(db, ident)
+        paused = bool(job and job["user_paused"])
+        starting = _starting(job)
+        record = job or scan
+        completed = record["status"] == "succeeded"
+        status = (
+            "stopping"
+            if active and paused
+            else "running"
+            if active
+            else "starting"
+            if starting and not paused
+            else "succeeded"
+            if completed
+            else "paused"
+            if paused
+            else "failed"
+            if record["status"] == "failed"
+            else "paused"
+            if record["status"] == "paused"
+            else "queued"
+            if scheduler["gate"] is None
+            else "ready"
+        )
+        started = bool(scan and (scan["source_messages"] or scan["total_pages"]))
+        action = (
+            None
+            if status in {"succeeded", "stopping", "starting"}
+            else {"action": "pause", "label": "暂停分析"}
+            if status == "running"
+            else {"action": "retry", "label": "重试分析"}
+            if status == "failed"
+            else {"action": "resume", "label": "继续分析"}
+            if started or paused or status == "paused"
+            else {"action": "start", "label": "开始分析"}
+        )
+        if action:
+            action["disabled"] = action["action"] != "pause" and scheduler["gate"] in {
+                "awaiting_account",
+                "blocked_policy",
+                "blocked_credentials",
+                "legacy_mode",
+            }
         item = {
             "source_id": ident,
             "name": people[ident]["name"],
             "status": status,
+            "status_label": {
+                "ready": "等待分析",
+                "queued": "排队中",
+                "starting": "正在启动",
+                "running": "正在整理",
+                "stopping": "正在暂停",
+                "failed": "需要处理",
+                "succeeded": "已完成",
+                "paused": "已暂停" if paused else "等待续跑",
+            }[status],
+            "pending_label": {"starting": "正在启动…", "stopping": "正在暂停…"}.get(
+                status
+            ),
             "phase": scan["phase"] if scan else "queued",
-            "error": "customer_paused"
-            if job and job["user_paused"]
-            else latest["error"],
-            "user_paused": bool(job and job["user_paused"]),
+            "error": "customer_paused" if paused else latest["error"],
+            "user_paused": paused,
             "updated_at": latest["updated_at"],
+            "primary_action": action,
+            "priority": job["priority"] if job else 0,
+            "attempts": job["attempts"] if job else 0,
         }
         for key in (
             "total_pages",
@@ -205,6 +296,17 @@ def progress(db, page=1):
             item[key] = scan[key] if scan else 0
         items.append(item)
     items.sort(key=lambda i: (i["updated_at"], i["source_id"]), reverse=True)
+    counts = {}
+    for item in items:
+        counts[item["status"]] = counts.get(item["status"], 0) + 1
+    return items, scheduler | {"counts": counts, "total": len(items)}
+
+
+def progress(db, page=1, background=True):
+    if not 1 <= page <= 100000:
+        raise ValueError("workspace_invalid_query")
+    jobs, summary = _jobs(db, background)
+    items = [item for item in jobs if item["status"] != "succeeded"]
     total = len(items)
     pages = max(1, (total + 19) // 20)
     page = min(page, pages)
@@ -215,54 +317,119 @@ def progress(db, page=1):
         "total": total,
         "pages": pages,
         "has_more": page < pages,
+        "summary": summary,
     }
 
 
-def report(db, page=1):
-    if page < 1 or page > 100000:
+def report(db, page=1, background=True):
+    if not 1 <= page <= 100000:
         raise ValueError("workspace_invalid_query")
-    state = settings(db)
-    policy = db.rows(
-        "SELECT enabled FROM crm_policies WHERE account_id=?",
-        (db.settings.source_account,),
-    )
-    gate = (
-        "awaiting_account"
-        if not db.settings.source_account
-        else "manual_mode"
-        if db.settings.analysis_mode == "pilot"
-        else "legacy_mode"
-        if db.settings.analysis_mode == "legacy"
-        else "paused"
-        if not state["enabled"]
-        else "blocked_policy"
-        if not policy or not policy[0]["enabled"]
-        else "blocked_credentials"
-        if not secret("DEEPSEEK_API_KEY")
-        else state.get("gate_error")
-        if state.get("gate_until") is None or state["gate_until"] > now()
-        else None
-    )
-    counts = {
-        r["status"]: r["n"]
-        for r in db.rows(
-            "SELECT q.status,COUNT(*) n FROM workspace_queue q WHERE q.account_id=? AND q.status<>'excluded' AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=q.account_id AND e.source_id=q.source_id) GROUP BY q.status",
-            (db.settings.source_account,),
-        )
-    }
-    rows = db.rows(
-        "SELECT q.source_id,q.status,q.priority,q.attempts,q.error,q.available_at,q.updated_at,COALESCE(NULLIF(i.remark,''),NULLIF(i.nickname,''),q.source_id) name FROM workspace_queue q LEFT JOIN identity_metadata i ON i.account_id=q.account_id AND i.source_id=q.source_id WHERE q.account_id=? AND q.status<>'excluded' AND NOT EXISTS(SELECT 1 FROM actor_exclusions e WHERE e.account_id=q.account_id AND e.source_id=q.source_id) ORDER BY CASE q.status WHEN 'running' THEN 0 WHEN 'failed' THEN 1 WHEN 'queued' THEN 2 WHEN 'paused' THEN 3 ELSE 4 END,q.priority,q.available_at,q.source_id LIMIT 50 OFFSET ?",
-        (db.settings.source_account, (page - 1) * 50),
-    )
-    return {
-        "enabled": bool(state["enabled"]),
-        "gate": gate,
-        "counts": counts,
-        "total": sum(counts.values()),
+    items, summary = _jobs(db, background)
+    return summary | {
+        "items": items[(page - 1) * 50 : page * 50],
         "page": page,
-        "has_more": sum(counts.values()) > page * 50,
-        "items": rows,
+        "has_more": len(items) > page * 50,
     }
+
+
+def command(db, source_id, action, *, background=True, client=None):
+    """All UI/CLI start, resume, retry and pause paths enter here once."""
+    if not isinstance(source_id, str) or not 0 < len(source_id) <= 200:
+        raise ValueError("workspace_invalid_identity")
+    if not isinstance(action, str) or action not in {
+        "start",
+        "resume",
+        "retry",
+        "pause",
+    }:
+        raise ValueError("workspace_invalid_control")
+    with command_lock(db, source_id):
+        item, result = _prepare_command(db, source_id, action, background)
+    if item is None:
+        return result
+    result, error = _perform(db, item, client, None)
+    jobs, _ = _jobs(db, background)
+    current = next((job for job in jobs if job["source_id"] == source_id), None)
+    execution = current["status"] if current else "excluded"
+    if error and not (current and current["user_paused"]):
+        raise ValueError(error)
+    return result | {
+        "source_id": source_id,
+        "execution": "completed" if execution == "succeeded" else execution,
+        "paused": execution in {"paused", "stopping"},
+    }
+
+
+def _prepare_command(db, source_id, action, background):
+    reconcile(db)
+    jobs, scheduler = _jobs(db, background)
+    current = next((i for i in jobs if i["source_id"] == source_id), None)
+    if current is None:
+        raise ValueError("workspace_excluded_person")
+    if action == "pause":
+        if current["status"] == "running":
+            _transition(db, source_id, action, reconciled=True)
+        return None, {
+            "source_id": source_id,
+            "execution": "stopping"
+            if current["status"] == "running"
+            else current["status"],
+            "paused": current["status"] in {"running", "stopping", "paused"},
+        }
+    if current["status"] == "stopping":
+        raise Blocked("workspace_pause_pending")
+    if current["status"] in {"running", "starting"}:
+        return None, {"source_id": source_id, "execution": current["status"]}
+    if scheduler["gate"] in {
+        "awaiting_account",
+        "blocked_policy",
+        "blocked_credentials",
+        "legacy_mode",
+    }:
+        raise Blocked(scheduler["gate"])
+    if current["status"] == "succeeded":
+        doc = raw(db, source_id)
+        if doc:
+            if current["user_paused"]:
+                _transition(db, source_id, action, reconciled=True)
+                reconcile(db)
+            return None, {
+                "source_id": source_id,
+                "execution": "completed",
+                "cached": True,
+                "customer_id": doc["id"],
+                "version": doc["version"],
+            }
+    _transition(db, source_id, action, reconciled=True)
+    if scheduler["gate"] is None:
+        return None, {"source_id": source_id, "execution": "queued"}
+    # Automatic scheduling off: execute this explicitly requested customer only.
+    item = _claim(db, source_id)
+    return (
+        (item, None)
+        if item
+        else (None, {"source_id": source_id, "execution": "running"})
+    )
+
+
+def _claim(db, source_id):
+    """Called under the customer command lock by both execution paths."""
+    with db.tx() as c:
+        row = c.execute(
+            "SELECT * FROM workspace_queue WHERE account_id=? AND source_id=? AND user_paused=0 AND status IN ('queued','paused') AND available_at<=?",
+            (db.settings.source_account, source_id, now()),
+        ).fetchone()
+        if not row or running(db, source_id):
+            return None
+        c.execute(
+            "UPDATE workspace_queue SET status='running',updated_at=? WHERE account_id=? AND source_id=?",
+            (now(), db.settings.source_account, source_id),
+        )
+    return dict(row)
+
+
+def retry(db, source_id):
+    return command(db, source_id, "retry")
 
 
 def step(db, refresh=True, client=None, stop=None):
@@ -290,32 +457,45 @@ def _step(db, refresh, client, stop):
     policy = db.rows("SELECT enabled FROM crm_policies WHERE account_id=?", (account,))
     if not policy or not policy[0]["enabled"] or not secret("DEEPSEEK_API_KEY"):
         return False
-    with db.tx() as c:
-        # The file lock proves no previous queue worker still owns these rows.
-        c.execute(
-            "UPDATE workspace_queue SET status='queued',available_at=? WHERE account_id=? AND status='running' AND user_paused=0",
-            (now(), account),
-        )
+    # A manual command may own the customer even when this queue lock is free.
+    # Recover only abandoned claims, allowing a short claim-to-lock handoff.
+    for row in db.rows(
+        "SELECT * FROM workspace_queue WHERE account_id=? AND status='running' AND user_paused=0",
+        (account,),
+    ):
+        if not running(db, row["source_id"]) and not _starting(row):
+            with db.tx() as c:
+                c.execute(
+                    "UPDATE workspace_queue SET status='queued',available_at=?,updated_at=? WHERE account_id=? AND source_id=? AND status='running' AND control_version=?",
+                    (now(), now(), account, row["source_id"], row["control_version"]),
+                )
     if state.get("gate_error") and (
         state.get("gate_until") is None or state["gate_until"] > now()
     ):
         return False
-    with db.tx() as c:
-        row = c.execute(
-            "SELECT * FROM workspace_queue WHERE account_id=? AND user_paused=0 AND status IN ('queued','paused') AND available_at<=? ORDER BY priority,CASE WHEN status='paused' THEN 0 ELSE 1 END,available_at,source_id LIMIT 1",
-            (account, now()),
-        ).fetchone()
-        if not row:
-            return False
-        item = dict(row)
-        c.execute(
-            "UPDATE workspace_queue SET status='running',updated_at=? WHERE account_id=? AND source_id=?",
-            (now(), account, item["source_id"]),
-        )
+    candidates = db.rows(
+        "SELECT source_id FROM workspace_queue WHERE account_id=? AND user_paused=0 AND status IN ('queued','paused') AND available_at<=? ORDER BY priority,CASE WHEN status='paused' THEN 0 ELSE 1 END,available_at,source_id",
+        (account, now()),
+    )
+    item = None
+    for candidate in candidates:
+        with command_lock(db, candidate["source_id"]):
+            item = _claim(db, candidate["source_id"])
+        if item:
+            break
+    if not item:
+        return False
 
-    def should_stop():
-        return bool((stop and stop()) or not settings(db)["enabled"])
+    _perform(
+        db, item, client, lambda: bool((stop and stop()) or not settings(db)["enabled"])
+    )
+    return True
 
+
+def _perform(db, item, client, should_stop):
+    """The same claim/run/settle logic for automatic and explicit execution."""
+    account = db.settings.source_account
+    result, caught = {}, None
     status, error, attempts, available = "succeeded", None, 0, now()
     gate_error, gate_until = None, None
     try:
@@ -336,6 +516,7 @@ def _step(db, refresh, client, stop):
             ("workspace_", "blocked_", "HTTP_", "Connect", "Proxy", "Read", "model_")
         ):
             error = "workspace_worker_error"
+        caught = error
         attempts = item["attempts"] + 1
         if error in {"workspace_stale_input", "workspace_already_running"}:
             status, attempts = "queued", item["attempts"]
@@ -384,4 +565,4 @@ def _step(db, refresh, client, stop):
                 "UPDATE workspace_automation SET gate_error=?,gate_until=?,updated_at=? WHERE account_id=?",
                 (gate_error, gate_until, now(), account),
             )
-    return True
+    return result, caught
