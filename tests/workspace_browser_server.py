@@ -22,11 +22,12 @@ from wechat_agent.workspace import agent, drafts, ocr
 job_started = threading.Event()
 job_release = threading.Event()
 job_release.set()
+job_hold_phase = "extract"
 
 
 def fake_model(request):
     payload = json.loads(json.loads(request.content)["messages"][1]["content"])
-    if payload.get("phase") == "extract" and not job_release.is_set():
+    if payload.get("phase") == job_hold_phase and not job_release.is_set():
         job_started.set()
         assert job_release.wait(45), "Synthetic job hold timed out"
     packet = packet_response(request)
@@ -310,7 +311,10 @@ if __name__ == "__main__":
         return {"ok": True}
 
     @app.post("/__test__/hold-job")
-    def hold_job():
+    def hold_job(phase: str = "extract"):
+        global job_hold_phase
+
+        job_hold_phase = phase
         job_started.clear()
         job_release.clear()
         return {"ok": True}
@@ -318,6 +322,30 @@ if __name__ == "__main__":
     @app.post("/__test__/release-job")
     def release_job():
         job_release.set()
+        return {"ok": True}
+
+    @app.post("/__test__/long-job")
+    def long_job():
+        from wechat_agent.db import now
+
+        ingest(
+            db,
+            [
+                {
+                    "source": "fixture",
+                    "account_id": "work",
+                    "conversation_id": "progress-42",
+                    "conversation_type": "private",
+                    "source_id": f"long-{n}",
+                    "sender_id": "progress-42",
+                    "direction": "incoming",
+                    "event_time": now(),
+                    "message_type": "text",
+                    "text": f"第{n}条历史业务沟通，保留原始线索",
+                }
+                for n in range(239)
+            ],
+        )
         return {"ok": True}
 
     @app.post("/__test__/progress-fixture")

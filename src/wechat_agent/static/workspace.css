@@ -231,6 +231,36 @@ p {
   margin: 20px 0 0;
   gap: 12px;
 }
+.analysis-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+.analysis-stages li {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 9px;
+}
+.analysis-stages .current {
+  color: var(--blue);
+  border-color: currentColor;
+  font-weight: 600;
+}
+.analysis-stages .complete {
+  color: var(--ink);
+}
+.stage-progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  accent-color: var(--blue);
+  margin: 12px 0;
+}
 .cards {
   display: grid;
   gap: 14px;

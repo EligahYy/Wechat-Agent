@@ -12,7 +12,7 @@ from ..model_network import create_client
 from .context import authority, build, snapshot
 from .control import lock_path
 from .control import state as control_state
-from .packets import prepare
+from .packets import phase, prepare
 from .quality import isolate_invalid_items, validate_proposal
 from .schema import Review, Turn
 from .store import commit, read, reference, valid_refs
@@ -185,6 +185,7 @@ def _run(db, source_id, client=None, should_stop=None):
                 if attempt == 2:
                     raise ValueError("workspace_review_budget")
                 reviewing = True
+                phase(db, source_id, context, fingerprint, "review")
                 prompt = REVIEW_PROMPT
                 payload = payload | {"draft": result.proposal.model_dump()}
                 continue
@@ -201,6 +202,7 @@ def _run(db, source_id, client=None, should_stop=None):
                     }
                     continue
             session.ensure_active()
+            phase(db, source_id, context, fingerprint, "publish")
             document = commit(db, source_id, checked, context, fingerprint)
             with db.tx() as c:
                 c.execute(
@@ -208,7 +210,7 @@ def _run(db, source_id, client=None, should_stop=None):
                 )
             with db.tx() as c:
                 c.execute(
-                    "UPDATE workspace_scans SET status='succeeded',phase='done',error=NULL,updated_at=? WHERE account_id=? AND source_id=?",
+                    "UPDATE workspace_scans SET status='succeeded',phase='done',stage_completed=1,stage_total=1,error=NULL,updated_at=? WHERE account_id=? AND source_id=?",
                     (now(), db.settings.source_account, source_id),
                 )
             return {

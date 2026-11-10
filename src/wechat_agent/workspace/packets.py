@@ -42,10 +42,15 @@ def progress(
     status="running",
     phase="collect",
     error=None,
+    stage_completed=0,
+    stage_total=0,
+    merge_level=0,
 ):
+    if phase == "collect":
+        stage_completed, stage_total = completed, total
     with db.tx() as c:
         c.execute(
-            "INSERT INTO workspace_scans VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id,source_id) DO UPDATE SET fingerprint=excluded.fingerprint,status=excluded.status,phase=excluded.phase,total_pages=excluded.total_pages,completed_pages=excluded.completed_pages,source_messages=excluded.source_messages,processed_messages=excluded.processed_messages,error=excluded.error,updated_at=excluded.updated_at",
+            "INSERT INTO workspace_scans(account_id,source_id,fingerprint,status,phase,total_pages,completed_pages,source_messages,processed_messages,error,updated_at,stage_completed,stage_total,merge_level) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id,source_id) DO UPDATE SET fingerprint=excluded.fingerprint,status=excluded.status,phase=excluded.phase,total_pages=excluded.total_pages,completed_pages=excluded.completed_pages,source_messages=excluded.source_messages,processed_messages=excluded.processed_messages,error=excluded.error,updated_at=excluded.updated_at,stage_completed=excluded.stage_completed,stage_total=excluded.stage_total,merge_level=excluded.merge_level",
             (
                 db.settings.source_account,
                 source_id,
@@ -58,6 +63,9 @@ def progress(
                 processed,
                 error,
                 now(),
+                stage_completed,
+                stage_total,
+                merge_level,
             ),
         )
 
@@ -140,6 +148,7 @@ def prepare(db, source_id, context, session):
         level += 1
         if level > 8:
             raise ValueError("workspace_summary_limit")
+        parts = list(groups(facts, limit=6000, count=16))
         progress(
             db,
             source_id,
@@ -149,17 +158,32 @@ def prepare(db, source_id, context, session):
             len(evidence),
             processed,
             phase="merge",
+            stage_total=len(parts),
+            merge_level=level,
         )
         merged = []
         # Leave ample output room for evidence and order identifiers. A hundred
         # verbose facts previously overflowed the default 4000-token response.
-        for part in groups(facts, limit=6000, count=16):
+        for index, part in enumerate(parts, 1):
             merged.extend(
                 packet(
                     "merge",
                     {"phase": "merge", "format": 2, "level": level, "facts": part},
                     MERGE,
                 )["facts"]
+            )
+            progress(
+                db,
+                source_id,
+                fingerprint,
+                total,
+                completed,
+                len(evidence),
+                processed,
+                phase="merge",
+                stage_completed=index,
+                stage_total=len(parts),
+                merge_level=level,
             )
         if len(dumps(merged)) >= len(dumps(facts)):
             raise ValueError("workspace_summary_not_reduced")
@@ -173,6 +197,7 @@ def prepare(db, source_id, context, session):
         len(evidence),
         processed,
         phase="summarize",
+        stage_total=1,
     )
     context["pages"] = total
     context["processed_messages"] = processed
@@ -193,3 +218,18 @@ def prepare(db, source_id, context, session):
             for m in messages
         ]
     return payload
+
+
+def phase(db, source_id, context, fingerprint, name):
+    """Publish the current stage independently of original-source coverage."""
+    progress(
+        db,
+        source_id,
+        fingerprint,
+        context["pages"],
+        context["pages"],
+        len(context["evidence"]),
+        context["processed_messages"],
+        phase=name,
+        stage_total=1,
+    )

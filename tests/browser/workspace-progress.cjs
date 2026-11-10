@@ -68,13 +68,37 @@ const assert = require("assert/strict");
   ).json();
   assert.equal(initial.summary.counts.ready, 43);
   assert.equal(initial.summary.counts.running || 0, 0);
-  await page.request.post(base + "/__test__/hold-job", { headers, data: {} });
+  await page.request.post(base + "/__test__/long-job", { headers, data: {} });
+  await page.request.post(base + "/__test__/hold-job?phase=merge", {
+    headers,
+    data: {},
+  });
   await first.getByRole("button", { name: "开始分析", exact: true }).click();
+  // A focused control must not freeze the running task's progress.
+  await page.locator("#automation-toggle").focus();
+  await first.getByText(/第1轮合并：0 \/ \d+ 组/).waitFor();
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
+    "automation-toggle",
+  );
+  await first
+    .getByText("原始分册已齐；合并、总结、复核并保存后，整个任务才完成。", {
+      exact: true,
+    })
+    .waitFor();
+  await first
+    .getByRole("progressbar", { name: "合并资料进度", exact: true })
+    .waitFor();
+  await first.screenshot({ path: "/tmp/workspace-merge-in-progress.png" });
   await first.getByRole("button", { name: "暂停分析", exact: true }).waitFor();
   const running = await (
     await page.request.get(base + "/api/workspace/progress")
   ).json();
   assert.equal(running.summary.counts.running, 1);
+  assert.equal(running.items[0].phase, "merge");
+  assert.equal(running.items[0].processed_messages, 240);
+  assert.equal(running.items[0].completed_pages, running.items[0].total_pages);
+  assert(running.items[0].stage_total > 1);
   assert.equal(commands.length, 1);
   await first.getByRole("button", { name: "暂停分析", exact: true }).click();
   await first.getByRole("button", { name: "正在暂停…", exact: true }).waitFor();

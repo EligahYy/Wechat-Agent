@@ -292,8 +292,34 @@ def _jobs(db, background=True):
             "completed_pages",
             "source_messages",
             "processed_messages",
+            "stage_completed",
+            "stage_total",
+            "merge_level",
         ):
             item[key] = scan[key] if scan else 0
+        if item["phase"] == "done" and status != "succeeded":
+            item.update(phase="update", stage_completed=0, stage_total=0, merge_level=0)
+        item["phase_label"] = {
+            "queued": "等待开始",
+            "collect": "整理原始分册",
+            "merge": "合并资料",
+            "summarize": "总结客户档案",
+            "review": "来源复核",
+            "publish": "保存档案",
+            "done": "已完成",
+            "update": "新进展待整理",
+        }.get(item["phase"], item["phase"])
+        item["stage_detail"] = (
+            f"第{item['merge_level'] or 1}轮合并：{item['stage_completed']} / {item['stage_total']} 组"
+            if item["phase"] == "merge" and item["stage_total"]
+            else "上轮档案已保存，新记录或人工判断等待更新"
+            if item["phase"] == "update"
+            else "原始分册已齐，尚需合并资料"
+            if item["phase"] == "merge"
+            else f"{item['phase_label']}：{item['stage_completed']} / {item['stage_total']}"
+            if item["stage_total"]
+            else item["phase_label"]
+        )
         items.append(item)
     items.sort(key=lambda i: (i["updated_at"], i["source_id"]), reverse=True)
     counts = {}

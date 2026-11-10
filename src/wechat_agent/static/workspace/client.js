@@ -58,7 +58,7 @@ export function errorText(code) {
         "正在等待当前请求结束；停止后再继续，无需重复点击。",
       workspace_customer_paused: "该客户已暂停，请在整理进度中点击继续分析。",
       customer_paused: "该客户已手动暂停，点击继续分析即可续跑。",
-      call_limit: "本轮分册已保存，后台将继续；也可点击继续分析。",
+      call_limit: "此前已保存分册；继续后会自动完成合并、总结和复核。",
       automation_paused: "自动整理已暂停；可继续这位客户。",
       HTTP_401: "模型认证失败，请检查 API key。",
       HTTP_402: "模型账户余额不足，请充值后继续。",

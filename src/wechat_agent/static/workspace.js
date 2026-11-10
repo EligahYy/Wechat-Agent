@@ -29,6 +29,7 @@ let view = [
   taskView = "today",
   progressPage = 1,
   progressRequest = 0,
+  progressPolling = false,
   documents = [],
   selected,
   focusBefore,
@@ -213,29 +214,61 @@ function updateCandidateButton() {
       : "输入姓名搜索，再点击一个匹配联系人。";
 }
 
+function taskStages(s) {
+  if (s.phase === "update")
+    return `<p class="meta">${esc(s.stage_detail)}；开始后复用已有分册。</p>`;
+  if (!s.total_pages)
+    return "<p class='meta'>开始后将完整整理该客户的相关聊天。</p>";
+  const stages = [
+    ["collect", "原始分册"],
+    ["merge", "合并资料"],
+    ["summarize", "总结档案"],
+    ["review", "来源复核"],
+    ["publish", "保存档案"],
+  ];
+  const current = stages.findIndex(([key]) => key === s.phase);
+  return `<ol class="analysis-stages" aria-label="客户整理阶段">${stages.map(([key, label], index) => `<li class="${index < current ? "complete" : index === current ? "current" : ""}" ${index === current ? 'aria-current="step"' : ""}>${esc(label)}</li>`).join("")}</ol><p class="meta">原始资料：分册 ${s.completed_pages} / ${s.total_pages} · 已整理 ${s.processed_messages} / ${s.source_messages} 条</p><p class="stage-detail">${esc(s.stage_detail)}</p>${s.stage_total ? `<progress class="stage-progress" max="${s.stage_total}" value="${s.stage_completed}" aria-label="${esc(s.phase_label)}进度"></progress>` : ""}${s.completed_pages === s.total_pages && s.phase !== "done" ? '<p class="meta">原始分册已齐；合并、总结、复核并保存后，整个任务才完成。</p>' : ""}`;
+}
+function progressFocus() {
+  const focused = document.activeElement;
+  if (!focused?.closest("#auto-queue, #scan-progress")) return null;
+  return {
+    id: focused.id,
+    source: focused.dataset.source,
+    action: focused.dataset.progressAction,
+  };
+}
+function restoreProgressFocus(saved) {
+  if (!saved) return;
+  const replacement = saved.id
+    ? document.getElementById(saved.id)
+    : [...document.querySelectorAll("[data-progress-action]")].find(
+        (button) =>
+          button.dataset.source === saved.source &&
+          button.dataset.progressAction === saved.action,
+      );
+  if (replacement && !replacement.disabled)
+    replacement.focus({ preventScroll: true });
+}
 async function scanProgress() {
   const ticket = ++progressRequest;
   const data = await api("progress?page=" + progressPage);
   const target = $("#scan-progress");
   if (!target || view !== "pilot" || ticket !== progressRequest) return;
+  const focused = progressFocus();
   progressPage = data.page;
   queueProgress(data.summary);
-  const phases = {
-    collect: "整理原始资料",
-    merge: "合并资料分册",
-    summarize: "总结客户档案",
-    done: "等待更新",
-    queued: "等待开始",
-  };
-  target.innerHTML = `<p class="meta">按客户归纳 · 最新更新在前 · 已完成自动移出 · 每页20位</p><div class="cards">${data.items.map((s) => `<article class="insight-card progress-card" data-progress-source="${esc(s.source_id)}"><div class="row"><div><h3>${esc(s.name)}</h3><p class="meta">${esc(s.status_label)} · ${esc(phases[s.phase] || s.phase)}</p></div>${s.primary_action ? `<button data-progress-action="${esc(s.primary_action.action)}" data-source="${esc(s.source_id)}" ${s.primary_action.disabled ? "disabled" : ""}>${esc(s.primary_action.label)}</button>` : s.pending_label ? `<button disabled>${esc(s.pending_label)}</button>` : ""}</div>${s.total_pages ? `<p>分册 ${s.completed_pages} / ${s.total_pages} · 已整理 ${s.processed_messages} / ${s.source_messages} 条</p>` : "<p class='meta'>开始后将完整整理该客户的相关聊天。</p>"}${s.error ? `<p class="${s.status === "failed" ? "error" : "meta"}">${esc(errorText(s.error))}</p>` : ""}<p class="meta">更新于 ${esc(time(s.updated_at))} 北京时间</p></article>`).join("") || '<p class="progress-empty">当前没有进行中的整理任务。已完成的档案可在“客户”中查看。</p>'}</div><div class="toolbar progress-pagination"><button id="progress-prev" ${data.page === 1 ? "disabled" : ""}>上一页</button><span class="meta">第 ${data.page} / ${data.pages} 页 · ${data.total} 位客户</span><button id="progress-next" ${data.has_more ? "" : "disabled"}>下一页</button></div>`;
+  target.innerHTML = `<p class="meta">按客户归纳 · 最新更新在前 · 已完成自动移出 · 每页20位</p><div class="cards">${data.items.map((s) => `<article class="insight-card progress-card" data-progress-source="${esc(s.source_id)}"><div class="row"><div><h3>${esc(s.name)}</h3><p class="meta">${esc(s.status_label)} · ${esc(s.phase_label)}</p></div>${s.primary_action ? `<button data-progress-action="${esc(s.primary_action.action)}" data-source="${esc(s.source_id)}" ${s.primary_action.disabled ? "disabled" : ""}>${esc(s.primary_action.label)}</button>` : s.pending_label ? `<button disabled>${esc(s.pending_label)}</button>` : ""}</div>${taskStages(s)}${s.error ? `<p class="${s.status === "failed" ? "error" : "meta"}">${esc(errorText(s.error))}</p>` : ""}<p class="meta">更新于 ${esc(time(s.updated_at))} 北京时间</p></article>`).join("") || '<p class="progress-empty">当前没有进行中的整理任务。已完成的档案可在“客户”中查看。</p>'}</div><div class="toolbar progress-pagination"><button id="progress-prev" ${data.page === 1 ? "disabled" : ""}>上一页</button><span class="meta">第 ${data.page} / ${data.pages} 页 · ${data.total} 位客户</span><button id="progress-next" ${data.has_more ? "" : "disabled"}>下一页</button></div>`;
+  restoreProgressFocus(focused);
 }
 setInterval(() => {
-  if (
-    view === "pilot" &&
-    !$("#auto-queue :focus") &&
-    !$("#scan-progress :focus")
-  ) {
-    scanProgress().catch(() => {});
+  if (view === "pilot" && !progressPolling) {
+    progressPolling = true;
+    scanProgress()
+      .catch(() => {})
+      .finally(() => {
+        progressPolling = false;
+      });
   }
 }, 5000);
 async function pilot() {
@@ -416,7 +449,11 @@ function queueProgress(q) {
 }
 
 async function submitJob(source, action) {
-  notice(action === "pause" ? "正在暂停该客户…" : "正在提交客户整理任务…");
+  notice(
+    action === "pause"
+      ? "正在暂停该客户…"
+      : "正在整理该客户，阶段进度会持续更新，可在卡片中暂停。",
+  );
   const result = await api("jobs/command", { source_id: source, action });
   await refresh();
   await scanProgress();

@@ -260,7 +260,7 @@ def test_unified_settings_and_compact_customer_api(pilot):
     data = c.get("/api/workspace/settings", headers=h).json()
     assert data["account_id"] == "account" and len(data["week"]) == 7
     assert "test-only" not in json.dumps(data)
-    assert c.get("/health", headers=h).json()["schema"] == 14
+    assert c.get("/health", headers=h).json()["schema"] == 15
     assert (
         c.get("/api/workspace/documents", headers=h).json()["items"][0]["evidence"]
         == []

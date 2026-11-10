@@ -22,7 +22,7 @@ class FactbookError(ValueError):
 
 
 class ModelSession:
-    def __init__(self, db, source_id, client, key, fingerprint, run_id, limit=12):
+    def __init__(self, db, source_id, client, key, fingerprint, run_id, limit=None):
         self.db, self.source_id, self.client = db, source_id, client
         self.key, self.fingerprint, self.run_id = key, fingerprint, run_id
         self.limit, self.calls = limit, 0
@@ -64,7 +64,7 @@ class ModelSession:
         )
         if saved:
             return json.loads(saved[0]["response"])
-        if self.calls >= self.limit:
+        if self.limit is not None and self.calls >= self.limit:
             raise Paused("call_limit")
         maximum = min(6000, db.settings.max_output_tokens)
         rid = reserve(

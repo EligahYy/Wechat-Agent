@@ -55,7 +55,7 @@ class DB:
         try:
             connection.execute("PRAGMA journal_mode=WAL")
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > 14:
+            if version > 15:
                 raise ValueError("数据库版本高于当前应用，请升级应用")
             if version == 0:
                 connection.executescript(
@@ -289,6 +289,41 @@ class DB:
                         (now(),),
                     )
                     connection.execute("PRAGMA user_version=14")
+            if version < 15:
+                if version:
+                    target = settings.data_dir / (
+                        "pre-v15-"
+                        + datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
+                        + ".sqlite3"
+                    )
+                    backup = sqlite3.connect(target)
+                    try:
+                        connection.backup(backup)
+                    finally:
+                        backup.close()
+                    target.chmod(0o600)
+                with connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    columns = {
+                        r[1]
+                        for r in connection.execute(
+                            "PRAGMA table_info(workspace_scans)"
+                        )
+                    }
+                    for name in ("stage_completed", "stage_total", "merge_level"):
+                        if name not in columns:
+                            connection.execute(
+                                f"ALTER TABLE workspace_scans ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0"
+                            )
+                    # Old request-count checkpoints are resumable, not user pauses.
+                    connection.execute(
+                        "UPDATE workspace_scans SET status='queued',error=NULL WHERE error='call_limit'"
+                    )
+                    connection.execute(
+                        "UPDATE workspace_queue SET status='queued',error=NULL,available_at=?,updated_at=? WHERE error='call_limit' AND user_paused=0",
+                        (now(), now()),
+                    )
+                    connection.execute("PRAGMA user_version=15")
         finally:
             connection.close()
         self.path.chmod(0o600)
