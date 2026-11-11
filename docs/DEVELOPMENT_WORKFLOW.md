@@ -26,4 +26,4 @@ bash scripts/install-superpowers.sh
 4. 业务代码使用 `test-driven-development`；静态文档修订只做相应一致性、链接和格式核对。
 5. 结束前用 `verification-before-completion` 获取当前验证证据，区分检查通过、尚未实现和未能验证。
 
-用户指令及当前环境约束优先，不自动提交、推送或发布；是否使用子代理依当前会话授权和规则执行。Superpowers 负责开发过程，产品的上下文、Agent 演进和 DeepSeek 调用仍按模型执行方案实现。
+当前用户指示：所有开发在云端逐任务串行完成，检查后直接提交并推送 main；Mac 只 pull 和运行验证，问题回到云端修复。实机未验证状态独立保留，不阻塞可独立开发模块。是否使用子代理依用户最新指示和当前会话约束执行；当前不用子代理。Superpowers 负责开发过程，产品的上下文、Agent 演进和 DeepSeek 调用仍按模型执行方案实现。

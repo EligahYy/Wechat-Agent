@@ -8,9 +8,11 @@
 
 **Tech Stack:** 既有 Python／SQLite／FastAPI／React，加 HTTPX 模型适配及版本化 JSON Schema；不引入 Agent 框架。
 
-**Spec:** [产品 §5–8](../../PRODUCT_DESIGN.md)、[模型执行方案](../../MODEL_EXECUTION.md)、[交互 §3–4](../../INTERACTION_DESIGN.md)、[内部契约](CONTRACTS.md)。前提：M1 完成，M0 的模型能力已核验。
+**Spec:** [产品 §5–8](../../PRODUCT_DESIGN.md)、[模型执行方案](../../MODEL_EXECUTION.md)、[交互 §3–4](../../INTERACTION_DESIGN.md)、[内部契约](CONTRACTS.md)。前提：M1 云端实现及自动测试通过；模型真实 ID、容量及能力未验证时，只运行显式测试配置，不启用真实全量分析。
 
 ## Global Constraints
+
+- 所有代码、修复和自动化测试在云端完成，检查后直接推 main；Mac 只运行交付工具验证。云端开发完成与实机通过分别记录，实机门槛不阻塞可独立测试的代码开发。
 
 - 只分析 merchant；来源、身份和人工约束版本固定，不依赖供应商会话记忆。
 - 输出字段是四个货品键、九个物流键、沟通情况、独立批次及具体 gaps。

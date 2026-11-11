@@ -12,6 +12,8 @@
 
 ## Global Constraints
 
+- 所有代码、修复和自动化测试在云端完成，检查后直接推 main；Mac 只运行交付工具验证。云端开发完成与实机通过分别记录，实机门槛不阻塞可独立测试的代码开发。
+
 - 状态为 queued／running／stop_requested／stopped／succeeded／failed，操作以 available_actions 为准。
 - 同客户不并发分析，单客户优先到下一个可执行位置，不强行中断其他客户的已发请求。
 - 每日默认 08:30，时区 Asia/Shanghai；应用未运行不承诺唤醒。

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在 Mac 上得到可重复执行的环境、微信源和模型能力检查，以及可以支持下一阶段开发的真实证据。
+**Goal:** 在云端开发可重复执行的环境、微信源和模型检查工具，由用户 Mac 运行验证并反馈真实证据。
 
 **Architecture:** 创建最小 Python 包与只读 doctor 工具。来源和模型的内部契约与上游协议隔离；自动检查结果与人工核验事实分别记录，未实测保持 pending。
 
@@ -11,6 +11,8 @@
 **Spec:** [实施方案 §11](../../IMPLEMENTATION_PLAN.md)、[模型执行方案](../../MODEL_EXECUTION.md)、[Mac 指南](../../MAC_SETUP.md)、[内部契约](CONTRACTS.md)。
 
 ## Global Constraints
+
+- 所有代码、修复和自动化测试在云端完成，检查后直接推 main；Mac 只运行交付工具验证。云端开发完成与实机通过分别记录，实机门槛不阻塞可独立测试的代码开发。
 
 - 仓库当前只有原型；不在 M0 开始全客户分析，不假装已经实现数据底座。
 - Python 3.12；依赖实际解析后生成 `requirements-dev.lock`，不手填包版本。
@@ -81,7 +83,7 @@ def test_no_sender_mapping_cannot_pass():
 - [ ] **Step 3 — 最小实现：** 按内部契约建立类型与探测器；来源命令／URL 必须来自显式配置和已核验的只读操作。不通过 shell 拼接执行来源参数。缺稳定发送者、消息身份、分页或账号信息分别列 gaps；不把 HTTP 200 当完整同步。
 - [ ] **Step 4 — 实机取证：** Mac 上检查实际安装及版本、官方帮助和运行模式；选择一个私信、一个含多人的群读取至少两页，保留发送者、备注／群名、引用、同文本不同消息、修订及终止游标样本。把原始结果放 `.local/evidence/source/`，仅把脱敏字段映射、实际只读命令和能力结论写入 source-capabilities.md。若源端缺功能，明确标注，修订 M1 适配范围后再进入 M1。
 - [ ] **Step 5 — 验证：** 添加同名不合并、改名 ID 不变、分页失败不 complete 的回放测试；`python -m pytest tests/test_source_probe.py -q` 全过，并在 Mac 运行 `python -m wechat_agent.doctor --check-source --output .local/evidence/m0.json`。该 CLI 选项在本任务接入，只调用已配置的只读探测。
-- [ ] **Step 6 — 提交检查点：** 仅暂存上述实现、脱敏 fixture 与能力文档；获准时 `git commit -m "feat: verify local source capabilities"`。缺实机证据时保持任务未完成。
+- [ ] **Step 6 — 提交检查点：** 仅暂存上述实现、脱敏 fixture 与能力文档；检查后 `git commit -m "feat: verify local source capabilities"` 并推 main。缺实机证据时本地验证项保持未完成，已通过回放测试的云端开发结果单独记录。
 
 ### Task 3: 模型真实能力与失败分类
 
@@ -129,11 +131,11 @@ def test_missing_media_is_not_parsed(tmp_path):
 ## 执行记录
 
 - M0 任务 1 已完成：7 个测试先失败后通过；离线 CLI 已实际运行，Linux 来源明确为 unsupported，模型／媒体为 pending。
-- 下一任务 2 尚未完成：当前执行器不是用户 Mac，未安装 wx-cli，也未提供真实源端契约。需在 Mac 读取实际能力后继续，不向 M1 跳跃。
+- 下一任务 2 继续在云端开发探测工具与回放测试；当前执行器没有真实 wx-cli／Mac 数据，实机结果保持待验证。可独立测试的底座模块继续云端开发，不要求用户本地写代码。
 
 ## 退出条件
 
 - [ ] Mac 可以 clone、恢复技能、运行 doctor；纯原型可按指南启动。
 - [ ] 真实源账号、消息 ID、分页、姓名和只读操作均有证据；关键缺口不能留成假成功。
 - [ ] 实际 Pro 模型、容量、协议及输出能力得到确认，或明确无法进入模型阶段的阻碍。
-- [ ] 将核验结果同步到契约及 M1／M2 计划后再执行，媒体支持不足按格式降级。
+- [ ] 已取得的核验结果同步到契约及 M1／M2 计划；未知协议保持显式待验证，可独立测试的模块继续云端开发，媒体支持不足按格式降级。

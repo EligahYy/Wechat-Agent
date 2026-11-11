@@ -8,9 +8,11 @@
 
 **Tech Stack:** 既有栈；按 M0 样本验证后添加 Pillow、pypdf、openpyxl、pypdfium2 和本地 Tesseract，CSV 使用标准库。库版本实际解析进锁文件。
 
-**Spec:** [产品 §4、8](../../PRODUCT_DESIGN.md)、[模型执行 §2–5](../../MODEL_EXECUTION.md)、[内部契约](CONTRACTS.md)。前提：M2 单客户闭环通过。
+**Spec:** [产品 §4、8](../../PRODUCT_DESIGN.md)、[模型执行 §2–5](../../MODEL_EXECUTION.md)、[内部契约](CONTRACTS.md)。前提：M2 云端端到端回放通过；真实客户闭环仍保留实机验收项。
 
 ## Global Constraints
+
+- 所有代码、修复和自动化测试在云端完成，检查后直接推 main；Mac 只运行交付工具验证。云端开发完成与实机通过分别记录，实机门槛不阻塞可独立测试的代码开发。
 
 - 原件／缩略图／获取失败／未解析／解析失败是不同状态。
 - 首次相关历史完整扫描，不以 Top-K 或反复压缩摘要代替。

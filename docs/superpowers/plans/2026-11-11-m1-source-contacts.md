@@ -8,9 +8,11 @@
 
 **Tech Stack:** Python 3.12、FastAPI、SQLite／FTS5、Pydantic、HTTPX、React／TypeScript／Vite、Node 24、Vitest、Playwright。
 
-**Spec:** [产品 §3–4](../../PRODUCT_DESIGN.md)、[交互方案](../../INTERACTION_DESIGN.md)、[内部契约](CONTRACTS.md)。前提：M0 源能力核验通过。
+**Spec:** [产品 §3–4](../../PRODUCT_DESIGN.md)、[交互方案](../../INTERACTION_DESIGN.md)、[内部契约](CONTRACTS.md)。前提：M0 内部契约和回放测试已建立；真实源映射／连接仍单列实机待验证，不能伪造。
 
 ## Global Constraints
+
+- 所有代码、修复和自动化测试在云端完成，检查后直接推 main；Mac 只运行交付工具验证。云端开发完成与实机通过分别记录，实机门槛不阻塞可独立测试的代码开发。
 
 - 主键为工作账号 ID + 来源稳定联系人 ID；群聊是来源，不是客户。
 - 仅商家进入档案整理；身份值 merchant／provider／platform／unknown，本人排除。
