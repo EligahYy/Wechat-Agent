@@ -30,7 +30,7 @@ git pull --ff-only origin main
 
 ## 3. 当前 Python 验证步骤
 
-当前已实现M0检查工具、M1原文归档／联系人身份API及持久化同步操作；React正式页面尚未接入。首次安装按下列锁文件恢复环境；已有任务3环境本次无新增依赖，无需重建虚拟环境。
+当前已实现M0检查工具、M1原文归档／联系人身份API、持久化同步操作及React正式工作台／设置。首次安装按下列锁文件恢复环境；已有任务3环境本次无新增依赖，无需重建虚拟环境。
 
 需要 Python 3.12。已有 Homebrew 时：
 
@@ -219,3 +219,29 @@ git pull --ff-only origin main
 接口文档仍在 http://127.0.0.1:8766/docs 。GET /api/operations携带account_id查询历史，GET /api/operations/{id}查询实际进度；POST停止body为`{action:"stop",account_id:"...",operation_id:"..."}`。停止先写generation屏障，迟到页不能归档；已经提交的原文保留。M1暂不提供继续／重试；普通退出或确认进程已退出的遗留任务记为stopped，完整恢复在M4交付。
 
 目前sync_and_organize若存在需要分析的商家，来源可成功但总任务会failed／capability_not_ready，因为模型整理尚未接入。这是能力边界，不能据此宣称已生成真实档案。正式UI和设置交互在下一任务实现。
+
+## 13. M1任务5：正式桌面页面与设置
+
+需要Node 24，可先运行`node --version`确认；没有时安装[Node 24](https://nodejs.org/en/download)。本次新增前端运行／构建依赖，无新增Python依赖。先Control+C停止旧API，再在项目根目录执行：
+
+```bash
+git pull --ff-only origin main
+.venv/bin/python -m pytest -q
+npm --prefix frontend ci
+npm --prefix frontend run build
+.venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
+```
+
+浏览器打开 http://127.0.0.1:8766/ 。这是正式React页面，API和静态资源同源，继续使用现有本机数据库及schema3；8765的静态原型仍只作效果参照。每次拉取前端更新后重跑build，重启后端以加载最新接口；未构建时API仍可用，首页返回404。Node只用于安装／构建前端，运行已构建页面只需后端服务。
+
+验证重点：
+
+- 全部联系人总数与现有归档相符，每页20位；搜索真实姓名／群名，切换身份、翻页和勾选时列表不整体闪白。跨页保留选择，切换商家／全部联系人清空选择，工作台／设置之间保留搜索上下文。
+- 复制按钮复制真实备注／微信名称，不复制wxid。身份修改立即走后端并保存；409部分冲突只保留失败项。真实角色仍按实际业务确认，无需为验收批量改标签。
+- 设置中的时间为单一输入控件，时区只在时钟面板内。输入9:05后失焦或Enter保存为09:05；选择面板里先改草稿，应用才保存，取消／Escape／点击外部不保存。可用方向键、Home／End和Tab，保存后刷新核对。
+- 太阳／月亮、导航和筛选有动画；深色覆盖整页、输入框和弹窗，刷新不闪回浅色。系统减少动态效果和设置中的开关均生效。
+- 同步、停止、进度和整理记录使用实际操作API；模型尚未接入时明确保留来源完成与分析未完成的区别。
+
+每日开关和时间目前仅持久化设置，界面明确标为“调度待接入”，尚不会自动执行。模型档案、编辑资料、附件处理按后续阶段接入；沟通原文浏览及手动导入在M1任务6。来源标签表示上次同步证据，不把历史成功冒充当前在线健康。
+
+开发预览可在另一个终端运行`WECHAT_API_URL=http://127.0.0.1:8766 npm --prefix frontend run dev`，打开5173；Vite默认代理8000，上述变量沿用当前8766。浏览器验收在云端完成，本机不必安装Playwright。若要自行重跑，先在frontend执行`npx playwright install chromium`，再执行`npm run test:e2e`；隔离测试使用18001／18002和临时合成库，不读取真实归档。

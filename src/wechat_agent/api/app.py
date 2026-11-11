@@ -7,6 +7,7 @@ import sqlite3
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from ..config import Settings
 from ..accounts import AccountError, selected_account
@@ -19,6 +20,7 @@ from ..source.probe import SourceConfig
 from ..storage.db import SCHEMA_VERSION, migrate, open_db
 from .contacts import router as contacts_router
 from .operations import router as operations_router
+from .settings import router as settings_router
 
 
 def create_app(settings: Settings, services: Services | None = None) -> FastAPI:
@@ -58,6 +60,7 @@ def create_app(settings: Settings, services: Services | None = None) -> FastAPI:
         app.state.services.source_factory = source_factory
     app.include_router(contacts_router)
     app.include_router(operations_router)
+    app.include_router(settings_router)
 
     @app.exception_handler(AccountError)
     async def account_error(request, error):
@@ -100,6 +103,8 @@ def create_app(settings: Settings, services: Services | None = None) -> FastAPI:
                 "code": "database_schema_mismatch", "message": "数据库版本不匹配", "details": {}})
         return {"status": "ok", "schema_version": version}
 
+    if settings.frontend_dir and (settings.frontend_dir / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=settings.frontend_dir, html=True), name="desktop")
     return app
 
 

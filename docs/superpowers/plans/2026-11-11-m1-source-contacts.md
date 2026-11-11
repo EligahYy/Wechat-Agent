@@ -126,7 +126,7 @@ def test_repeated_intent_is_one_operation(db):
 - [x] **Step 4 — 绿灯：** 上述测试全过；补测共享群归档使多位商家变更，但单客户操作仅规划目标客户的后续处理。M1 不暴露虚假的继续分析按钮。
 - [x] **Step 5 — 提交检查点：** 获准时消息 `feat: execute real source sync through durable operations`。
 
-- [ ] **Mac验收：** 按指南第12节执行限量source-only任务，确认schema3、source_state及真实计数；云端203项通过不代替实机验证。
+- [x] **Mac验收：** 用户回传后台任务与source均succeeded，两个会话／两页、11条不变，新增／修订／缺口为0；未额外回传pytest数量。
 
 ### Task 5: 两页 React 外壳与统一控件
 
@@ -134,7 +134,7 @@ def test_repeated_intent_is_one_operation(db):
 
 **Interfaces:** Consumes contacts／operations API；GET/PATCH `/api/settings` 保存非敏感设置。共享 FormField 单行／多行／搜索／时间变体，Dialog 管焦点；TimePicker props 为 value、onCommit、disabled；前端 `request<T>` 只向同源 API 请求。
 
-- [ ] **Step 1 — 建立工具并写失败测试：** 安装 React、Vite、TS、Vitest、Testing Library、jsdom、`@playwright/test`，真实生成 lock；在 frontend 执行 `npx playwright install chromium`。脚本为 `test:unit=vitest`, `test:e2e=playwright test`, `build=tsc -b && vite build`；Vitest 使用 jsdom 和 setup.ts，Playwright 配置隔离测试服务与复位接口（见 CONTRACTS），`.gitignore` 增加 node_modules、frontend/dist、test-results、playwright-report。`controls.test.tsx` 断言四种身份文字、时间 9:05 规范为 09:05、取消不保存；未创建控件时测试失败。
+- [x] **Step 1 — 建立工具并写失败测试：** 安装 React、Vite、TS、Vitest、Testing Library、jsdom、`@playwright/test`，真实生成 lock；在 frontend 执行 `npx playwright install chromium`。脚本为 `test:unit=vitest`, `test:e2e=playwright test`, `build=tsc -b && vite build`；Vitest 使用 jsdom 和 setup.ts，Playwright 配置隔离测试服务与复位接口（见 CONTRACTS），`.gitignore` 增加 node_modules、frontend/dist、test-results、playwright-report。`controls.test.tsx` 断言四种身份文字、时间 9:05 规范为 09:05、取消不保存；未创建控件时测试失败。
 
 ```tsx
 it("shows the platform identity", () => {
@@ -143,10 +143,12 @@ it("shows the platform identity", () => {
 });
 ```
 
-- [ ] **Step 2 — 红灯：** `cd frontend && npm run test:unit -- --run`，预期控件缺失；Playwright 配置用 `channel:'chromium'` 或自带浏览器，不能硬编码 Linux `/usr/bin/chromium`。
-- [ ] **Step 3 — 实现：** 复刻有效交互的两页和商家／全部联系人切换；统一字号及 48px／12px／14px 控件；角色蓝／紫／绿／琥珀，我方紫色加粗；深色覆盖 html/body/main。键盘、焦点、状态错误、太阳月亮、搜索／筛选／批量栏动画一起实现。来源和模型状态读取后端，M1 不可用档案入口给明确状态，不使用原型示例顶替。
-- [ ] **Step 4 — 绿灯：** API 测试检验设置持久化；`npm run test:unit -- --run`、`npm run build`、`npm run test:e2e -- contacts.spec.ts` 通过。E2E 覆盖 20/8 分页、跨页选择、切页签清空、身份修改及列表不闪、复制真实名称；Vite 开发代理 `/api` 到 127.0.0.1:8000。
-- [ ] **Step 5 — 提交检查点：** 获准时提交前端源代码／锁文件及路由，忽略 node_modules／dist，消息 `feat: build desktop workspace with shared controls`。
+- [x] **Step 2 — 红灯：** `cd frontend && npm run test:unit -- --run`，预期控件缺失；Playwright 配置用 `channel:'chromium'` 或自带浏览器，不能硬编码 Linux `/usr/bin/chromium`。
+- [x] **Step 3 — 实现：** 复刻有效交互的两页和商家／全部联系人切换；统一字号及 48px／12px／14px 控件；角色蓝／紫／绿／琥珀，我方紫色加粗；深色覆盖 html/body/main。键盘、焦点、状态错误、太阳月亮、搜索／筛选／批量栏动画一起实现。来源和模型状态读取后端，M1 不可用档案入口给明确状态，不使用原型示例顶替。
+- [x] **Step 4 — 绿灯：** API 测试检验设置持久化；`npm run test:unit -- --run`、`npm run build`、`npm run test:e2e -- contacts.spec.ts` 通过。E2E 覆盖 20/8 分页、跨页选择、切页签清空、身份修改及列表不闪、复制真实名称；Vite 开发代理 `/api` 到 127.0.0.1:8000。
+- [x] **Step 5 — 提交检查点：** 获准时提交前端源代码／锁文件及路由，忽略 node_modules／dist，消息 `feat: build desktop workspace with shared controls`。
+
+- [ ] **Mac验收：** 按指南第13节安装Node24前端依赖并构建，以同源8766打开正式页面；真实归档读取、深浅色及时间交互待验证。
 
 ### Task 6: 原文浏览与唯一导入入口
 

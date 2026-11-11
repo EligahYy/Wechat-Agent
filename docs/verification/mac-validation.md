@@ -43,3 +43,9 @@
 用户回传GET /api/contacts统计：total=2411、returned=20；role_counts中all=2411、unknown=2411，merchant／provider／platform均为0。已归档联系人读取和每页20位已实测；新联系人默认unknown，尚未手工分类，不能据此推断客户业务身份。
 
 本次未回传新的pytest结果，不将178项记为Mac已运行；真实角色修改也未执行。任务4新增schema3、持久化操作与后台worker，尚待Mac按指南第12节验证，模型和媒体仍未实测。
+
+## 2026-11-11：M1任务4后台同步通过
+
+用户回传operations.check结果：state=succeeded、source_state=succeeded、phase=completed，error_code为空；两个采样会话均完成，两页共11条不变，新增／修订／失败／未完成均为0，source_gaps为空。analysis_required和analysis_completed均为0，本次只同步原文。
+
+API入队、后台执行、持久化进度查询及重复归档已在Mac通过。history_complete=false，仍不证明全部历史完整。本次未另行回传pytest或health结果，不把云端测试数量记为Mac已运行。正式React页面、设置及时间选择由任务5交付后再验。

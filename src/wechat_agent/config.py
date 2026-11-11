@@ -11,6 +11,7 @@ class Settings:
     data_dir: Path
     source_config: Path | None = None
     model_config: Path | None = None
+    frontend_dir: Path | None = None
 
     @classmethod
     def load(cls) -> "Settings":
@@ -26,4 +27,5 @@ class Settings:
             data_dir=data_dir,
             source_config=source_config if source_config.is_file() else None,
             model_config=model_config if model_config.is_file() else None,
+            frontend_dir=Path.cwd() / "frontend/dist",
         )

@@ -87,3 +87,12 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 - BackupManifest 返回 `manifest_path: Path` 和已写入的版本／哈希清单；非空恢复目标抛 FileExistsError。ReanalysisPlan 含 `keys: list[ContactKey]`、`strategy_version: str`、`count: int`，规划不创建操作。
 
 这些签名是计划基线。未知的上游参数不通过“待填字符串”进入代码；M0 之后若发现需要变更，先改此文件、相关计划和契约测试，再执行消费者任务。
+
+## M1任务5的设置与页面接线
+
+- `Settings.frontend_dir: Path | None=None`；`Settings.load()`选择仓库当前目录下`frontend/dist`。存在index.html时，在API路由之后挂载静态目录；目录外文件和运行数据库不被暴露，生产不注册测试复位路由。没有build时仅API可用，不生成临时演示页面。wheel独立前端打包留M5。
+- GET `/api/settings`可不带账号，返回服务端选定的`account_id`；空档案且未绑定时为None，多账号未绑定仍409。响应为`{account_id,preferences,version,timezone,source,model,capabilities}`。timezone固定Asia/Shanghai；capabilities中organize／scheduler／raw_browser在本任务均False。
+- `preferences={daily_time:'08:30',daily_enabled:false,appearance:'system',reduce_motion:false}`；daily_time为24小时规范时间，9:05归一09:05，无效422。PATCH接收`{account_id,expected_version,preferences:<部分字段>}`；复用settings表的preferences行，初始version=0，原子合并并递增，旧版本409不覆盖。严格校验布尔及字段白名单，不保存API密钥。
+- `source={state,last_sync_at}`取最近持久化source项，未检查为not_checked；其余为last_sync_queued／running／succeeded／failed／stopped。它表示上次同步，不等于当前在线健康。`model={state:'configured'|'unconfigured'|'invalid',model_id}`仅表示本机配置存在／有效，不回传密钥、地址或凭据引用，也不推断真实模型能力。
+- 前端request仅访问同源`/api/`，ApiError保留409 details以处理身份部分成功。Vite默认代理8000，WECHAT_API_URL可覆盖；正式页面与API同源。测试复位接口仅tests.webserver注册，临时合成库逐用例清空、workers=1，不使用真实资料。
+- 公共FormField单行／多行／搜索／时间统一样式；TimePicker面板草稿仅应用时保存，直接输入失焦／Enter规范化保存，重复触发只产生一次在途保存。取消／Escape／外部点击不保存面板草稿；键盘与鼠标进入时钟分别处理。偏好更新失败恢复服务端版本，界面如实报错。
