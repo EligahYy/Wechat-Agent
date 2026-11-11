@@ -96,3 +96,4 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 - `source={state,last_sync_at}`取最近持久化source项，未检查为not_checked；其余为last_sync_queued／running／succeeded／failed／stopped。它表示上次同步，不等于当前在线健康。`model={state:'configured'|'unconfigured'|'invalid',model_id}`仅表示本机配置存在／有效，不回传密钥、地址或凭据引用，也不推断真实模型能力。
 - 前端request仅访问同源`/api/`，ApiError保留409 details以处理身份部分成功。Vite默认代理8000，WECHAT_API_URL可覆盖；正式页面与API同源。测试复位接口仅tests.webserver注册，临时合成库逐用例清空、workers=1，不使用真实资料。
 - 公共FormField单行／多行／搜索／时间统一样式；TimePicker面板草稿仅应用时保存，直接输入失焦／Enter规范化保存，重复触发只产生一次在途保存。取消／Escape／外部点击不保存面板草稿；键盘与鼠标进入时钟分别处理。偏好更新失败恢复服务端版本，界面如实报错。
+- 前端最低兼容Node为24.14.1（24.x），package.json的engines与安装说明一致。更新依赖锁必须在该最低版本下执行npm ci --engine-strict、单元测试和构建；云端较新的Node通过不能替代基线验证。

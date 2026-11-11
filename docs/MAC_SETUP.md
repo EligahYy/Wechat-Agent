@@ -222,7 +222,7 @@ git pull --ff-only origin main
 
 ## 13. M1任务5：正式桌面页面与设置
 
-需要Node 24，可先运行`node --version`确认；没有时安装[Node 24](https://nodejs.org/en/download)。本次新增前端运行／构建依赖，无新增Python依赖。先Control+C停止旧API，再在项目根目录执行：
+需要Node 24.14.1及以上的24.x，可先运行`node --version`确认；没有时安装[Node 24](https://nodejs.org/en/download)。本次新增前端运行／构建依赖，无新增Python依赖。先Control+C停止旧API，再在项目根目录执行：
 
 ```bash
 git pull --ff-only origin main

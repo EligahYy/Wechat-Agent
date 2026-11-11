@@ -49,3 +49,9 @@
 用户回传operations.check结果：state=succeeded、source_state=succeeded、phase=completed，error_code为空；两个采样会话均完成，两页共11条不变，新增／修订／失败／未完成均为0，source_gaps为空。analysis_required和analysis_completed均为0，本次只同步原文。
 
 API入队、后台执行、持久化进度查询及重复归档已在Mac通过。history_complete=false，仍不证明全部历史完整。本次未另行回传pytest或health结果，不把云端测试数量记为Mac已运行。正式React页面、设置及时间选择由任务5交付后再验。
+
+## 2026-11-11：任务5前端安装版本警告
+
+用户回传Node v24.14.1、npm11.11.0；npm提示jsdom31.0.0和w3c-xmlserializer6.0.0要求Node ^24.15.0（或指定的22／26版本），出现EBADENGINE。用户尚未回传本次构建和正式页面结果，不能记为页面验收通过。
+
+云端使用同版Node／npm，以旧锁运行npm ci --engine-strict复现失败；将jsdom锁定到兼容的29.1.1，传递依赖w3c-xmlserializer随锁重解到5.x，并把最低Node口径明确为24.14.1。修复后Mac需重新pull、npm ci和build，结果待回传。

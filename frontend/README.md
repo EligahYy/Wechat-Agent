@@ -1,11 +1,11 @@
 # 正式桌面工作台
 
-Node24、React、TypeScript、Vite；数据只通过同源`/api`读取，生产包不含合成联系人。工作台／设置之外不新增导航页。
+Node 24.14.1及以上的24.x、React、TypeScript、Vite；数据只通过同源`/api`读取，生产包不含合成联系人。工作台／设置之外不新增导航页。
 
 从项目根目录安装和构建：
 
 ```bash
-npm --prefix frontend ci
+npm --prefix frontend ci --engine-strict
 npm --prefix frontend run build
 ```
 
