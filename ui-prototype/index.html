@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN" data-type="software" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="page-type" content="software" />
+    <meta name="site-kind" content="software" />
+    <meta
+      name="description"
+      content="半托管欧区备货用户助手交互原型：联系人归一、客户资料与每日整理。"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>工作台 · 半托管欧区备货用户助手</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="assets/motion.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <aside class="sidebar">
+      <a
+        class="brand"
+        href="#workspace"
+        aria-label="半托管欧区备货用户助手，前往工作台"
+      >
+        <span class="brand-mark" aria-hidden="true">半</span>
+        <span>半托管欧区<br />备货用户助手</span>
+      </a>
+
+      <nav aria-label="主导航">
+        <a href="#workspace" data-nav="workspace"
+          ><span data-icon="workspace"></span>工作台</a
+        >
+        <a href="#settings" data-nav="settings"
+          ><span data-icon="settings"></span>设置</a
+        >
+      </nav>
+      <div class="sidebar-bottom">
+        <button
+          class="theme-quick"
+          type="button"
+          data-action="theme-toggle"
+          aria-labelledby="theme-label"
+          aria-pressed="false"
+        >
+          <span class="theme-thumb" aria-hidden="true"></span
+          ><span data-icon="sun" aria-hidden="true"></span
+          ><span data-icon="theme" aria-hidden="true"></span
+          ><span id="theme-label" class="sr-only">切换深色外观</span>
+        </button>
+      </div>
+    </aside>
+    <main id="main" tabindex="-1">
+      <div class="topline">
+        <span class="demo-label">交互原型 · 示例数据</span>
+      </div>
+      <div id="view"></div>
+      <footer class="page-footer">
+        演示中的联系人与对话均为虚构；未连接微信或 DeepSeek。
+      </footer>
+    </main>
+    <dialog
+      id="detail-dialog"
+      class="detail-dialog"
+      aria-labelledby="detail-title"
+    ></dialog>
+    <dialog
+      id="overlay-dialog"
+      class="overlay-dialog"
+      aria-labelledby="overlay-title"
+    ></dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script src="data.js"></script>
+    <script src="app.js"></script>
+    <script type="module" src="assets/motion.js"></script>
+  </body>
+</html>

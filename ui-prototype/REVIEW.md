@@ -1,0 +1,20 @@
+GATE: OPEN 30 (rounds used up)
+
+# 当前原型核查
+
+上面的状态来自早期官网版式检查，不代表本次应用功能验收。完整原始输出见 [历史检查记录](artifacts/taste-gate-final.txt)，本轮未重新运行该门禁。历史检查不作为产品方案或布局依据。
+
+## 有效基线
+
+产品、交互及实施范围以 [文档索引](../docs/README.md) 为准。原型仅使用虚构数据，没有连接微信、DeepSeek 或真实调度服务；演示计时器不作为正式任务实现。
+
+## 已验证
+
+- [功能回归](artifacts/functional-checks.json)：身份管理、搜索分页、来源查看、资料修改、批次单号、演示任务控制、设置持久化；桌面 1180–1920px 无横向溢出，无 JavaScript 错误或外部请求。本次重新运行通过。
+- [时间选择](artifacts/time-picker-checks.json)：单个紧凑控件、小时与分钟草稿、应用后保存、取消与 Escape、无旁置时区标签、直接输入及重载、关闭每日整理时同步禁用。本次新增并运行通过。[面板截图](artifacts/time-picker.png)
+- [公共控件](artifacts/shared-control-checks.json)：此前已核对搜索、时间、资料单行、资料多行、单号输入的公共样式及深浅色表现。
+- [动效与字号](artifacts/motion-typography-checks.json)：此前已核对展开收起、按钮悬浮、筛选不重建已有行、字号层级、人工补充资料。
+
+## 实施验证边界
+
+浏览器检查使用桌面 Chromium，Safari 实机仍需验收。真实微信账号、附件获取、DeepSeek 实际模型 ID 及档案质量尚待实施阶段验证，不能从示例数据推导真实效果。

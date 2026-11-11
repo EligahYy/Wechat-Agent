@@ -1,0 +1,6 @@
+# Locally installed reference skills; install sources are documented in ui-prototype.
+.agents/skills/
+.agents/vendor/
+ui-prototype/.taste-skill/
+ui-prototype/artifacts/
+__pycache__/

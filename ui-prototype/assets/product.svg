@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="560" viewBox="0 0 800 560">
+  <rect width="800" height="560" fill="#f5f5f7"/>
+  <g stroke="#aebdcd" stroke-width="2" stroke-linejoin="round">
+    <path d="M170 195 405 160 555 228 318 273Z" fill="#e3ecf4"/>
+    <path d="M180 205 319 276 331 432 198 357Z" fill="#e4eaf0"/>
+    <path d="m319 276 226-43-18 154-196 45Z" fill="#f9fbfd"/>
+    <path d="m160 190 244-41 163 76-245 50Z" fill="#4979a5" stroke="#4979a5"/>
+    <path d="m160 190 2 18 159 80 246-51v-12l-245 50Z" fill="#355d84" stroke="#355d84"/>
+    <rect x="368" y="285" width="83" height="16" rx="8" fill="#d0dae5"/>
+    <path d="m400 330 132-27 104 48-138 31Z" fill="#f4f8fc"/>
+    <path d="m408 339 91 45 7 98-85-46Z" fill="#e0e7ef"/>
+    <path d="m499 384 128-29-14 98-107 29Z" fill="#f9fbfd"/>
+    <path d="m390 325 140-30 116 54-146 35Z" fill="#4979a5" stroke="#4979a5"/>
+    <path d="m390 325 2 14 108 52 146-32v-10l-146 35Z" fill="#355d84" stroke="#355d84"/>
+  </g>
+  <text x="48" y="512" fill="#6e6e73" font-family="sans-serif" font-size="16">产品附件示例 · 塑料收纳盒</text>
+</svg>
