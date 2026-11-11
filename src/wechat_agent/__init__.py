@@ -1,0 +1,1 @@
+"""Local customer data workspace."""

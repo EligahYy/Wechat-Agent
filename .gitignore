@@ -4,3 +4,8 @@
 ui-prototype/.taste-skill/
 ui-prototype/artifacts/
 __pycache__/
+.venv/
+.local/
+.env
+.pytest_cache/
+*.egg-info/
