@@ -24,6 +24,20 @@ def open_db(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def open_existing_db(path: Path, *, readonly: bool = False) -> sqlite3.Connection:
+    """Runtime requests use an existing database; only explicit startup may create it."""
+    mode = "ro" if readonly else "rw"
+    conn = sqlite3.connect(Path(path).resolve().as_uri() + f"?mode={mode}", uri=True, timeout=5)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
 def _execute_script(conn: sqlite3.Connection, script: str) -> None:
     # executescript() would commit the caller's migration before running it.
     statement = ""

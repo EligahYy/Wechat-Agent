@@ -160,3 +160,26 @@ done
 归属不足或没有稳定ID的原文保存在数据库source_issues中，该页游标不推进。报告仅列计数、具体gap和最多20类issue_types技术类型，不含姓名、消息ID、正文、本机路径或凭据。unresolved_issues_total是该账号的问题观察记录数；没有稳定ID的多次观察不能当成同一条消息合并。反馈两份报告和测试结果即可，原始聊天留在本机。
 
 之后重启API会返回schema_version=2。指定其他已知会话可用重复的`--conversation`参数；不传--from-start时续读已保存的未完成游标，必须沿用原page-size。完成的会话下一次会从头检查修订；当前实现优先保证可追溯，不声称已有只取增量的源端变更流。附件先保留引用，文件获取／解析和模型整理仍在后续阶段。
+
+## 11. M1任务3：联系人API验证
+
+本轮没有新增依赖或数据库迁移，schema仍为2。停止旧API后拉取、运行测试并重启：
+
+```bash
+git pull --ff-only origin main
+.venv/bin/python -m pytest -q
+.venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
+```
+
+在另一终端用已验证的工作账号读取联系人。以下只打印统计，避免把真实姓名和ID带入反馈：
+
+```bash
+curl -fsS 'http://127.0.0.1:8766/api/contacts?account_id=wxid_your_account&page=1&page_size=20' \
+  | .venv/bin/python -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({"total":d["total"],"page":d["page"],"returned":len(d["items"]),"role_counts":d["role_counts"]},ensure_ascii=False))'
+```
+
+HTTP应为200，每页最多20位，不包含本人或群标识。首次归档的人工身份默认为unknown，商家数量为0并不表示漏读；身份待人工确认。默认读取本机唯一的已归档账号；若有多个账号，需在本地source.json明确expected_account_id。请求里的account_id不能越过服务端绑定。
+
+接口文档在 http://127.0.0.1:8766/docs ，可查看搜索、分页和PATCH身份的结构。真实身份由用户确认后再修改；云端已在临时库覆盖单个／批量修改、版本冲突、部分成功和原文保留，不需要为本轮验收批量改动真实联系人。
+
+角色变更带expected_version；409的details.updated可能已成功提交，details.failed才是失败项。冲突时核对新版本后只重试失败项。原文与来源不会被角色切换删除；商家分析和正式桌面页面仍在后续任务接入。反馈测试结果和上述统计即可，不回传联系人清单。

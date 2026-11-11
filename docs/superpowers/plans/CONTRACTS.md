@@ -22,10 +22,14 @@
 ## M1 创建：归档、API 与最小操作
 
 - `storage/db.py: open_db(path: Path) -> sqlite3.Connection`，启用外键、WAL、有限 busy timeout；`migrate(conn) -> None` 按版本迁移。
+- `open_existing_db(path: Path, *, readonly: bool=False)`供运行时请求使用，URI模式为ro／rw，缺失数据库直接失败；只有显式初始化／迁移入口可创建数据库。联系人GET只读，单次查询的计数与行使用同一读事务。
 - 数据库路径为Settings.data_dir下的archive.sqlite3；已交付迁移不原地修改，后续表结构变更新增版本。FTS搜索必须关联messages并按account_id限定，不能把全库索引结果直接返回给联系人接口。设置按账号保存，应用级偏好若需要持久化另加迁移。
 - `source/repository.py: archive_page(conn, page: SourcePage) -> ArchiveDelta`，返回 `inserted: int, revised: int, unchanged: int`，同一事务保存消息及游标。
 - `archive_metadata(conn, account_id, contacts, conversations) -> None`保存真实来源名称、会话与成员，不覆盖人工role／role_version。archive_page在写入前重验页内范围，缺口页保存有效消息和原始问题但不推进游标；修订保留原时间偏移和raw，后续跨偏移排序须按真实时间值换算，不能直接比较ISO字符串。
 - `contacts/service.py: set_roles(conn, keys: list[ContactKey], role: str, expected_versions: dict[str,int]) -> RoleUpdateResult`；角色值 `merchant / provider / platform / unknown`，禁止修改本人为商家。
+- 身份批次只含同一账号，expected_versions以contact_id为键。PATCH `/api/contacts/roles`接收`{account_id, role, items:[{key:{account_id,contact_id},expected_version}]}`，最多500项，重复联系人为422。实际变更才递增role_version，同角色为不改版本的成功项；本人业务身份锁定。
+- `RoleUpdateResult(status:'succeeded'|'partial'|'failed', updated:[{key,role,role_version,changed,cancelled_analysis_items,cancelled_operations}], failed:[{key,code,current_version}])`。全部通过返回200；有逻辑冲突返回409，错误details中保留完整结果。合法项已提交，前端必须应用updated的新版本、仅保留失败选择，不能把整个409当成全部回滚或盲目重试旧版本。数据库执行失败则整批回滚、返回503，不回显底层错误。
+- 撤销仅作用于排队的`phase='analysis'`项及目标明确的排队分析操作，保留原文、来源同步、其他联系人和正在运行的项。分析工作单元统一使用此phase；内部模型调用的extract／merge等阶段独立记录。M2发布仍须核对merchant身份和snapshot.role_version，不能因请求已发出就发布非商家结果。
 - `source/sync.py: sync_scope(conn, source: SourceAdapter, scope: OperationScope, cancellation: CancellationToken | None, *, conversation_ids: list[str] | None=None, page_size: int=200, max_pages: int=1000, from_start: bool=False, sample: bool=False) -> SyncResult`；结果含successful_conversations、failed_conversations、incomplete_conversations、inserted／revised／unchanged、pages_processed、gaps、stopped及history_complete=False。限量未扫完与真正失败分开。None仅供独立验证CLI；正式操作传持久化取消令牌，提交前再次检查状态和generation。
 - 原子提交同时校验已有cursor和数据库租约；不同连接／进程不能同时推进同一会话。租约有效120秒，逐页续租，等锁最多5秒，过期所有者不得提交。网络请求不持写事务。账号／会话错配拒绝归档，跳行、分片错误及异常行保留具体缺口。SQLite schema2新增source_issues和sync_leases，不修改schema1迁移。
 - `operations/contracts.py`：`OperationScope(account_id: str, contact_id: str | None)`；`CancellationToken(operation_id: str, generation: int)`；`RunState = queued | running | stop_requested | stopped | succeeded | failed`。
@@ -35,7 +39,10 @@
 - `api/app.py: create_app(settings: Settings, services: Services | None = None) -> FastAPI`；测试以依赖注入提供回放源。`Services` 在 `services.py` 定义，先含 `source: SourceAdapter | None`，以后增加 model／strategy，不更换调用入口。
 - HTTP 日期为 ISO 8601（含偏移）；错误为 `{code, message, details}`，冲突 409、无效输入 422、源服务失败 502；错误不含密钥。
 - 联系人／档案／原文／单号路由均显式携带 account_id，并由服务端验证当前账号权限；不能只凭裸 contact_id 读写。
+- 联系人API按服务端source_config.expected_account_id或注入source.account_id限定；配置冲突返回503。无绑定时仅允许读取唯一的已归档账号，多账号须明确配置，否则409/account_binding_required；请求不能自行选择其他账号，越界403，混入其他账号的批次写入前整体拒绝。
 - 联系人响应 `{items, total, page, page_size}`，最大 20；每行含稳定 `key`、`display_name`、`role`、`role_version`、`sources` 和资料状态。
+- GET `/api/contacts` 查询参数为 `account_id`、`q`、`role`（all／四类身份）、`page`、`page_size`。响应另含 `role_counts`（搜索结果的身份分布，不随身份筛选改变）；来源用 `{conversation_id,kind,title}`。每行包含 `display_name_source`、`copy_name`、`last_message_at`、`last_business_at`、`profile_status`、`profile_updated_at` 及 `source_gaps`。名称按真实备注→昵称选择，缺失则明确标记，`copy_name=None`，不能复制wxid替代；中文子串、百分号、下划线、星号和反斜线按字面检索。
+- M1按相关归档材料的原消息时间排序（含时区换算），不是同步或模型处理时间，也不是已确认业务时间；last_business_at、profile_updated_at暂为None。商家有材料为pending，无材料为no_data；非商家profile_status=None。M2接入实际档案后再更新业务字段；不能先生成演示摘要。
 - M2 扩展联系人行的 `goods_route`、`communication`、`last_business_at`、`profile_updated_at`，不另写一份虚构商家列表；商家视图按 last_business_at，未整理回退最近归档消息时间。
 - `frontend/src/api/types.ts` 随后端契约保持一致；`api/client.ts: request<T>(path: string, init?: RequestInit): Promise<T>` 只访问同源 `/api`。
 

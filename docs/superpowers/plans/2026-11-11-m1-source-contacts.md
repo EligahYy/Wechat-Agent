@@ -78,7 +78,7 @@ def test_replay_page_is_idempotent(db, case):
 - [x] **Step 4 — 绿灯：** 补测时间偏移保留、未知发送者保留 gap、不把群建成人、相同会话并发游标串行；上述pytest全过，完整回归148项通过；Mac取证单独列为待验，不以云端回放代替。
 - [x] **Step 5 — 提交检查点：** 获准时 `git commit -m "feat: archive source pages with durable cursors"`，仅暂存本任务实现及脱敏样本。
 
-- [ ] **实机取证（待Mac）：** 运行小范围归档两次；源端未变化时第二次不重复，问题原文留在本机，只回传技术报告。
+- [x] **实机取证（已通过）：** Mac 148项测试通过；首次11条入库，第二次0新增／0修订、11条不变，两次均无缺口。
 
 ### Task 3: 联系人及身份 API
 
@@ -86,7 +86,7 @@ def test_replay_page_is_idempotent(db, case):
 
 **Interfaces:** Consumes ContactKey 和 db；Creates `set_roles`、GET `/api/contacts`、PATCH `/api/contacts/roles`。每项修改带 key／expected_version，返回成功和失败项，不整个批次假成功。
 
-- [ ] **Step 1 — 写失败测试：**
+- [x] **Step 1 — 写失败测试：**
 
 ```python
 def test_contact_limit_is_twenty(client):
@@ -94,10 +94,12 @@ def test_contact_limit_is_twenty(client):
     assert response.status_code == 422
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_contacts.py -q`，预期 404／未实现，而非预期 422。
-- [ ] **Step 3 — 实现：** 按备注→昵称→可定位缺失状态选择 display*name；支持 role、姓名／wxid／群名检索和页码。联系人中文子串搜索使用参数化 LIKE 并转义 `%`／`*`，不能把单字查询交给普通 FTS 分词后无结果。人工角色默认 unknown，只更新明确选择；本人不可设商家。修改角色递增 role_version；非商家不删原文，撤销尚未开始的分析项。
-- [ ] **Step 4 — 绿灯：** 增加同名不同人、跨会话一人、跨账号隔离、role_version 冲突 409、无姓名不复制 wxid、中文单字及字面 `%` 查询的契约测试。按最近消息时间提供尚未整理行，不能用同步完成时间冒充沟通时间。
-- [ ] **Step 5 — 提交检查点：** 获准时提交 contacts 及路由，消息 `feat: manage unified contact identities`。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_contacts.py -q`，预期 404／未实现，而非预期 422。
+- [x] **Step 3 — 实现：** 按备注→昵称→可定位缺失状态选择 display*name；支持 role、姓名／wxid／群名检索和页码。联系人中文子串搜索使用参数化 LIKE 并转义 `%`／`*`（`\*`保持字面），不能把单字查询交给普通 FTS 分词后无结果。人工角色默认 unknown，只更新明确选择；本人不可设商家。修改角色递增 role_version；非商家不删原文，撤销尚未开始的分析项。
+- [x] **Step 4 — 绿灯：** 增加同名不同人、跨会话一人、跨账号隔离、role_version 冲突 409、无姓名不复制 wxid、中文单字及字面 `%` 查询的契约测试。按最近消息时间提供尚未整理行，不能用同步完成时间冒充沟通时间。
+- [x] **Step 5 — 提交检查点：** 获准时提交 contacts 及路由，消息 `feat: manage unified contact identities`。
+
+- [ ] **Mac验收：** 重启API，用已归档账号读取联系人，只回传统计；真实角色修改由用户确认，不为验收批量改标签。
 
 ### Task 4: 最小持久化同步操作
 
