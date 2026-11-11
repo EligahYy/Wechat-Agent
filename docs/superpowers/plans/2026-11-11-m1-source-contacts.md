@@ -39,7 +39,7 @@
 
 **Interfaces:** Creates `open_db`, `migrate`, `Services`, `create_app` 及 db／client／case 夹具，形状见 CONTRACTS。`GET /api/health` 返回 `{status:'ok', schema_version:1}`，不表示微信已连通。
 
-- [ ] **Step 1 — 写失败测试：**
+- [x] **Step 1 — 写失败测试：**
 
 ```python
 def test_schema_is_repeatable_and_isolated(tmp_path):
@@ -50,10 +50,10 @@ def test_schema_is_repeatable_and_isolated(tmp_path):
     assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 1
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_storage.py tests/test_app.py -q`，预期模块缺失。
-- [ ] **Step 3 — 实现：** 增加 FastAPI 和 uvicorn 运行依赖，并实际更新锁文件。迁移建立 accounts、contacts（人工 role／version）、conversations、members、messages（稳定源身份）、message_revisions、attachments、sync_cursors、sync_attempts、operations／items、settings；唯一约束按账号隔离。FTS5 存原文搜索索引，在源修订时同步。实现事务迁移、只读健康接口和可覆盖 Settings 的 app factory。请求和 worker 分别持有连接，不跨线程复用同一个 connection；网络 await 不放进写事务。
-- [ ] **Step 4 — 绿灯：** 测试补充跨账号相同 ID 不冲突、事务回滚和重复迁移，运行上述命令通过；安装实际依赖并重新解析 lock。
-- [ ] **Step 5 — 提交检查点：** 获准时提交本任务文件，消息 `feat: add transactional archive and API foundation`。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_storage.py tests/test_app.py -q`，预期模块缺失。
+- [x] **Step 3 — 实现：** 增加 FastAPI 和 uvicorn 运行依赖，并实际更新锁文件。迁移建立 accounts、contacts（人工 role／version）、conversations、members、messages（稳定源身份）、message_revisions、attachments、sync_cursors、sync_attempts、operations／items、settings；唯一约束按账号隔离。FTS5 存原文搜索索引，在源修订时同步。实现事务迁移、只读健康接口和可覆盖 Settings 的 app factory。请求和 worker 分别持有连接，不跨线程复用同一个 connection；网络 await 不放进写事务。
+- [x] **Step 4 — 绿灯：** 测试补充跨账号相同 ID 不冲突、事务回滚和重复迁移，运行上述命令通过；安装实际依赖并重新解析 lock。
+- [x] **Step 5 — 提交检查点：** 获准时提交本任务文件，消息 `feat: add transactional archive and API foundation`。
 
 ### Task 2: 真实适配与分页归档
 

@@ -30,7 +30,7 @@ git pull --ff-only origin main
 
 ## 3. 当前 Python 验证步骤
 
-当前已实现 M0 环境、来源、模型及媒体检查，还没有正式业务 API 后端或 React 应用。本轮没有新增依赖，已有 `.venv` 可在 pull 后直接运行测试。
+当前已实现M0检查工具和M1任务1的SQLite/API基础；微信消息归档业务与React页面尚未接入。本轮新增FastAPI、uvicorn及测试依赖，已有`.venv`也需要安装更新的锁文件并重新安装本项目，再运行测试，无需重建虚拟环境。
 
 需要 Python 3.12。已有 Homebrew 时：
 
@@ -117,3 +117,21 @@ scope=file_availability、status=passed仅证明可读并计算哈希，parsed=f
 system／revoke事件允许没有人物发送人，分别计入 `system_events_checked` 和其中的 `unattributed_events_checked`，不再仅因发送人为空报错；消息ID、时间等仍须有效。如果同类会话只读到系统事件，仍报告人物消息样本不足。`scope=sample`的passed仅说明本轮有限采样通过。
 
 请反馈 `git rev-parse --short HEAD`、测试结果及shareable报告。原始聊天、完整原文文件和API Key留在本机。报告输出路径不能与源配置、模型配置或待检查文件相同，避免覆盖输入。
+
+## 9. M1任务1：数据库与API启动验证
+
+在仓库根目录更新后执行：
+
+```bash
+git pull --ff-only origin main
+.venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
+.venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+.venv/bin/python -m pytest -q
+.venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
+```
+
+浏览器打开 http://127.0.0.1:8766/api/health ，或在另一终端执行 `curl -fsS http://127.0.0.1:8766/api/health`，预期为 `{"status":"ok","schema_version":1}`。结束按Control+C。
+
+首次启动在应用数据目录创建`archive.sqlite3`，启用外键和WAL，原子执行迁移；需要SQLite的FTS5／trigram与JSON支持。默认Mac路径为`~/Library/Application Support/Wechat-Agent/`，可用`WECHAT_AGENT_DATA_DIR`指定独立测试目录。迁移失败或数据库版本高于程序时拒绝启动，不自动降级或清库；健康查询只读，不创建或修复数据库。
+
+此接口只证明应用数据库/API可用，不会同步微信、调用模型或生成客户档案；原型仍在8765端口单独查看。M1任务2才实现分页归档。

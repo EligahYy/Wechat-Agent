@@ -21,6 +21,7 @@
 ## M1 创建：归档、API 与最小操作
 
 - `storage/db.py: open_db(path: Path) -> sqlite3.Connection`，启用外键、WAL、有限 busy timeout；`migrate(conn) -> None` 按版本迁移。
+- 数据库路径为Settings.data_dir下的archive.sqlite3；已交付迁移不原地修改，后续表结构变更新增版本。FTS搜索必须关联messages并按account_id限定，不能把全库索引结果直接返回给联系人接口。设置按账号保存，应用级偏好若需要持久化另加迁移。
 - `source/repository.py: archive_page(conn, page: SourcePage) -> ArchiveDelta`，返回 `inserted: int, revised: int, unchanged: int`，同一事务保存消息及游标。
 - `contacts/service.py: set_roles(conn, keys: list[ContactKey], role: str, expected_versions: dict[str,int]) -> RoleUpdateResult`；角色值 `merchant / provider / platform / unknown`，禁止修改本人为商家。
 - `source/sync.py: sync_scope(conn, source: SourceAdapter, scope: OperationScope, cancellation: CancellationToken) -> SyncResult`；后者含成功会话、失败会话、变化数量及 gaps。
