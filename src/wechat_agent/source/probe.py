@@ -92,24 +92,29 @@ def normalize_probe(raw: dict, mapping: dict) -> CapabilityReport:
         gaps.append("source_rows_skipped")
     if page.stats.shard_warnings:
         gaps.append("source_shards_unavailable")
-    facts.update(messages_sampled=len(page.items), messages_rejected=0, message_issues=[])
+    facts.update(messages_sampled=len(page.items), messages_rejected=0, message_issues=[],
+                 system_events_checked=0, unattributed_events_checked=0)
     for index, row in enumerate(page.items):
         reason = None
-        if not isinstance(row.get("sender"), str) or not row["sender"].strip():
-            reason = "message_sender_missing"
-        else:
-            try:
-                parse_message(row, account)
-            except ValueError as error:
-                reason = "source_message_id_unavailable" if str(error) == "message_id_unavailable" else "message_contract_invalid"
-            except (OverflowError, OSError):
-                reason = "message_contract_invalid"
+        try:
+            parsed = parse_message(row, account)
+        except ValidationError as error:
+            reason = ("message_sender_missing" if any(item["loc"] == ("sender",) for item in error.errors())
+                      else "message_contract_invalid")
+        except ValueError as error:
+            reason = "source_message_id_unavailable" if str(error) == "message_id_unavailable" else "message_contract_invalid"
+        except (OverflowError, OSError):
+            reason = "message_contract_invalid"
         if reason:
             gaps.append(reason)
             facts["messages_rejected"] += 1
             facts["message_issues"].append(_message_issue(row, index, reason))
         else:
             facts["messages_valid"] += 1
+            if parsed.kind in {"system", "revoke"}:
+                facts["system_events_checked"] += 1
+                if parsed.sender_id is None:
+                    facts["unattributed_events_checked"] += 1
     facts["sample_has_more"] = page.paging.has_more
     return CapabilityReport(component="source_capture", status="pending" if gaps else "passed",
                             facts=facts, gaps=sorted(set(gaps)))
@@ -147,13 +152,14 @@ async def _samples(client: httpx.AsyncClient, initial: Health, facts: dict) -> l
             groups.add(identifier)
     facts.update(contacts_checked=len(people), groups_checked=len(groups),
                  message_pages_checked=0, messages_checked=0, messages_sampled=0,
-                 messages_rejected=0, message_issues=[])
+                 messages_rejected=0, message_issues=[], system_events_checked=0, unattributed_events_checked=0)
     for kind in ("private", "group"):
         if kind not in targets:
             gaps.append(f"source_{kind}_sample_unavailable")
             continue
         offset = 0
         kind_messages = 0
+        kind_events = 0
         for _ in range(2):
             raw = await _get(client, "/api/v1/messages",
                              {"contact": targets[kind], "limit": 2, "offset": offset, "order": "asc", "show_hidden": "1"})
@@ -168,10 +174,13 @@ async def _samples(client: httpx.AsyncClient, initial: Health, facts: dict) -> l
             facts["messages_checked"] += normalized.facts["messages_valid"]
             facts["messages_sampled"] += normalized.facts.get("messages_sampled", 0)
             facts["messages_rejected"] += normalized.facts.get("messages_rejected", 0)
+            for field in ("system_events_checked", "unattributed_events_checked"):
+                facts[field] += normalized.facts.get(field, 0)
             facts["message_issues"].extend(
                 {"conversation_kind": kind, "page_offset": offset, **issue}
                 for issue in normalized.facts.get("message_issues", []))
             kind_messages += normalized.facts["messages_valid"]
+            kind_events += normalized.facts.get("system_events_checked", 0)
             if not page.items and page.paging.has_more:
                 gaps.append("source_empty_page_with_more")
             if not page.paging.has_more:
@@ -179,6 +188,8 @@ async def _samples(client: httpx.AsyncClient, initial: Health, facts: dict) -> l
             offset += page.paging.limit
         if not kind_messages:
             gaps.append(f"source_{kind}_messages_unavailable")
+        elif kind_messages == kind_events:
+            gaps.append(f"source_{kind}_person_messages_unavailable")
     for page in (contacts, sessions):
         if page.stats.skipped or page.stats.shard_warnings:
             gaps.append("source_metadata_partial")

@@ -1,6 +1,6 @@
 # 第三方 wx-cli 来源核验
 
-更新：2026-11-11（北京时间）。用户 Mac 已验证连接、账号绑定与有限采样；部分消息缺少发送人，来源状态仍为 pending，新增类型诊断待复验。
+更新：2026-11-11（北京时间）。Mac已验证连接、账号绑定、8条消息的有限采样及类型诊断；2条缺发送人的记录已确认为群聊系统事件。云端已修正事件契约，实机复验待完成。
 
 ## 来源身份
 
@@ -38,8 +38,10 @@
 加 `--source-samples` 后，读取最多20个联系人／会话的元信息，分别对一位私信、一组群聊读取至多两页、每页2条消息，再核对账号与 worker 未改变。只报告计数及技术诊断，不向终端输出聊天正文。M0 不自动保存聊天原文，完整可追溯归档由 M1 实现；这项范围缩减已记录，避免诊断报告变成原文导出。
 
 - `messages_sampled`：源端实际返回的条数；`messages_checked`：通过契约校验的条数；`messages_rejected`：未通过的条数。后者只表示校验结果，不是从归档中删除消息。
+- `system_events_checked`：通过校验的system／revoke事件数，包含在messages_checked中；`unattributed_events_checked`：其中无人物发送人的事件数，不是丢失的聊天。正常聊天数量可由messages_checked减去system_events_checked得到。
 - `message_issues`：每条异常的首个失败原因、私信／群聊类别、分页 offset、页内从0开始的位置、msg_type、sub_type 与上游 direction。最多8条采样异常；不含消息ID、账号ID、姓名、时间和正文。异常类型字段只接受整数或固定枚举，不能借错误值回显原文。
-- `message_sender_missing` 保留 pending，包括系统／撤回记录；确认实际类型后再决定如何保留无人物归属的事件，不能猜成客户发言。msg_type=10000为系统消息，10002为撤回事件，1为文本。方向只作排错线索，不能证明发送人身份。
+- msg_type=10000为系统消息、10002为撤回事件：上游sender为空字符串时，内部映射为sender_id=None，保留内容、时间与来源；有真实发送人则原样保留。字段缺失或null仍属协议缺口；稳定消息ID和时间校验继续执行。普通聊天缺发送人仍报message_sender_missing并pending；方向不能补身份。
+- 某类会话只采到事件时，报source_private_person_messages_unavailable或source_group_person_messages_unavailable，不能用系统事件证明人物消息契约已验证。
 
 上游依据：[发送人关联](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/messages.rs)、[群聊前缀解析](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/decode.rs)、[消息方向](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-context/src/contact.rs)。Name2Id关联缺失时 sender 可为空；空 sender 也会被上游标为 incoming，不能反推其属于对方。
 
@@ -47,11 +49,11 @@
 
 ## 实机状态
 
-| 项目           | 云端证据                                 | 用户 Mac                                                        |
-| -------------- | ---------------------------------------- | --------------------------------------------------------------- |
-| 运行环境与原型 | 7个初始测试通过                          | 用户报告 3.12.13、Darwin arm64、7 passed、原型 GET 200，已验证  |
-| wx-cli 服务    | 已核对上游 v0.7.4 协议                   | 应用端 ready、版本及账号绑定已验证                              |
-| 联系人与消息   | 合成回放覆盖账号、同名、群聊、分页及错误 | 20位联系人、19个群标识、4页采样、6条通过校验；缺发送人，pending |
-| 图片和文件     | 已核对源端路由及质量头                   | 原件、缩略图、缺失及解析仍待验证                                |
+| 项目           | 云端证据                               | 用户 Mac                                                       |
+| -------------- | -------------------------------------- | -------------------------------------------------------------- |
+| 运行环境与原型 | 7个初始测试通过                        | 用户报告 3.12.13、Darwin arm64、7 passed、原型 GET 200，已验证 |
+| wx-cli 服务    | 已核对上游 v0.7.4 协议                 | 应用端 ready、版本及账号绑定已验证                             |
+| 联系人与消息   | 合成回放覆盖账号、群聊、分页及匿名事件 | 4页共8条，旧契约通过6条；2条群系统事件已定位，修复待复验       |
+| 图片和文件     | 已核对源端路由及质量头                 | 原件、缩略图、缺失及解析仍待验证                               |
 
 本文不包含用户真实账号 ID、姓名、聊天正文或本机绝对路径。

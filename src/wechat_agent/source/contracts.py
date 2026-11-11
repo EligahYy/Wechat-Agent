@@ -45,7 +45,8 @@ class MessageRecord(BaseModel):
     account_id: str = Field(min_length=1)
     conversation_id: str = Field(min_length=1)
     message_id: str = Field(min_length=1)
-    sender_id: str = Field(min_length=1)
+    # Only system/revoke events may have no person attribution.
+    sender_id: str | None = Field(min_length=1)
     sent_at: AwareDatetime
     kind: str
     body: str
@@ -53,6 +54,15 @@ class MessageRecord(BaseModel):
     attachment_ids: list[str] = Field(default_factory=list)
     source_revision: str = Field(min_length=1)
     raw: dict
+
+    @model_validator(mode="after")
+    def valid_sender(self):
+        if self.sender_id is None:
+            if self.kind not in {"system", "revoke"}:
+                raise ValueError("person_message_sender_required")
+        elif not self.sender_id.strip():
+            raise ValueError("blank_message_sender")
+        return self
 
 
 class SourcePage(BaseModel):

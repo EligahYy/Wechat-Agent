@@ -9,7 +9,7 @@
 - `ContactKey(account_id: str, contact_id: str)`；所有客户读写以二者限定，不用显示姓名作键。
 - `ContactRecord(key: ContactKey, remark: str | None, nickname: str | None, is_self: bool)`。
 - `ConversationRecord(account_id: str, conversation_id: str, kind: Literal['private','group'], title: str | None, member_ids: list[str])`。
-- `MessageRecord(account_id: str, conversation_id: str, message_id: str, sender_id: str, sent_at: datetime, kind: str, body: str, reply_to: str | None, attachment_ids: list[str], source_revision: str, raw: dict)`；时间需带时区，修订由源字段或经验证的同消息版本摘要映射。
+- `MessageRecord(account_id: str, conversation_id: str, message_id: str, sender_id: str | None, sent_at: datetime, kind: str, body: str, reply_to: str | None, attachment_ids: list[str], source_revision: str, raw: dict)`；时间需带时区，修订由源字段或经验证的同消息版本摘要映射。只有来源明确识别的 system／revoke 事件允许 sender_id=None；保留内容、时间和原始来源，已有真实发送人则保留。普通聊天仍要求非空稳定发送人，不按名称或方向推断。
 - 此处 message_id 是保留来源命名空间／会话的规范化稳定身份，避免不同会话的本地 ID 相撞；原始源标识另存在 raw。数据库自增修订 revision 与源端 source_revision 的映射由归档层维护。
 - `SourcePage(account_id: str, conversation_id: str, records: list[MessageRecord], next_cursor: str | None, complete: bool, gaps: list[str])`；空页也能保存明确会话的游标，records 的账号／会话必须一致。
 - `SourceAdapter` Protocol：`check() -> CapabilityReport`；`contacts() -> list[ContactRecord]`；`conversations() -> list[ConversationRecord]`；`messages(conversation_id: str, cursor: str | None, limit: int) -> SourcePage`；`fetch_attachment(attachment_id: str) -> AttachmentFetch`。均为 async；账号固定在适配器实例中。

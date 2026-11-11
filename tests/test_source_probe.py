@@ -64,7 +64,7 @@ def test_missing_sender_does_not_get_replaced_by_display_name():
 def test_sender_gap_reports_only_technical_metadata(sender):
     from wechat_agent.source.probe import normalize_probe, WX_MESSAGE_MAPPING
     bad = message(sender=sender, content={"Text": "private-chat"})
-    bad.update(msg_type=10000, sender_display_name="private-person")
+    bad.update(sender_display_name="private-person")
     result = normalize_probe({"account_id": "private-account", **envelope([message(), bad])}, WX_MESSAGE_MAPPING)
     assert result.status == "pending"
     assert result.facts["messages_sampled"] == 2
@@ -72,7 +72,7 @@ def test_sender_gap_reports_only_technical_metadata(sender):
     assert result.facts["messages_rejected"] == 1
     assert result.facts["message_issues"] == [{
         "item_index": 1, "reason": "message_sender_missing",
-        "msg_type": 10000, "sub_type": 0, "direction": "incoming",
+        "msg_type": 1, "sub_type": 0, "direction": "incoming",
     }]
     assert "private-" not in result.model_dump_json()
 
@@ -121,7 +121,6 @@ async def test_live_sender_issues_survive_shareable_export_without_identity():
         if offset == 0:
             return httpx.Response(200, json=envelope([message(talker=talker), message(2, talker=talker)], total=3))
         bad = message(3, sender="", talker=talker, content={"Text": "private-chat"})
-        bad.update(msg_type=10000)
         return httpx.Response(200, json=envelope([bad], offset=2, total=3))
 
     result = await run_source_probe(None, expected_account_id="account-a", samples=True,
@@ -134,11 +133,96 @@ async def test_live_sender_issues_survive_shareable_export_without_identity():
     assert public["facts"]["messages_rejected"] == 2
     assert public["facts"]["message_issues"] == [
         {"conversation_kind": "private", "page_offset": 2, "item_index": 0,
-         "reason": "message_sender_missing", "msg_type": 10000, "sub_type": 0, "direction": "incoming"},
+         "reason": "message_sender_missing", "msg_type": 1, "sub_type": 0, "direction": "incoming"},
         {"conversation_kind": "group", "page_offset": 2, "item_index": 0,
-         "reason": "message_sender_missing", "msg_type": 10000, "sub_type": 0, "direction": "incoming"},
+         "reason": "message_sender_missing", "msg_type": 1, "sub_type": 0, "direction": "incoming"},
     ]
     for secret in ("private-chat", "merchant-a", "room@chatroom", "account-a", "Same name"):
+        assert secret not in json.dumps(public)
+
+
+@pytest.mark.parametrize("msg_type,kind,variant", [(10000, "system", "System"), (10002, "revoke", "Revoke")])
+@pytest.mark.parametrize("sender", ["", "   "])
+def test_unattributed_events_keep_content_time_and_source(msg_type, kind, variant, sender):
+    from wechat_agent.source.wx_cli import parse_message
+    raw = message(sender=sender, talker="room@chatroom", content={variant: "Synthetic event"})
+    raw.update(msg_type=msg_type)
+    parsed = parse_message(raw, "account-a")
+    assert parsed.sender_id is None
+    assert parsed.kind == kind
+    assert parsed.body == "Synthetic event"
+    assert parsed.sent_at.timestamp() == raw["create_time"]
+    assert parsed.message_id == "wx-cli:room%40chatroom:1"
+    assert parsed.raw == raw
+    assert parsed.source_revision
+
+
+def test_event_with_known_sender_keeps_source_identity():
+    from wechat_agent.source.wx_cli import parse_message
+    raw = message(sender="merchant-a", content={"System": "Synthetic event"})
+    raw.update(msg_type=10000)
+    assert parse_message(raw, "account-a").sender_id == "merchant-a"
+
+
+def test_normalized_contract_rejects_unattributed_person_messages():
+    from wechat_agent.source.contracts import MessageRecord
+    from wechat_agent.source.wx_cli import parse_message
+    raw = parse_message(message(), "account-a").model_dump()
+    for kind, sender in [("text", None), ("image", None), ("unknown", None), ("system", "   ")]:
+        with pytest.raises(ValidationError):
+            MessageRecord.model_validate({**raw, "kind": kind, "sender_id": sender})
+
+
+@pytest.mark.parametrize("update,reason", [
+    ({"server_id": 0}, "source_message_id_unavailable"),
+    ({"create_time": "bad-time"}, "message_contract_invalid"),
+    ({"sender": None}, "message_sender_missing"),
+])
+def test_system_event_exception_still_checks_other_fields(update, reason):
+    from wechat_agent.source.probe import normalize_probe, WX_MESSAGE_MAPPING
+    raw = message(sender="", content={"System": "Synthetic event"})
+    raw.update(msg_type=10000, **update)
+    result = normalize_probe({"account_id": "account-a", **envelope([raw])}, WX_MESSAGE_MAPPING)
+    assert result.status == "pending"
+    assert result.gaps == [reason]
+    assert result.facts["messages_rejected"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("group_only_events", [False, True])
+async def test_live_system_events_are_counted_without_inventing_people(group_only_events):
+    from wechat_agent.source.probe import run_source_probe
+    from wechat_agent.evidence import sanitize_evidence
+
+    def respond(request):
+        if request.url.path.endswith("health"):
+            return httpx.Response(200, json=health())
+        if request.url.path.endswith("contacts"):
+            return httpx.Response(200, json=envelope([]))
+        if request.url.path.endswith("sessions"):
+            return httpx.Response(200, json=envelope([
+                {"username": "merchant-a"}, {"username": "room@chatroom"}]))
+        talker = request.url.params["contact"]
+        offset = int(request.url.params["offset"])
+        rows = [message(offset + 1, talker=talker), message(offset + 2, talker=talker)]
+        if talker.endswith("@chatroom"):
+            for row in rows if group_only_events else rows[:1]:
+                row.update(sender="", msg_type=10000, content={"System": "private-event"})
+        return httpx.Response(200, json=envelope(rows, offset=offset, total=4))
+
+    result = await run_source_probe(None, expected_account_id="account-a", samples=True,
+                                    transport=httpx.MockTransport(respond))
+    public = sanitize_evidence({"source": result.model_dump(mode="json")})["source"]
+    assert public["status"] == ("pending" if group_only_events else "passed")
+    assert public["gaps"] == (["source_group_person_messages_unavailable"] if group_only_events else [])
+    assert public["facts"]["messages_sampled"] == 8
+    assert public["facts"]["messages_checked"] == 8
+    assert public["facts"]["messages_rejected"] == 0
+    assert public["facts"]["system_events_checked"] == (4 if group_only_events else 2)
+    assert public["facts"]["unattributed_events_checked"] == (4 if group_only_events else 2)
+    assert public["facts"]["message_issues"] == []
+    assert public["facts"]["history_complete"] is False
+    for secret in ("private-event", "merchant-a", "room@chatroom", "account-a"):
         assert secret not in json.dumps(public)
 
 

@@ -5,7 +5,7 @@ import hashlib
 import json
 from urllib.parse import quote
 
-from pydantic import BaseModel, Field, StrictBool, StrictInt, field_validator, model_validator
+from pydantic import BaseModel, Field, StrictBool, StrictInt, ValidationInfo, field_validator, model_validator
 
 from .contracts import MessageRecord
 
@@ -53,13 +53,20 @@ class WireMessage(BaseModel):
     server_id: StrictInt
     msg_type: StrictInt
     sub_type: StrictInt
-    sender: str = Field(min_length=1)
+    sender: str
     talker: str = Field(min_length=1)
     create_time: StrictInt
     content: dict | str
     status: StrictInt
 
-    @field_validator("sender", "talker")
+    @field_validator("sender")
+    @classmethod
+    def event_or_person_sender(cls, value: str, info: ValidationInfo):
+        if not value.strip() and info.data.get("msg_type") not in {10000, 10002}:
+            raise ValueError("blank_source_sender")
+        return value
+
+    @field_validator("talker")
     @classmethod
     def not_blank(cls, value):
         if not value.strip():
@@ -79,6 +86,10 @@ def parse_message(raw: dict, account_id: str) -> MessageRecord:
         body = content
     elif isinstance(content.get("Text"), str):
         body = content["Text"]
+    elif kind == "system" and isinstance(content.get("System"), str):
+        body = content["System"]
+    elif kind == "revoke" and isinstance(content.get("Revoke"), str):
+        body = content["Revoke"]
     elif isinstance(content.get("Quote"), dict):
         body = content["Quote"].get("reply_text") or ""
     elif isinstance(content.get("File"), dict):
@@ -88,7 +99,8 @@ def parse_message(raw: dict, account_id: str) -> MessageRecord:
     identity = f"wx-cli:{quote(row.talker, safe='')}:{row.server_id}"
     return MessageRecord(
         account_id=account_id, conversation_id=row.talker, message_id=identity,
-        sender_id=row.sender, sent_at=datetime.fromtimestamp(row.create_time, timezone.utc),
+        sender_id=row.sender if row.sender.strip() else None,
+        sent_at=datetime.fromtimestamp(row.create_time, timezone.utc),
         kind=kind, body=body,
         attachment_ids=[f"media:{identity}"] if kind in {"image", "voice", "video", "file"} else [],
         source_revision=hashlib.sha256(json.dumps(raw, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),

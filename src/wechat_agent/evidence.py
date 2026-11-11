@@ -7,6 +7,7 @@ _SAFE_FACTS = {
     "python", "platform", "architecture", "scope", "ready", "cli_version", "account_fingerprint",
     "account_pinned", "history_complete", "contacts_checked", "groups_checked", "message_pages_checked",
     "messages_checked", "messages_valid", "messages_sampled", "messages_rejected", "sample_has_more",
+    "system_events_checked", "unattributed_events_checked",
     "live_connection_verified", "files_checked", "parsed",
     "requested_model_id", "reported_model_id", "response_mode", "declared_context_tokens", "capacity_verified",
     "vision", "json_output_verified", "json_mode_accepted", "schema_mode_accepted", "usage_unknown",
