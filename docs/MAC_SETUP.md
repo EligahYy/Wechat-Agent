@@ -130,8 +130,33 @@ git pull --ff-only origin main
 .venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
 ```
 
-浏览器打开 http://127.0.0.1:8766/api/health ，或在另一终端执行 `curl -fsS http://127.0.0.1:8766/api/health`，预期为 `{"status":"ok","schema_version":1}`。结束按Control+C。
+浏览器打开 http://127.0.0.1:8766/api/health ，或在另一终端执行 `curl -fsS http://127.0.0.1:8766/api/health`。任务1检查点返回schema_version=1；拉取任务2后会自动升级，当前预期为 `{"status":"ok","schema_version":2}`。结束按Control+C。
 
 首次启动在应用数据目录创建`archive.sqlite3`，启用外键和WAL，原子执行迁移；需要SQLite的FTS5／trigram与JSON支持。默认Mac路径为`~/Library/Application Support/Wechat-Agent/`，可用`WECHAT_AGENT_DATA_DIR`指定独立测试目录。迁移失败或数据库版本高于程序时拒绝启动，不自动降级或清库；健康查询只读，不创建或修复数据库。
 
-此接口只证明应用数据库/API可用，不会同步微信、调用模型或生成客户档案；原型仍在8765端口单独查看。M1任务2才实现分页归档。
+此接口只证明应用数据库/API可用，不会发起微信同步或模型调用；原型仍在8765端口单独查看。来源归档通过下节独立命令验证，UI操作入口由M1后续任务接入。
+
+## 10. M1任务2：小范围分页归档与重复验证
+
+先用Control+C结束之前运行的API，避免旧进程继续使用schema1口径；拉取后运行测试。本轮无新增依赖，沿用现有Python环境。
+
+```bash
+git pull --ff-only origin main
+.venv/bin/python -m pytest -q
+
+for sync_check_round in first second; do
+  .venv/bin/python -m wechat_agent.source.sync \
+    --source-account wxid_your_account --sample --from-start \
+    --output ".local/evidence/source-sync-${sync_check_round}.json"
+done
+```
+
+将示例账号替换为M0已经验证的canonical wxid。默认复用127.0.0.1:9100的wx-cli；有鉴权或自定义地址时沿用本地source.json，或传`--source-config`。不需要重启wx-cli或启动API。
+
+--sample读取来源联系人／会话元数据，原文只选择一个私信和一个群，每个至多2页、每页20条，最多80条。--from-start保证两次从所选历史开头重读；若源端未变化，第二次inserted和revised应为0、unchanged应增加，正常记录总数不重复增长。首次命令自动将数据库从schema1原子升级到2，保留已有内容。
+
+报告中的completed_conversations表示本轮该会话可见窗口已读到末尾；incomplete_conversations表示达到页数上限，failed_conversations表示实际错误。超过限量时status=partial、gap=source_page_limit_reached属于预期，不表示已读完历史，也不算源端故障。其他gap需反馈处理；history_complete始终false，不证明隐藏或删除的历史可恢复。
+
+归属不足或没有稳定ID的原文保存在数据库source_issues中，该页游标不推进。报告仅列计数、具体gap和最多20类issue_types技术类型，不含姓名、消息ID、正文、本机路径或凭据。unresolved_issues_total是该账号的问题观察记录数；没有稳定ID的多次观察不能当成同一条消息合并。反馈两份报告和测试结果即可，原始聊天留在本机。
+
+之后重启API会返回schema_version=2。指定其他已知会话可用重复的`--conversation`参数；不传--from-start时续读已保存的未完成游标，必须沿用原page-size。完成的会话下一次会从头检查修订；当前实现优先保证可追溯，不声称已有只取增量的源端变更流。附件先保留引用，文件获取／解析和模型整理仍在后续阶段。

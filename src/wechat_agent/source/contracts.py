@@ -62,16 +62,26 @@ class MessageRecord(BaseModel):
                 raise ValueError("person_message_sender_required")
         elif not self.sender_id.strip():
             raise ValueError("blank_message_sender")
+        elif self.sender_id.endswith("@chatroom"):
+            raise ValueError("group_is_not_person")
         return self
+
+
+class SourceIssue(BaseModel):
+    code: Literal["message_sender_missing", "source_message_id_unavailable", "message_contract_invalid"]
+    message_id: str | None = None
+    raw: dict
 
 
 class SourcePage(BaseModel):
     account_id: str
     conversation_id: str
+    conversation_kind: Literal["private", "group"] | None = None
     records: list[MessageRecord]
     next_cursor: str | None
     complete: bool
     gaps: list[str] = Field(default_factory=list)
+    issues: list[SourceIssue] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def consistent_scope(self):
@@ -80,6 +90,10 @@ class SourcePage(BaseModel):
             raise ValueError("page_scope_mismatch")
         if self.complete and (self.next_cursor is not None or self.gaps):
             raise ValueError("incomplete_page_cannot_claim_complete")
+        if any(issue.code not in self.gaps for issue in self.issues):
+            raise ValueError("unreported_source_issue")
+        if any(issue.raw.get("talker") != self.conversation_id for issue in self.issues):
+            raise ValueError("source_issue_scope_mismatch")
         return self
 
 
@@ -100,6 +114,8 @@ class CapabilityReport(BaseModel):
 
 
 class SourceAdapter(Protocol):
+    @property
+    def account_id(self) -> str: ...
     async def check(self) -> CapabilityReport: ...
     async def contacts(self) -> list[ContactRecord]: ...
     async def conversations(self) -> list[ConversationRecord]: ...

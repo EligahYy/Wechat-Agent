@@ -8,7 +8,7 @@
 4. [模型执行方案](MODEL_EXECUTION.md)：实际请求组织、上下文快照、长历史、失败恢复及模型／Agent 升级。
 5. [开发工作流](DEVELOPMENT_WORKFLOW.md)：Superpowers 项目级安装、固定版本与开发使用约定。
 6. [Mac 初始化](MAC_SETUP.md)：拉取仓库、恢复技能及运行现有原型。
-7. [M0–M5 开发计划](superpowers/plans/README.md)：六份逐任务计划及共享接口；M0来源有限采样已实测通过，M1数据库/API底座已在云端完成，后续按代码依赖串行执行。
+7. [M0–M5 开发计划](superpowers/plans/README.md)：六份逐任务计划及共享接口；M0有限采样与M1基础启动已在Mac通过，分页归档已在云端完成、待实机验证，后续按代码依赖串行执行。
 
 [交互原型](../ui-prototype/preview.html)提供效果参照，只有示例数据，尚未连接真实服务。
 

@@ -57,11 +57,11 @@ def test_schema_is_repeatable_and_isolated(tmp_path):
 
 ### Task 2: 真实适配与分页归档
 
-**Files:** Create `source/adapter.py`, `source/repository.py`, `source/sync.py`, `tests/__init__.py`, `tests/fakes/source.py`, `tests/factories.py`, `tests/test_source_sync.py`, `tests/fixtures/source-overlap.json`。
+**Files:** Create `source/adapter.py`, `source/repository.py`, `source/sync.py`（含有限验证CLI）, `operations/{__init__,contracts}.py`, `storage/migrations/002_source_sync.sql`, `tests/__init__.py`, `tests/fakes/source.py`, `tests/factories.py`, `tests/test_source_{sync,adapter,sync_cli}.py`, `tests/fixtures/source-overlap.json`；Modify source契约、wx-cli规范化与schema版本。
 
 **Interfaces:** Consumes M0 SourceAdapter；Creates `archive_page`、`sync_scope`、`ArchiveDelta`、`SyncResult`，见 CONTRACTS。源账号在实例创建后固定；适配器只实现 M0 已确认的读取协议。
 
-- [ ] **Step 1 — 写失败测试：** 同一页面归档两次，断言首次 inserted=2、第二次 unchanged=2；同正文不同源 ID 必须两条；同 ID 正文修订则保留 revision=1／2；模拟事务提交失败后断言 cursor 未推进。
+- [x] **Step 1 — 写失败测试：** 同一页面归档两次，断言首次 inserted=2、第二次 unchanged=2；同正文不同源 ID 必须两条；同 ID 正文修订则保留 revision=1／2；模拟事务提交失败后断言 cursor 未推进。
 
 ```python
 def test_replay_page_is_idempotent(db, case):
@@ -73,10 +73,12 @@ def test_replay_page_is_idempotent(db, case):
     assert second.inserted == second.revised == 0
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_source_sync.py -q`，预期缺少归档／同步实现。
-- [ ] **Step 3 — 实现：** 按 M0 字段映射读取联系人、会话和消息；消息与游标同事务落盘。识别重复 cursor 和分页无进展并报具体 gap，不死循环。稳定源身份包含来源命名空间／会话／消息 ID，正文哈希只用于版本比较。完整归档群消息，不预先按商家筛掉服务商发言。
-- [ ] **Step 4 — 绿灯：** 补测时间偏移保留、未知发送者保留 gap、不把群建成人、相同会话并发游标串行；上述 pytest 全过。在 Mac 重复真实同步同一小范围，第二轮不重复。
-- [ ] **Step 5 — 提交检查点：** 获准时 `git commit -m "feat: archive source pages with durable cursors"`，仅暂存本任务实现及脱敏样本。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_source_sync.py -q`，预期缺少归档／同步实现。
+- [x] **Step 3 — 实现：** 按 M0 字段映射读取联系人、会话和消息；消息与游标同事务落盘。识别重复 cursor 和分页无进展并报具体 gap，不死循环。稳定源身份包含来源命名空间／会话／消息 ID，正文哈希只用于版本比较。完整归档群消息，不预先按商家筛掉服务商发言。
+- [x] **Step 4 — 绿灯：** 补测时间偏移保留、未知发送者保留 gap、不把群建成人、相同会话并发游标串行；上述pytest全过，完整回归148项通过；Mac取证单独列为待验，不以云端回放代替。
+- [x] **Step 5 — 提交检查点：** 获准时 `git commit -m "feat: archive source pages with durable cursors"`，仅暂存本任务实现及脱敏样本。
+
+- [ ] **实机取证（待Mac）：** 运行小范围归档两次；源端未变化时第二次不重复，问题原文留在本机，只回传技术报告。
 
 ### Task 3: 联系人及身份 API
 
@@ -99,7 +101,7 @@ def test_contact_limit_is_twenty(client):
 
 ### Task 4: 最小持久化同步操作
 
-**Files:** Create `operations/{__init__,contracts,service,worker}.py`, `api/operations.py`, `tests/test_sync_operations.py`；Modify `services.py`, `api/app.py`。
+**Files:** Create `operations/{service,worker}.py`, `api/operations.py`, `tests/test_sync_operations.py`；Modify task2已创建的`operations/contracts.py`、`services.py`、`api/app.py`。
 
 **Interfaces:** Creates `create_operation`、`run_next`，状态及 CancellationToken 见 CONTRACTS；API 为 POST `/api/operations` 和 GET `/api/operations/{id}`。M1 返回真实 source 阶段结果与分析 capability_not_ready；不调用模型。
 

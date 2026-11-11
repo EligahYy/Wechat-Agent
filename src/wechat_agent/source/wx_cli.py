@@ -62,7 +62,7 @@ class WireMessage(BaseModel):
     @field_validator("sender")
     @classmethod
     def event_or_person_sender(cls, value: str, info: ValidationInfo):
-        if not value.strip() and info.data.get("msg_type") not in {10000, 10002}:
+        if (not value.strip() or value.endswith("@chatroom")) and info.data.get("msg_type") not in {10000, 10002}:
             raise ValueError("blank_source_sender")
         return value
 
@@ -99,7 +99,7 @@ def parse_message(raw: dict, account_id: str) -> MessageRecord:
     identity = f"wx-cli:{quote(row.talker, safe='')}:{row.server_id}"
     return MessageRecord(
         account_id=account_id, conversation_id=row.talker, message_id=identity,
-        sender_id=row.sender if row.sender.strip() else None,
+        sender_id=row.sender if row.sender.strip() and not row.sender.endswith("@chatroom") else None,
         sent_at=datetime.fromtimestamp(row.create_time, timezone.utc),
         kind=kind, body=body,
         attachment_ids=[f"media:{identity}"] if kind in {"image", "voice", "video", "file"} else [],

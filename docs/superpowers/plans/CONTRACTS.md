@@ -11,8 +11,9 @@
 - `ConversationRecord(account_id: str, conversation_id: str, kind: Literal['private','group'], title: str | None, member_ids: list[str])`。
 - `MessageRecord(account_id: str, conversation_id: str, message_id: str, sender_id: str | None, sent_at: datetime, kind: str, body: str, reply_to: str | None, attachment_ids: list[str], source_revision: str, raw: dict)`；时间需带时区，修订由源字段或经验证的同消息版本摘要映射。只有来源明确识别的 system／revoke 事件允许 sender_id=None；保留内容、时间和原始来源，已有真实发送人则保留。普通聊天仍要求非空稳定发送人，不按名称或方向推断。
 - 此处 message_id 是保留来源命名空间／会话的规范化稳定身份，避免不同会话的本地 ID 相撞；原始源标识另存在 raw。数据库自增修订 revision 与源端 source_revision 的映射由归档层维护。
-- `SourcePage(account_id: str, conversation_id: str, records: list[MessageRecord], next_cursor: str | None, complete: bool, gaps: list[str])`；空页也能保存明确会话的游标，records 的账号／会话必须一致。
-- `SourceAdapter` Protocol：`check() -> CapabilityReport`；`contacts() -> list[ContactRecord]`；`conversations() -> list[ConversationRecord]`；`messages(conversation_id: str, cursor: str | None, limit: int) -> SourcePage`；`fetch_attachment(attachment_id: str) -> AttachmentFetch`。均为 async；账号固定在适配器实例中。
+- `SourcePage(account_id: str, conversation_id: str, records: list[MessageRecord], next_cursor: str | None, complete: bool, gaps: list[str], conversation_kind: Literal['private','group'] | None=None, issues: list[SourceIssue]=[])`；列表使用default_factory。空页也能保存明确会话的游标，records的账号／会话必须一致；complete与游标／缺口不能矛盾。
+- `SourceIssue(code: Literal['message_sender_missing','source_message_id_unavailable','message_contract_invalid'], message_id: str | None, raw: dict)`；归属不足的原文单独保存，不能强行插入正常消息或静默丢弃。已知稳定消息ID只按身份和版本去重问题记录；没有稳定ID时保留各次观察，不按正文合并。修复后重读可标记旧问题已解决，旧原文仍保留。
+- `SourceAdapter` Protocol：只读属性`account_id: str`；`check() -> CapabilityReport`；`contacts() -> list[ContactRecord]`；`conversations() -> list[ConversationRecord]`；`messages(conversation_id: str, cursor: str | None, limit: int) -> SourcePage`；`fetch_attachment(attachment_id: str) -> AttachmentFetch`。方法均为async；账号固定在适配器实例中。
 - `AttachmentFetch(attachment_id: str, state: Literal['original','thumbnail','missing','unavailable','failed'], content: bytes | None, mime: str | None, reason: str | None)`。
 - `CapabilityReport(component: str, status: Literal['passed','failed','pending','unsupported'], facts: dict, gaps: list[str], checked_at: datetime)`；未实际调用不得 passed。
 
@@ -23,8 +24,10 @@
 - `storage/db.py: open_db(path: Path) -> sqlite3.Connection`，启用外键、WAL、有限 busy timeout；`migrate(conn) -> None` 按版本迁移。
 - 数据库路径为Settings.data_dir下的archive.sqlite3；已交付迁移不原地修改，后续表结构变更新增版本。FTS搜索必须关联messages并按account_id限定，不能把全库索引结果直接返回给联系人接口。设置按账号保存，应用级偏好若需要持久化另加迁移。
 - `source/repository.py: archive_page(conn, page: SourcePage) -> ArchiveDelta`，返回 `inserted: int, revised: int, unchanged: int`，同一事务保存消息及游标。
+- `archive_metadata(conn, account_id, contacts, conversations) -> None`保存真实来源名称、会话与成员，不覆盖人工role／role_version。archive_page在写入前重验页内范围，缺口页保存有效消息和原始问题但不推进游标；修订保留原时间偏移和raw，后续跨偏移排序须按真实时间值换算，不能直接比较ISO字符串。
 - `contacts/service.py: set_roles(conn, keys: list[ContactKey], role: str, expected_versions: dict[str,int]) -> RoleUpdateResult`；角色值 `merchant / provider / platform / unknown`，禁止修改本人为商家。
-- `source/sync.py: sync_scope(conn, source: SourceAdapter, scope: OperationScope, cancellation: CancellationToken) -> SyncResult`；后者含成功会话、失败会话、变化数量及 gaps。
+- `source/sync.py: sync_scope(conn, source: SourceAdapter, scope: OperationScope, cancellation: CancellationToken | None, *, conversation_ids: list[str] | None=None, page_size: int=200, max_pages: int=1000, from_start: bool=False, sample: bool=False) -> SyncResult`；结果含successful_conversations、failed_conversations、incomplete_conversations、inserted／revised／unchanged、pages_processed、gaps、stopped及history_complete=False。限量未扫完与真正失败分开。None仅供独立验证CLI；正式操作传持久化取消令牌，提交前再次检查状态和generation。
+- 原子提交同时校验已有cursor和数据库租约；不同连接／进程不能同时推进同一会话。租约有效120秒，逐页续租，等锁最多5秒，过期所有者不得提交。网络请求不持写事务。账号／会话错配拒绝归档，跳行、分片错误及异常行保留具体缺口。SQLite schema2新增source_issues和sync_leases，不修改schema1迁移。
 - `operations/contracts.py`：`OperationScope(account_id: str, contact_id: str | None)`；`CancellationToken(operation_id: str, generation: int)`；`RunState = queued | running | stop_requested | stopped | succeeded | failed`。
 - `Operation(id: str, scope: OperationScope, state: RunState, phase: str='queued', generation: int=1, remaining: int=0, counts: dict[str,int]={})`，可用动作在响应时计算；counts 使用 default_factory，不共享可变默认值。
 - `operations/service.py: create_operation(conn, action: str, scope: OperationScope, idempotency_key: str) -> Operation`；`operations/worker.py: run_next(conn, services: Services) -> Operation | None`。M1 只执行同步，不支持的分析能力返回 `capability_not_ready`，不返回假档案。
@@ -50,6 +53,7 @@ M1 创建 `tests/conftest.py` 的 `db`（临时 SQLite）、`client`（隔离 Fa
 - `AnalysisResult(contact_id: str, goods: dict[str,Fact], logistics: dict[str,Fact], communication: Communication, shipments: list[ShipmentCandidate], gaps: list[str])`；`coverage` 不由模型返回。输出结构 `schema_version=1`。
 - `context/contracts.py: ContextSnapshot(id: str, key: ContactKey, cutoff: datetime, material_refs: list[SourceRef], role_version: int, manual_version: int, versions: dict[str,str], gaps: list[str])`。
 - `context/builder.py: build_snapshot(conn, key: ContactKey, cutoff: datetime) -> ContextSnapshot`；拒绝非商家。
+- 输入完整性必须检查相关未解决source_issues和未读完的sync_cursors，将具体缺口写入snapshot.gaps；不能把未读取或归属不足的内容当成模型已确认“未提及”。
 - `model/gateway.py: ModelGateway.generate(request: ModelRequest, cancellation: CancellationToken) -> ModelResponse`（async）；构造器注入 HTTPX client、凭据存储和模型配置，Services 增加可空 model。请求含 call_id、unit_id、snapshot_id、phase、model_config_version、messages、output_schema、output_tokens；响应含 payload、finish_reason、usage、model_id。类型放 `model/contracts.py`，不依赖全局可变 client。
 - `ModelConfig(version: str, endpoint: str, model_id: str, credential_ref: str, capabilities: ModelCapabilities)`，不内嵌明文密钥；保存设置时的临时凭据输入交给后端 CredentialStore，响应只返回配置状态。
 - `analysis/contracts.py: AnalysisStrategy.run(snapshot: ContextSnapshot, checkpoint: dict | None, cancellation: CancellationToken) -> AnalysisResult`（async）；`analysis/workflow.py: WorkflowV1` 为首版实现。

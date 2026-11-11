@@ -1,0 +1,451 @@
+{
+  "account_id": "acct-1",
+  "contacts": [
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "merchant-a"
+      },
+      "remark": "商家甲",
+      "nickname": "商家甲",
+      "is_self": false,
+      "role": "merchant"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "merchant-b"
+      },
+      "remark": "商家乙",
+      "nickname": "商家乙",
+      "is_self": false,
+      "role": "merchant"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "provider-p"
+      },
+      "remark": "服务商丙",
+      "nickname": "服务商丙",
+      "is_self": false,
+      "role": "provider"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "self-1"
+      },
+      "remark": "我方",
+      "nickname": "我方",
+      "is_self": true,
+      "role": "unknown"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-01"
+      },
+      "remark": "联系人01",
+      "nickname": "联系人01",
+      "is_self": false,
+      "role": "merchant"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-02"
+      },
+      "remark": "联系人02",
+      "nickname": "联系人02",
+      "is_self": false,
+      "role": "merchant"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-03"
+      },
+      "remark": "联系人03",
+      "nickname": "联系人03",
+      "is_self": false,
+      "role": "merchant"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-04"
+      },
+      "remark": "联系人04",
+      "nickname": "联系人04",
+      "is_self": false,
+      "role": "merchant"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-05"
+      },
+      "remark": "联系人05",
+      "nickname": "联系人05",
+      "is_self": false,
+      "role": "provider"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-06"
+      },
+      "remark": "联系人06",
+      "nickname": "联系人06",
+      "is_self": false,
+      "role": "provider"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-07"
+      },
+      "remark": "联系人07",
+      "nickname": "联系人07",
+      "is_self": false,
+      "role": "provider"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-08"
+      },
+      "remark": "联系人08",
+      "nickname": "联系人08",
+      "is_self": false,
+      "role": "provider"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-09"
+      },
+      "remark": "联系人09",
+      "nickname": "联系人09",
+      "is_self": false,
+      "role": "provider"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-10"
+      },
+      "remark": "联系人10",
+      "nickname": "联系人10",
+      "is_self": false,
+      "role": "provider"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-11"
+      },
+      "remark": "联系人11",
+      "nickname": "联系人11",
+      "is_self": false,
+      "role": "provider"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-12"
+      },
+      "remark": "联系人12",
+      "nickname": "联系人12",
+      "is_self": false,
+      "role": "platform"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-13"
+      },
+      "remark": "联系人13",
+      "nickname": "联系人13",
+      "is_self": false,
+      "role": "platform"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-14"
+      },
+      "remark": "联系人14",
+      "nickname": "联系人14",
+      "is_self": false,
+      "role": "platform"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-15"
+      },
+      "remark": "联系人15",
+      "nickname": "联系人15",
+      "is_self": false,
+      "role": "platform"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-16"
+      },
+      "remark": "联系人16",
+      "nickname": "联系人16",
+      "is_self": false,
+      "role": "platform"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-17"
+      },
+      "remark": "联系人17",
+      "nickname": "联系人17",
+      "is_self": false,
+      "role": "platform"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-18"
+      },
+      "remark": "联系人18",
+      "nickname": "联系人18",
+      "is_self": false,
+      "role": "platform"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-19"
+      },
+      "remark": "联系人19",
+      "nickname": "联系人19",
+      "is_self": false,
+      "role": "unknown"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-20"
+      },
+      "remark": "联系人20",
+      "nickname": "联系人20",
+      "is_self": false,
+      "role": "unknown"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-21"
+      },
+      "remark": "联系人21",
+      "nickname": "联系人21",
+      "is_self": false,
+      "role": "unknown"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-22"
+      },
+      "remark": "联系人22",
+      "nickname": "联系人22",
+      "is_self": false,
+      "role": "unknown"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-23"
+      },
+      "remark": "联系人23",
+      "nickname": "联系人23",
+      "is_self": false,
+      "role": "unknown"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-24"
+      },
+      "remark": "联系人24",
+      "nickname": "联系人24",
+      "is_self": false,
+      "role": "unknown"
+    },
+    {
+      "key": {
+        "account_id": "acct-1",
+        "contact_id": "contact-25"
+      },
+      "remark": "联系人25",
+      "nickname": "联系人25",
+      "is_self": false,
+      "role": "unknown"
+    }
+  ],
+  "conversations": [
+    {
+      "account_id": "acct-1",
+      "conversation_id": "dm-a",
+      "kind": "private",
+      "title": "商家甲",
+      "member_ids": ["merchant-a", "self-1"]
+    },
+    {
+      "account_id": "acct-1",
+      "conversation_id": "group-1",
+      "kind": "group",
+      "title": "合成业务群",
+      "member_ids": ["merchant-a", "merchant-b", "provider-p", "self-1"]
+    }
+  ],
+  "page": {
+    "account_id": "acct-1",
+    "conversation_id": "group-1",
+    "conversation_kind": "group",
+    "records": [
+      {
+        "account_id": "acct-1",
+        "conversation_id": "group-1",
+        "message_id": "fixture:group-1:1",
+        "sender_id": "merchant-a",
+        "sent_at": "2026-11-11T18:00:00+08:00",
+        "kind": "text",
+        "body": "已发出",
+        "source_revision": "fixture-v1-1",
+        "attachment_ids": [],
+        "raw": {
+          "talker": "group-1",
+          "synthetic": true,
+          "content": {
+            "Text": "已发出"
+          }
+        }
+      },
+      {
+        "account_id": "acct-1",
+        "conversation_id": "group-1",
+        "message_id": "fixture:group-1:2",
+        "sender_id": "provider-p",
+        "sent_at": "2026-11-11T18:00:00+08:00",
+        "kind": "text",
+        "body": "已发出",
+        "source_revision": "fixture-v1-2",
+        "attachment_ids": [],
+        "raw": {
+          "talker": "group-1",
+          "synthetic": true,
+          "content": {
+            "Text": "已发出"
+          }
+        }
+      }
+    ],
+    "next_cursor": null,
+    "complete": true,
+    "gaps": []
+  },
+  "pages": [
+    {
+      "account_id": "acct-1",
+      "conversation_id": "dm-a",
+      "conversation_kind": "private",
+      "records": [
+        {
+          "account_id": "acct-1",
+          "conversation_id": "dm-a",
+          "message_id": "fixture:dm-a:1",
+          "sender_id": "merchant-a",
+          "sent_at": "2026-11-11T18:00:00+08:00",
+          "kind": "text",
+          "body": "新批约12方，义乌到德国47228，询问海运含税到门价。",
+          "source_revision": "fixture-v1-1",
+          "attachment_ids": [],
+          "raw": {
+            "talker": "dm-a",
+            "synthetic": true,
+            "content": {
+              "Text": "新批约12方，义乌到德国47228，询问海运含税到门价。"
+            }
+          }
+        },
+        {
+          "account_id": "acct-1",
+          "conversation_id": "dm-a",
+          "message_id": "fixture:dm-a:2",
+          "sender_id": "self-1",
+          "sent_at": "2026-11-11T18:00:00+08:00",
+          "kind": "text",
+          "body": "请补充仓库名称和最晚到仓时间。",
+          "source_revision": "fixture-v1-2",
+          "attachment_ids": [],
+          "raw": {
+            "talker": "dm-a",
+            "synthetic": true,
+            "content": {
+              "Text": "请补充仓库名称和最晚到仓时间。"
+            }
+          }
+        }
+      ],
+      "next_cursor": null,
+      "complete": true,
+      "gaps": []
+    },
+    {
+      "account_id": "acct-1",
+      "conversation_id": "group-1",
+      "conversation_kind": "group",
+      "records": [
+        {
+          "account_id": "acct-1",
+          "conversation_id": "group-1",
+          "message_id": "fixture:group-1:1",
+          "sender_id": "merchant-a",
+          "sent_at": "2026-11-11T18:00:00+08:00",
+          "kind": "text",
+          "body": "已发出",
+          "source_revision": "fixture-v1-1",
+          "attachment_ids": [],
+          "raw": {
+            "talker": "group-1",
+            "synthetic": true,
+            "content": {
+              "Text": "已发出"
+            }
+          }
+        },
+        {
+          "account_id": "acct-1",
+          "conversation_id": "group-1",
+          "message_id": "fixture:group-1:2",
+          "sender_id": "provider-p",
+          "sent_at": "2026-11-11T18:00:00+08:00",
+          "kind": "text",
+          "body": "已发出",
+          "source_revision": "fixture-v1-2",
+          "attachment_ids": [],
+          "raw": {
+            "talker": "group-1",
+            "synthetic": true,
+            "content": {
+              "Text": "已发出"
+            }
+          }
+        }
+      ],
+      "next_cursor": null,
+      "complete": true,
+      "gaps": []
+    }
+  ]
+}
