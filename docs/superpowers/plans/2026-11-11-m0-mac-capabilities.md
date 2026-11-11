@@ -91,7 +91,7 @@ def test_no_sender_mapping_cannot_pass():
 
 **Interfaces:** Creates `ModelCapabilities`；`probe_model(config: dict, transport: httpx.AsyncBaseTransport | None = None) -> CapabilityReport`（async）。config 含明确 endpoint、model_id、凭据引用和经核验窗口；报告不含凭据值。
 
-- [ ] **Step 1 — 先写失败测试：** 用 HTTPX MockTransport 分别返回 401、429、200 但不同 model、截断结果；断言 `probe_model` 区分鉴权／限流／ID 不符／截断，且没有一项被伪装为 passed。无配置时不发网络请求。
+- [x] **Step 1 — 先写失败测试：** 用 HTTPX MockTransport 分别返回 401、429、200 但不同 model、截断结果；断言 `probe_model` 区分鉴权／限流／ID 不符／截断，且没有一项被伪装为 passed。无配置时不发网络请求。
 
 ```python
 @pytest.mark.asyncio
@@ -101,11 +101,11 @@ async def test_missing_model_config_stays_pending():
     assert report.status == "pending"
 ```
 
-- [ ] **Step 2 — 验证红灯：** `python -m pytest tests/test_model_probe.py -q`，预期缺少 probe 实现。
-- [ ] **Step 3 — 最小实现：** 根据实际 DeepSeek 协议实现最小一次验证；窗口和最大输出由官方资料及实际账号能力核对，不从一次短回复推断。结构化输出、视觉分别记录 verified／unsupported／pending；不支持结构输出可走后续本地校验，但不可标为支持。
+- [x] **Step 2 — 验证红灯：** `python -m pytest tests/test_model_probe.py -q`，预期缺少 probe 实现。
+- [x] **Step 3 — 最小实现：** 根据实际 DeepSeek 协议实现最小一次验证；窗口和最大输出由官方资料及实际账号能力核对，不从一次短回复推断。结构化输出、视觉分别记录 verified／unsupported／pending；不支持结构输出可走后续本地校验，但不可标为支持。
 - [ ] **Step 4 — 显式实机核验：** 在 Mac 本地配置凭据后执行 `python -m wechat_agent.doctor --check-model --output .local/evidence/m0.json`，发一个最小验证请求，记录 model_id、日期、接口、结束原因、用量和资料出处。缺可用 Pro 时报告 blocked，不静默换成别的模型。视觉验证仅在实际支持并提供样本时进行。
 - [ ] **Step 5 — 验证：** 回放用 `python -m pytest tests/test_model_probe.py -q`；真实能力记录与响应相互核对。doctor 默认运行仍不会自动调用模型，测试日志不含 key。
-- [ ] **Step 6 — 提交检查点：** 获准时提交 model 模块、脱敏测试和 model-capabilities.md，消息 `feat: verify configured model capabilities`。
+- [x] **Step 6 — 提交检查点：** 获准时提交 model 模块、脱敏测试和 model-capabilities.md，消息 `feat: verify configured model capabilities`。
 
 ### Task 4: 媒体可见性与 M0 出口
 
@@ -131,6 +131,7 @@ def test_missing_media_is_not_parsed(tmp_path):
 ## 执行记录
 
 - M0 任务 1 已完成：7 个测试先失败后通过；离线 CLI 已实际运行，Linux 来源明确为 unsupported，模型／媒体为 pending。
+- 任务3云端已实现：明确配置的最小模型探测、错误分类、容量声明与实际验证区分；真实Pro ID、凭据、容量及视觉仍待实测。
 - 任务2云端已实现：只读 HTTP 检查、来源契约、有限样本与错误分类，37个测试通过。已核对第三方 wx-cli v0.7.4 上游；应用端真实采样仍待用户运行，不声称全历史通过。
 
 ## 退出条件

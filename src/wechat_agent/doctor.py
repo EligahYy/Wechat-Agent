@@ -77,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-url", help="Loopback wx-cli URL; default http://127.0.0.1:9100.")
     parser.add_argument("--source-account", help="Expected canonical wxid reported by health.")
     parser.add_argument("--source-samples", action="store_true", help="Read bounded private/group samples, without model calls.")
+    parser.add_argument("--check-model", action="store_true", help="Explicitly send one minimal model probe; may incur usage.")
+    parser.add_argument("--model-config", type=Path, help="Local configured model endpoint and ID, no plaintext key.")
     args = parser.parse_args(argv)
     if args.source_samples and not args.check_source:
         parser.error("--source-samples requires --check-source")
@@ -87,7 +89,11 @@ def main(argv: list[str] | None = None) -> int:
         source = asyncio.run(run_source_probe(args.source_config or settings.source_config,
                                               base_url=args.source_url, expected_account_id=args.source_account,
                                               samples=args.source_samples)).model_dump(mode="json")
-    report = build_report(data_dir=settings.data_dir, source=source, model=None)
+    model = None
+    if args.check_model:
+        from .model.probe import run_model_probe
+        model = asyncio.run(run_model_probe(args.model_config or settings.model_config)).model_dump(mode="json")
+    report = build_report(data_dir=settings.data_dir, source=source, model=model)
     payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         try:
