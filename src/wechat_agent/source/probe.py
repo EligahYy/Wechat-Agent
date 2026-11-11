@@ -60,6 +60,16 @@ async def _get(client: httpx.AsyncClient, path: str, params=None) -> dict:
     return value
 
 
+def _message_issue(row: dict, index: int, reason: str) -> dict:
+    issue = {"item_index": index, "reason": reason}
+    for field in ("msg_type", "sub_type"):
+        value = row.get(field)
+        issue[field] = value if type(value) is int and 0 <= value <= 0xFFFFFFFF else None
+    direction = row.get("direction")
+    issue["direction"] = direction if direction in ("incoming", "outgoing") else "unknown"
+    return issue
+
+
 def normalize_probe(raw: dict, mapping: dict) -> CapabilityReport:
     gaps = []
     for key, wire_key in WX_MESSAGE_MAPPING.items():
@@ -82,16 +92,22 @@ def normalize_probe(raw: dict, mapping: dict) -> CapabilityReport:
         gaps.append("source_rows_skipped")
     if page.stats.shard_warnings:
         gaps.append("source_shards_unavailable")
-    for row in page.items:
+    facts.update(messages_sampled=len(page.items), messages_rejected=0, message_issues=[])
+    for index, row in enumerate(page.items):
+        reason = None
         if not isinstance(row.get("sender"), str) or not row["sender"].strip():
-            gaps.append("message_sender_missing")
-            continue
-        try:
-            parse_message(row, account)
-        except ValueError as error:
-            gaps.append("source_message_id_unavailable" if str(error) == "message_id_unavailable" else "message_contract_invalid")
-        except (OverflowError, OSError):
-            gaps.append("message_contract_invalid")
+            reason = "message_sender_missing"
+        else:
+            try:
+                parse_message(row, account)
+            except ValueError as error:
+                reason = "source_message_id_unavailable" if str(error) == "message_id_unavailable" else "message_contract_invalid"
+            except (OverflowError, OSError):
+                reason = "message_contract_invalid"
+        if reason:
+            gaps.append(reason)
+            facts["messages_rejected"] += 1
+            facts["message_issues"].append(_message_issue(row, index, reason))
         else:
             facts["messages_valid"] += 1
     facts["sample_has_more"] = page.paging.has_more
@@ -130,7 +146,8 @@ async def _samples(client: httpx.AsyncClient, initial: Health, facts: dict) -> l
         if kind == "group":
             groups.add(identifier)
     facts.update(contacts_checked=len(people), groups_checked=len(groups),
-                 message_pages_checked=0, messages_checked=0)
+                 message_pages_checked=0, messages_checked=0, messages_sampled=0,
+                 messages_rejected=0, message_issues=[])
     for kind in ("private", "group"):
         if kind not in targets:
             gaps.append(f"source_{kind}_sample_unavailable")
@@ -149,6 +166,11 @@ async def _samples(client: httpx.AsyncClient, initial: Health, facts: dict) -> l
             gaps.extend(normalized.gaps)
             facts["message_pages_checked"] += 1
             facts["messages_checked"] += normalized.facts["messages_valid"]
+            facts["messages_sampled"] += normalized.facts.get("messages_sampled", 0)
+            facts["messages_rejected"] += normalized.facts.get("messages_rejected", 0)
+            facts["message_issues"].extend(
+                {"conversation_kind": kind, "page_offset": offset, **issue}
+                for issue in normalized.facts.get("message_issues", []))
             kind_messages += normalized.facts["messages_valid"]
             if not page.items and page.paging.has_more:
                 gaps.append("source_empty_page_with_more")

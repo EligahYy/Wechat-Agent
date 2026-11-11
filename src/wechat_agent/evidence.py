@@ -6,11 +6,17 @@ import re
 _SAFE_FACTS = {
     "python", "platform", "architecture", "scope", "ready", "cli_version", "account_fingerprint",
     "account_pinned", "history_complete", "contacts_checked", "groups_checked", "message_pages_checked",
-    "messages_checked", "messages_valid", "sample_has_more", "live_connection_verified", "files_checked", "parsed",
+    "messages_checked", "messages_valid", "messages_sampled", "messages_rejected", "sample_has_more",
+    "live_connection_verified", "files_checked", "parsed",
     "requested_model_id", "reported_model_id", "response_mode", "declared_context_tokens", "capacity_verified",
     "vision", "json_output_verified", "json_mode_accepted", "schema_mode_accepted", "usage_unknown",
 }
 _SAFE_FILE = {"index", "state", "quality", "parsed", "size_bytes", "sha256", "mime", "type_detection", "gap"}
+_ISSUE_ENUMS = {
+    "reason": ("message_sender_missing", "source_message_id_unavailable", "message_contract_invalid"),
+    "conversation_kind": ("private", "group"),
+    "direction": ("incoming", "outgoing", "unknown"),
+}
 
 
 def _technical(value):
@@ -41,6 +47,19 @@ def sanitize_evidence(report: dict) -> dict:
         if isinstance(facts.get("schema_errors"), list):
             safe["schema_errors"] = [{key: _technical(item[key]) for key in ("path", "type") if key in item}
                                      for item in facts["schema_errors"] if isinstance(item, dict)]
+        if isinstance(facts.get("message_issues"), list):
+            safe["message_issues"] = []
+            for item in facts["message_issues"]:
+                if not isinstance(item, dict):
+                    continue
+                issue = {key: item[key] for key, values in _ISSUE_ENUMS.items() if item.get(key) in values}
+                for key in ("item_index", "page_offset", "msg_type", "sub_type"):
+                    value = item.get(key)
+                    if type(value) is int and 0 <= value <= 0xFFFFFFFF:
+                        issue[key] = value
+                    elif key in {"msg_type", "sub_type"}:
+                        issue[key] = None
+                safe["message_issues"].append(issue)
         result[name] = {
             "component": name, "status": component.get("status", "pending"), "facts": safe,
             "gaps": [gap for gap in component.get("gaps", [])

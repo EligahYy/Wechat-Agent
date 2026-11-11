@@ -112,4 +112,6 @@ scope=file_availability、status=passed仅证明可读并计算哈希，parsed=f
 
 来源采样命令可附加 `--shareable-output .local/evidence/shareable.json`。完整报告仍写入 `--output`；终端和shareable文件只输出允许的技术字段、状态及计数，剔除本机路径、姓名、聊天正文和凭据。
 
+如果出现 `message_sender_missing`，连接可能已经正常，缺口是部分消息没有可用发送人。新版报告的 `messages_sampled` 是总采样数，`messages_checked` 是通过校验数，`messages_rejected` 是未通过数；`message_issues` 会列出异常消息类型、私信／群聊类别和页内位置。把shareable报告反馈即可，无需复制聊天正文。不能凭 incoming 或显示名称把记录归给某人。
+
 请反馈 `git rev-parse --short HEAD`、测试结果及shareable报告。原始聊天、完整原文文件和API Key留在本机。报告输出路径不能与源配置、模型配置或待检查文件相同，避免覆盖输入。

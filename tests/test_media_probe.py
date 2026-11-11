@@ -93,6 +93,25 @@ def test_shareable_report_excludes_private_fields_and_preserves_useful_counts():
     assert private["source"]["facts"]["api_key"] == "private-key"
 
 
+def test_shareable_message_issues_validate_metadata_and_drop_private_values():
+    from wechat_agent.evidence import sanitize_evidence
+    private = {"source": {"facts": {"message_issues": [{
+        "reason": "message_sender_missing", "conversation_kind": "group",
+        "item_index": 0, "page_offset": 2, "msg_type": 10000, "sub_type": 0,
+        "direction": "incoming", "sender": "private-id", "content": "private-chat",
+    }, {
+        "reason": "private-reason", "conversation_kind": "private-name",
+        "item_index": "private-index", "page_offset": True,
+        "msg_type": "private-type", "sub_type": -1, "direction": "private-direction",
+    }]}}}
+    issues = sanitize_evidence(private)["source"]["facts"]["message_issues"]
+    assert issues[0] == {
+        "reason": "message_sender_missing", "conversation_kind": "group",
+        "item_index": 0, "page_offset": 2, "msg_type": 10000, "sub_type": 0, "direction": "incoming",
+    }
+    assert "private-" not in json.dumps(issues)
+
+
 def test_media_cli_is_offline_and_can_write_shareable_report(tmp_path, monkeypatch, capsys):
     from wechat_agent.doctor import main
     def forbidden(*args, **kwargs):

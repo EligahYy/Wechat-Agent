@@ -60,6 +60,88 @@ def test_missing_sender_does_not_get_replaced_by_display_name():
     assert "message_sender_missing" in result.gaps
 
 
+@pytest.mark.parametrize("sender", ["", "   ", None, 123])
+def test_sender_gap_reports_only_technical_metadata(sender):
+    from wechat_agent.source.probe import normalize_probe, WX_MESSAGE_MAPPING
+    bad = message(sender=sender, content={"Text": "private-chat"})
+    bad.update(msg_type=10000, sender_display_name="private-person")
+    result = normalize_probe({"account_id": "private-account", **envelope([message(), bad])}, WX_MESSAGE_MAPPING)
+    assert result.status == "pending"
+    assert result.facts["messages_sampled"] == 2
+    assert result.facts["messages_valid"] == 1
+    assert result.facts["messages_rejected"] == 1
+    assert result.facts["message_issues"] == [{
+        "item_index": 1, "reason": "message_sender_missing",
+        "msg_type": 10000, "sub_type": 0, "direction": "incoming",
+    }]
+    assert "private-" not in result.model_dump_json()
+
+
+def test_message_issue_does_not_echo_malformed_metadata():
+    from wechat_agent.source.probe import normalize_probe, WX_MESSAGE_MAPPING
+    bad = message(sender="")
+    bad.update(msg_type="private-chat", sub_type={"private": "content"}, direction="private-name")
+    result = normalize_probe({"account_id": "account-a", **envelope([bad])}, WX_MESSAGE_MAPPING)
+    assert result.facts["message_issues"] == [{
+        "item_index": 0, "reason": "message_sender_missing",
+        "msg_type": None, "sub_type": None, "direction": "unknown",
+    }]
+    assert "private" not in result.model_dump_json()
+
+
+@pytest.mark.parametrize("update,reason", [
+    ({"server_id": 0}, "source_message_id_unavailable"),
+    ({"create_time": "private-value"}, "message_contract_invalid"),
+])
+def test_other_message_failures_have_technical_issue_details(update, reason):
+    from wechat_agent.source.probe import normalize_probe, WX_MESSAGE_MAPPING
+    raw = message()
+    raw.update(update)
+    result = normalize_probe({"account_id": "account-a", **envelope([raw])}, WX_MESSAGE_MAPPING)
+    assert result.facts["messages_rejected"] == 1
+    assert result.facts["message_issues"][0]["reason"] == reason
+    assert "private-value" not in result.model_dump_json()
+
+
+@pytest.mark.asyncio
+async def test_live_sender_issues_survive_shareable_export_without_identity():
+    from wechat_agent.source.probe import run_source_probe
+    from wechat_agent.evidence import sanitize_evidence
+
+    def respond(request):
+        if request.url.path.endswith("health"):
+            return httpx.Response(200, json=health())
+        if request.url.path.endswith("contacts"):
+            return httpx.Response(200, json=envelope([]))
+        if request.url.path.endswith("sessions"):
+            return httpx.Response(200, json=envelope([
+                {"username": "merchant-a"}, {"username": "room@chatroom"}]))
+        talker = request.url.params["contact"]
+        offset = int(request.url.params["offset"])
+        if offset == 0:
+            return httpx.Response(200, json=envelope([message(talker=talker), message(2, talker=talker)], total=3))
+        bad = message(3, sender="", talker=talker, content={"Text": "private-chat"})
+        bad.update(msg_type=10000)
+        return httpx.Response(200, json=envelope([bad], offset=2, total=3))
+
+    result = await run_source_probe(None, expected_account_id="account-a", samples=True,
+                                    transport=httpx.MockTransport(respond))
+    public = sanitize_evidence({"source": result.model_dump(mode="json")})["source"]
+    assert public["status"] == "pending"
+    assert public["gaps"] == ["message_sender_missing"]
+    assert public["facts"]["messages_sampled"] == 6
+    assert public["facts"]["messages_checked"] == 4
+    assert public["facts"]["messages_rejected"] == 2
+    assert public["facts"]["message_issues"] == [
+        {"conversation_kind": "private", "page_offset": 2, "item_index": 0,
+         "reason": "message_sender_missing", "msg_type": 10000, "sub_type": 0, "direction": "incoming"},
+        {"conversation_kind": "group", "page_offset": 2, "item_index": 0,
+         "reason": "message_sender_missing", "msg_type": 10000, "sub_type": 0, "direction": "incoming"},
+    ]
+    for secret in ("private-chat", "merchant-a", "room@chatroom", "account-a", "Same name"):
+        assert secret not in json.dumps(public)
+
+
 def test_contacts_keep_identity_separate_from_alias():
     from wechat_agent.source.contracts import ContactKey, ContactRecord
     a = ContactRecord(key=ContactKey(account_id="a", contact_id="one"), remark="Same", nickname=None, is_self=False)
