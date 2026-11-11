@@ -88,7 +88,9 @@ def normalize_probe(raw: dict, mapping: dict) -> CapabilityReport:
             continue
         try:
             parse_message(row, account)
-        except (ValueError, OverflowError, OSError):
+        except ValueError as error:
+            gaps.append("source_message_id_unavailable" if str(error) == "message_id_unavailable" else "message_contract_invalid")
+        except (OverflowError, OSError):
             gaps.append("message_contract_invalid")
         else:
             facts["messages_valid"] += 1

@@ -102,6 +102,13 @@ def test_zero_message_id_is_not_hash_deduplicated():
         parse_message(message(server_id=0), "account-a")
 
 
+def test_capture_reports_unavailable_message_identity_specifically():
+    from wechat_agent.source.probe import normalize_probe, WX_MESSAGE_MAPPING
+    result = normalize_probe({"account_id": "account-a", **envelope([message(server_id=0)])}, WX_MESSAGE_MAPPING)
+    assert result.status == "pending"
+    assert "source_message_id_unavailable" in result.gaps
+
+
 def test_quote_and_file_metadata_are_preserved():
     from wechat_agent.source.wx_cli import parse_message
     raw = message(content={"Quote": {"reply_text": "新一批", "refer_sender": "other", "refer_content": "旧批"}})

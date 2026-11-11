@@ -30,6 +30,44 @@ async def test_missing_model_config_stays_pending():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("value", [[], None])
+async def test_non_object_config_is_invalid_not_missing(value):
+    from wechat_agent.model.probe import probe_model
+    result = await probe_model(value, transport=httpx.MockTransport(lambda _: pytest.fail("No request permitted")))
+    assert result.status == "failed"
+    assert "model_config_invalid" in result.gaps
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias", ["", " "])
+async def test_blank_model_alias_cannot_allow_unidentified_model(monkeypatch, alias):
+    from wechat_agent.model.probe import probe_model
+    monkeypatch.setenv("MODEL_TEST_KEY", "private-api-key")
+    result = await probe_model({**config(), "accepted_model_ids": [alias]},
+                              transport=httpx.MockTransport(lambda _: pytest.fail("No request permitted")))
+    assert result.status == "failed"
+    assert "model_config_invalid" in result.gaps
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["text", "json_schema"])
+async def test_response_modes_are_explicit(monkeypatch, mode):
+    from wechat_agent.model.probe import probe_model
+    monkeypatch.setenv("MODEL_TEST_KEY", "private-api-key")
+    def respond(request):
+        payload = json.loads(request.content)
+        if mode == "text":
+            assert "response_format" not in payload
+        else:
+            assert payload["response_format"]["type"] == "json_schema"
+            assert payload["response_format"]["json_schema"]["strict"] is True
+        return httpx.Response(200, json=completion())
+    result = await probe_model({**config(), "response_mode": mode}, transport=httpx.MockTransport(respond))
+    assert result.status == "passed"
+    assert result.facts["schema_mode_accepted"] == (True if mode == "json_schema" else None)
+
+
+@pytest.mark.asyncio
 async def test_missing_credentials_do_not_call_network(monkeypatch):
     from wechat_agent.model.probe import probe_model
     monkeypatch.delenv("MODEL_TEST_KEY", raising=False)

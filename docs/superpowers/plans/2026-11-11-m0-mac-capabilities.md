@@ -113,7 +113,7 @@ async def test_missing_model_config_stays_pending():
 
 **Interfaces:** `inspect_media(path: Path) -> dict` 返回获取状态、字节数、哈希和类型；只证明原件可读，不证明内容已解析。
 
-- [ ] **Step 1 — 先写失败测试：** `test_missing_media_is_not_parsed` 用不存在路径，断言 `state == 'missing'`、`parsed is False`；另测缩略图与原件分开、零字节文件失败、证据导出剔除本机绝对路径和 key。
+- [x] **Step 1 — 先写失败测试：** `test_missing_media_is_not_parsed` 用不存在路径，断言 `state == 'missing'`、`parsed is False`；另测缩略图与原件分开、零字节文件失败、证据导出剔除本机绝对路径和 key。
 
 ```python
 def test_missing_media_is_not_parsed(tmp_path):
@@ -123,20 +123,21 @@ def test_missing_media_is_not_parsed(tmp_path):
     assert report["parsed"] is False
 ```
 
-- [ ] **Step 2 — 验证红灯：** `python -m pytest tests/test_media_probe.py -q`，预期缺少 probe。
+- [x] **Step 2 — 验证红灯：** `python -m pytest tests/test_media_probe.py -q`，预期缺少 probe。
 - [ ] **Step 3 — 最小实现与采样：** 从实际来源取图片、PDF、CSV／XLSX 样本各一份及缺失附件样本；记录原件／缩略图与可见范围，暂不实现 OCR。整理账号数、会话数、可见时间段、样本体积及 M0 未闭合项。
-- [ ] **Step 4 — 验证：** `python -m pytest tests/test_doctor.py tests/test_source_probe.py tests/test_model_probe.py tests/test_media_probe.py -q` 全过；逐项对照实施方案 §11，m0-report.md 明确已验证、限制及 M1 必要调整。复查 `git diff --cached`，原始消息、附件、凭据不在提交清单。
-- [ ] **Step 5 — 提交检查点：** 获准时提交媒体探测、测试和脱敏 M0 报告，消息 `docs: record verified local capability baseline`。
+- [x] **Step 4 — 验证：** `python -m pytest tests/test_doctor.py tests/test_source_probe.py tests/test_model_probe.py tests/test_media_probe.py -q` 全过；云端已逐项记录实施方案 §11，m0-report.md 区分云端完成、用户运行环境已验证和其余真实能力待验证。复查 `git diff --cached`，原始消息、附件、凭据不在提交清单。
+- [x] **Step 5 — 提交检查点：** 获准时提交媒体探测、测试和脱敏 M0 报告，消息 `docs: record verified local capability baseline`。
 
 ## 执行记录
 
 - M0 任务 1 已完成：7 个测试先失败后通过；离线 CLI 已实际运行，Linux 来源明确为 unsupported，模型／媒体为 pending。
+- 任务4云端已实现：媒体只读检查、流式哈希和脱敏报告；79个Python测试通过。
 - 任务3云端已实现：明确配置的最小模型探测、错误分类、容量声明与实际验证区分；真实Pro ID、凭据、容量及视觉仍待实测。
 - 任务2云端已实现：只读 HTTP 检查、来源契约、有限样本与错误分类，37个测试通过。已核对第三方 wx-cli v0.7.4 上游；应用端真实采样仍待用户运行，不声称全历史通过。
 
 ## 退出条件
 
-- [ ] Mac 可以 clone、恢复技能、运行 doctor；纯原型可按指南启动。
+- [x] Mac已可clone、运行doctor及启动原型（用户验证）；技能仅云端开发使用，本地无需恢复。
 - [ ] 真实源账号、消息 ID、分页、姓名和只读操作均有证据；关键缺口不能留成假成功。
 - [ ] 实际 Pro 模型、容量、协议及输出能力得到确认，或明确无法进入模型阶段的阻碍。
 - [ ] 已取得的核验结果同步到契约及 M1／M2 计划；未知协议保持显式待验证，可独立测试的模块继续云端开发，媒体支持不足按格式降级。

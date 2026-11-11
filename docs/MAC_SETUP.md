@@ -30,7 +30,7 @@ git pull --ff-only origin main
 
 ## 3. 当前 Python 验证步骤
 
-当前已实现 M0 环境及来源检查，还没有正式 API 后端或 React 应用。
+当前已实现 M0 环境、来源、模型及媒体检查，还没有正式业务 API 后端或 React 应用。本轮没有新增依赖，已有 `.venv` 可在 pull 后直接运行测试。
 
 需要 Python 3.12。已有 Homebrew 时：
 
@@ -95,3 +95,21 @@ python3 -m http.server 8765 --directory ui-prototype --bind 127.0.0.1
 ```
 
 有限采样不会证明全历史完整；缺群聊样本、跳行或分片错误会给出具体 gap。若启用源服务 token，在 `.local/config/source.json` 配置 `token_env` 环境变量名，密钥值放本机环境变量。配置还支持 base_url、expected_account_id、timeout_seconds；配置目录不入 Git。
+
+## 7. 模型和媒体：按需验证
+
+模型配置见 [模型检查说明](verification/model-capabilities.md)。真实model_id和凭据未准备时保持pending即可，不用为本轮来源验证配置模型。只有明确执行 `--check-model` 才发送一次最小请求，不自动重试，不发聊天正文。
+
+媒体检查只读取你指定的本机文件；替换为实际路径再运行：
+
+```bash
+.venv/bin/python -m wechat_agent.doctor --check-media "$HOME/Downloads/报价单.pdf" --output .local/evidence/m0.json --shareable-output .local/evidence/shareable.json
+```
+
+scope=file_availability、status=passed仅证明可读并计算哈希，parsed=false，不代表OCR／表格解析。quality默认unknown；只有来源确认后才传 `--media-quality original` 或thumbnail，不从文件名猜原件。
+
+## 8. 回传技术报告
+
+来源采样命令可附加 `--shareable-output .local/evidence/shareable.json`。完整报告仍写入 `--output`；终端和shareable文件只输出允许的技术字段、状态及计数，剔除本机路径、姓名、聊天正文和凭据。
+
+请反馈 `git rev-parse --short HEAD`、测试结果及shareable报告。原始聊天、完整原文文件和API Key留在本机。报告输出路径不能与源配置、模型配置或待检查文件相同，避免覆盖输入。

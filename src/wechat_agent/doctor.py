@@ -1,4 +1,4 @@
-"""Offline diagnostics. Pending capabilities are never reported as verified."""
+"""Offline by default; connection probes require explicit flags."""
 
 import argparse
 import asyncio
@@ -54,7 +54,7 @@ def _component(name: str, supplied: dict | None, gap: str, *, unsupported: bool 
     }
 
 
-def build_report(*, data_dir: Path, source: dict | None, model: dict | None) -> dict:
+def build_report(*, data_dir: Path, source: dict | None, model: dict | None, media: dict | None = None) -> dict:
     runtime = collect_runtime()
     runtime["facts"]["data_dir"] = str(data_dir)
     is_mac = runtime["facts"]["platform"] == "Darwin"
@@ -65,7 +65,7 @@ def build_report(*, data_dir: Path, source: dict | None, model: dict | None) -> 
         "source": _component("source", source, "source_not_checked" if is_mac else "mac_required",
                              unsupported=not is_mac),
         "model": _component("model", model, "model_not_checked"),
-        "media": _component("media", None, "media_not_checked"),
+        "media": _component("media", media, "media_not_checked"),
     }
 
 
@@ -79,10 +79,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-samples", action="store_true", help="Read bounded private/group samples, without model calls.")
     parser.add_argument("--check-model", action="store_true", help="Explicitly send one minimal model probe; may incur usage.")
     parser.add_argument("--model-config", type=Path, help="Local configured model endpoint and ID, no plaintext key.")
+    parser.add_argument("--check-media", nargs="+", type=Path, help="Inspect explicit local files without parsing them.")
+    parser.add_argument("--media-quality", choices=["unknown", "original", "thumbnail"], default="unknown",
+                        help="Known source quality, never inferred from a filename.")
+    parser.add_argument("--shareable-output", type=Path, help="Write allowlisted technical feedback; omit local paths and chat.")
     args = parser.parse_args(argv)
     if args.source_samples and not args.check_source:
         parser.error("--source-samples requires --check-source")
     settings = Settings.load()
+    inputs = [args.source_config or settings.source_config, args.model_config or settings.model_config,
+              *(args.check_media or [])]
+    input_paths = {path.expanduser().resolve() for path in inputs if path is not None}
+    outputs = [path for path in (args.output, args.shareable_output) if path is not None]
+    output_paths = [path.expanduser().resolve() for path in outputs]
+    if any(path in input_paths for path in output_paths) or len(set(output_paths)) != len(output_paths):
+        parser.error("report_output_conflicts_with_input")
     source = None
     if args.check_source:
         from .source.probe import run_source_probe
@@ -93,12 +104,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_model:
         from .model.probe import run_model_probe
         model = asyncio.run(run_model_probe(args.model_config or settings.model_config)).model_dump(mode="json")
-    report = build_report(data_dir=settings.data_dir, source=source, model=model)
+    media = None
+    if args.check_media:
+        from .attachments.probe import inspect_media_set
+        media = inspect_media_set(args.check_media, quality=args.media_quality).model_dump(mode="json")
+    report = build_report(data_dir=settings.data_dir, source=source, model=model, media=media)
     payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
-    if args.output:
+    to_write = [(args.output, payload)] if args.output else []
+    if args.shareable_output:
+        from .evidence import sanitize_evidence
+        payload = json.dumps(sanitize_evidence(report), ensure_ascii=False, indent=2) + "\n"
+        to_write.append((args.shareable_output, payload))
+    for path, value in to_write:
         try:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_text(payload, encoding="utf-8")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(value, encoding="utf-8")
         except OSError as error:
             parser.exit(2, f"Cannot write diagnostic report: {error}\n")
     print(payload, end="")

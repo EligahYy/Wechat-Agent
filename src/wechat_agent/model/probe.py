@@ -39,6 +39,13 @@ class ModelProbeConfig(BaseModel):
             raise ValueError("blank_model_configuration")
         return value
 
+    @field_validator("accepted_model_ids")
+    @classmethod
+    def identified_aliases(cls, values):
+        if any(not value.strip() for value in values):
+            raise ValueError("blank_model_alias")
+        return values
+
 
 class ModelProbeError(Exception):
     pass
@@ -121,7 +128,7 @@ def _validate_response(response: httpx.Response, config: ModelProbeConfig, facts
 
 async def probe_model(config: dict, transport: httpx.AsyncBaseTransport | None = None) -> CapabilityReport:
     facts = {"scope": "minimal_connection_probe", "capacity_verified": False, "vision": "not_checked"}
-    if not config:
+    if isinstance(config, dict) and not config:
         return CapabilityReport(component="model", status="pending", facts=facts, gaps=["model_not_configured"])
     try:
         settings = ModelProbeConfig.model_validate(config)
