@@ -95,11 +95,11 @@ def test_contact_limit_is_twenty(client):
 ```
 
 - [x] **Step 2 — 红灯：** `python -m pytest tests/test_contacts.py -q`，预期 404／未实现，而非预期 422。
-- [x] **Step 3 — 实现：** 按备注→昵称→可定位缺失状态选择 display*name；支持 role、姓名／wxid／群名检索和页码。联系人中文子串搜索使用参数化 LIKE 并转义 `%`／`*`（`\*`保持字面），不能把单字查询交给普通 FTS 分词后无结果。人工角色默认 unknown，只更新明确选择；本人不可设商家。修改角色递增 role_version；非商家不删原文，撤销尚未开始的分析项。
+- [x] **Step 3 — 实现：** 按备注→昵称→可定位缺失状态选择 `display_name`；支持 role、姓名／wxid／群名检索和页码。联系人中文子串搜索使用参数化LIKE并转义百分号和下划线，星号及反斜线保持字面，不能把单字查询交给普通 FTS 分词后无结果。人工角色默认 unknown，只更新明确选择；本人不可设商家。修改角色递增 role_version；非商家不删原文，撤销尚未开始的分析项。
 - [x] **Step 4 — 绿灯：** 增加同名不同人、跨会话一人、跨账号隔离、role_version 冲突 409、无姓名不复制 wxid、中文单字及字面 `%` 查询的契约测试。按最近消息时间提供尚未整理行，不能用同步完成时间冒充沟通时间。
 - [x] **Step 5 — 提交检查点：** 获准时提交 contacts 及路由，消息 `feat: manage unified contact identities`。
 
-- [ ] **Mac验收：** 重启API，用已归档账号读取联系人，只回传统计；真实角色修改由用户确认，不为验收批量改标签。
+- [x] **Mac读取验收：** 用户回传total=2411、returned=20，身份均unknown；真实角色修改未执行，不为验收批量改标签。
 
 ### Task 4: 最小持久化同步操作
 
@@ -107,7 +107,7 @@ def test_contact_limit_is_twenty(client):
 
 **Interfaces:** Creates `create_operation`、`run_next`，状态及 CancellationToken 见 CONTRACTS；API 为 POST `/api/operations` 和 GET `/api/operations/{id}`。M1 返回真实 source 阶段结果与分析 capability_not_ready；不调用模型。
 
-- [ ] **Step 1 — 写失败测试：** 同幂等键只生成一项；source 抛错返回 failed／source_unavailable，不能返回 no_new_messages；有源增量时 inserted 真实；非商家允许同步原文。为 worker 注入回放源，记录每次读取。
+- [x] **Step 1 — 写失败测试：** 同幂等键只生成一项；source 抛错返回 failed／source_unavailable，不能返回 no_new_messages；有源增量时 inserted 真实；非商家允许同步原文。为 worker 注入回放源，记录每次读取。
 
 ```python
 def test_repeated_intent_is_one_operation(db):
@@ -121,10 +121,12 @@ def test_repeated_intent_is_one_operation(db):
     assert a.id == b.id
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_sync_operations.py -q`，预期模块／路由缺失。
-- [ ] **Step 3 — 实现：** API 写队列后返回 202；单个后台 worker 执行，状态、目标和 generation 落盘。初版检查停止令牌；任务恢复／租约完整处理留 M4，但此时不允许第二个 worker 并发领同项。有待分析商家但分析未实现时，source 阶段可成功，总操作为 failed/capability_not_ready，不能把整理请求报成功；无分析目标则只完成来源同步。M2 注册策略后解除该能力限制。
-- [ ] **Step 4 — 绿灯：** 上述测试全过；补测共享群归档使多位商家变更，但单客户操作仅规划目标客户的后续处理。M1 不暴露虚假的继续分析按钮。
-- [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: execute real source sync through durable operations`。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_sync_operations.py -q`，预期模块／路由缺失。
+- [x] **Step 3 — 实现：** API 写队列后返回 202；单个后台 worker 执行，状态、目标和 generation 落盘。初版检查停止令牌；任务恢复／租约完整处理留 M4，但此时不允许第二个 worker 并发领同项。有待分析商家但分析未实现时，source 阶段可成功，总操作为 failed/capability_not_ready，不能把整理请求报成功；无分析目标则只完成来源同步。M2 注册策略后解除该能力限制。
+- [x] **Step 4 — 绿灯：** 上述测试全过；补测共享群归档使多位商家变更，但单客户操作仅规划目标客户的后续处理。M1 不暴露虚假的继续分析按钮。
+- [x] **Step 5 — 提交检查点：** 获准时消息 `feat: execute real source sync through durable operations`。
+
+- [ ] **Mac验收：** 按指南第12节执行限量source-only任务，确认schema3、source_state及真实计数；云端203项通过不代替实机验证。
 
 ### Task 5: 两页 React 外壳与统一控件
 

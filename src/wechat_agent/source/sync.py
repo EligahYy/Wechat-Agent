@@ -28,6 +28,7 @@ class SyncResult(BaseModel):
     revised: int = 0
     unchanged: int = 0
     pages_processed: int = 0
+    total_conversations: int = 0
     successful_conversations: list[str] = Field(default_factory=list)
     failed_conversations: list[str] = Field(default_factory=list)
     incomplete_conversations: list[str] = Field(default_factory=list)
@@ -65,7 +66,7 @@ def _now():
 
 
 async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None, page_size=200,
-                     max_pages=1000, from_start=False, sample=False) -> SyncResult:
+                     max_pages=1000, from_start=False, sample=False, on_progress=None) -> SyncResult:
     result = SyncResult()
     if type(page_size) is not int or not 1 <= page_size <= 500 or type(max_pages) is not int or not 1 <= max_pages <= 10000:
         raise SourceError("source_sync_limits_invalid")
@@ -116,6 +117,9 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
             else:
                 selected.add(target)
         targets = selected
+    result.total_conversations = len(targets)
+    if on_progress:
+        on_progress(result, None)
     for conversation_id in sorted(targets):
         attempt_id = str(uuid4())
         completed = False
@@ -157,6 +161,8 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
                     result.revised += delta.revised
                     result.unchanged += delta.unchanged
                     result.pages_processed += 1
+                    if on_progress:
+                        on_progress(result, conversation_id)
                     if page.gaps:
                         gaps.extend(page.gaps)
                         break
@@ -191,6 +197,8 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
         else:
             result.failed_conversations.append(conversation_id)
         result.gaps.extend(gaps)
+        if on_progress:
+            on_progress(result, conversation_id)
         if result.stopped:
             break
     result.gaps = sorted(set(result.gaps))

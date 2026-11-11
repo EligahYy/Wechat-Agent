@@ -30,7 +30,7 @@ git pull --ff-only origin main
 
 ## 3. 当前 Python 验证步骤
 
-当前已实现M0检查工具和M1任务1的SQLite/API基础；微信消息归档业务与React页面尚未接入。本轮新增FastAPI、uvicorn及测试依赖，已有`.venv`也需要安装更新的锁文件并重新安装本项目，再运行测试，无需重建虚拟环境。
+当前已实现M0检查工具、M1原文归档／联系人身份API及持久化同步操作；React正式页面尚未接入。首次安装按下列锁文件恢复环境；已有任务3环境本次无新增依赖，无需重建虚拟环境。
 
 需要 Python 3.12。已有 Homebrew 时：
 
@@ -130,7 +130,7 @@ git pull --ff-only origin main
 .venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
 ```
 
-浏览器打开 http://127.0.0.1:8766/api/health ，或在另一终端执行 `curl -fsS http://127.0.0.1:8766/api/health`。任务1检查点返回schema_version=1；拉取任务2后会自动升级，当前预期为 `{"status":"ok","schema_version":2}`。结束按Control+C。
+浏览器打开 http://127.0.0.1:8766/api/health ，或在另一终端执行 `curl -fsS http://127.0.0.1:8766/api/health`。任务1检查点返回schema_version=1；拉取后会自动升级，当前预期为 `{"status":"ok","schema_version":3}`。结束按Control+C。
 
 首次启动在应用数据目录创建`archive.sqlite3`，启用外键和WAL，原子执行迁移；需要SQLite的FTS5／trigram与JSON支持。默认Mac路径为`~/Library/Application Support/Wechat-Agent/`，可用`WECHAT_AGENT_DATA_DIR`指定独立测试目录。迁移失败或数据库版本高于程序时拒绝启动，不自动降级或清库；健康查询只读，不创建或修复数据库。
 
@@ -159,11 +159,11 @@ done
 
 归属不足或没有稳定ID的原文保存在数据库source_issues中，该页游标不推进。报告仅列计数、具体gap和最多20类issue_types技术类型，不含姓名、消息ID、正文、本机路径或凭据。unresolved_issues_total是该账号的问题观察记录数；没有稳定ID的多次观察不能当成同一条消息合并。反馈两份报告和测试结果即可，原始聊天留在本机。
 
-之后重启API会返回schema_version=2。指定其他已知会话可用重复的`--conversation`参数；不传--from-start时续读已保存的未完成游标，必须沿用原page-size。完成的会话下一次会从头检查修订；当前实现优先保证可追溯，不声称已有只取增量的源端变更流。附件先保留引用，文件获取／解析和模型整理仍在后续阶段。
+任务2检查点API为schema_version=2，当前任务4版本为3。指定其他已知会话可用重复的`--conversation`参数；不传--from-start时续读已保存的未完成游标，必须沿用原page-size。完成的会话下一次会从头检查修订；当前实现优先保证可追溯，不声称已有只取增量的源端变更流。附件先保留引用，文件获取／解析和模型整理仍在后续阶段。
 
 ## 11. M1任务3：联系人API验证
 
-本轮没有新增依赖或数据库迁移，schema仍为2。停止旧API后拉取、运行测试并重启：
+任务3检查点没有新增依赖或迁移，schema为2；当前任务4启动会升级到3。停止旧API后拉取、运行测试并重启：
 
 ```bash
 git pull --ff-only origin main
@@ -183,3 +183,39 @@ HTTP应为200，每页最多20位，不包含本人或群标识。首次归档�
 接口文档在 http://127.0.0.1:8766/docs ，可查看搜索、分页和PATCH身份的结构。真实身份由用户确认后再修改；云端已在临时库覆盖单个／批量修改、版本冲突、部分成功和原文保留，不需要为本轮验收批量改动真实联系人。
 
 角色变更带expected_version；409的details.updated可能已成功提交，details.failed才是失败项。冲突时核对新版本后只重试失败项。原文与来源不会被角色切换删除；商家分析和正式桌面页面仍在后续任务接入。反馈测试结果和上述统计即可，不回传联系人清单。
+
+## 12. M1任务4：后台同步任务验证
+
+先Control+C停止旧API，再拉取并重启。本次无新增依赖，启动会将现有数据库原子升级到schema3，保留已有归档。云端当前203项测试通过。
+
+```bash
+git pull --ff-only origin main
+.venv/bin/python -m pytest -q
+.venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
+```
+
+在另一终端进入项目目录，将示例账号换成此前验证的canonical账号：
+
+```bash
+.venv/bin/python -m wechat_agent.operations.check \
+  --account wxid_your_account \
+  --output .local/evidence/operation.json
+```
+
+该命令只POST一次source-only任务，随后查询同一operation_id，最多等30秒；API先202入队，lifespan后台worker执行。复用本地source.json或默认9100的wx-cli，服务必须已运行。本次只选一个私信和一个群，每会话至多2页、每页20条，从开头重读以验证幂等；读取联系人／会话元数据不受这个消息采样数限制。不调用模型，也不修改人工身份。
+
+成功时state和source_state均为succeeded。counts返回真实inserted、revised、unchanged、页数及会话数；再次运行创建新的任务，源端未变化且所选范围相同时，新增和修订应为0。history_complete始终false，不能把样本窗口完成当成全历史已同步。来源不可用明确失败；超过样本页数或存在归属缺口会返回source_incomplete及source_gaps，请反馈实际报告，不放宽为成功。
+
+若30秒后仍queued／running，可用返回的UUID继续查询，避免重复建任务：
+
+```bash
+.venv/bin/python -m wechat_agent.operations.check \
+  --account wxid_your_account --operation-id UUID_FROM_REPORT \
+  --output .local/evidence/operation.json
+```
+
+报告只含操作UUID、技术状态、计数和缺口，不含姓名、聊天、来源ID或本机路径。HTTP／协议错误返回固定operation_check_failed；正常但尚未结束的任务如实保留当前状态。
+
+接口文档仍在 http://127.0.0.1:8766/docs 。GET /api/operations携带account_id查询历史，GET /api/operations/{id}查询实际进度；POST停止body为`{action:"stop",account_id:"...",operation_id:"..."}`。停止先写generation屏障，迟到页不能归档；已经提交的原文保留。M1暂不提供继续／重试；普通退出或确认进程已退出的遗留任务记为stopped，完整恢复在M4交付。
+
+目前sync_and_organize若存在需要分析的商家，来源可成功但总任务会failed／capability_not_ready，因为模型整理尚未接入。这是能力边界，不能据此宣称已生成真实档案。正式UI和设置交互在下一任务实现。

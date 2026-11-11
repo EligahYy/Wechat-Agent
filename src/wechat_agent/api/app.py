@@ -1,6 +1,7 @@
 """Application factory; startup prepares storage without querying external services."""
 
 from contextlib import asynccontextmanager, closing
+import json
 import sqlite3
 
 from fastapi import FastAPI
@@ -8,10 +9,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from ..config import Settings
+from ..accounts import AccountError, selected_account
 from ..contacts.service import ContactError
+from ..operations.service import OperationError
+from ..operations.worker import WorkerRuntime
 from ..services import Services
+from ..source.adapter import WXCLIAdapter, SourceError
+from ..source.probe import SourceConfig
 from ..storage.db import SCHEMA_VERSION, migrate, open_db
 from .contacts import router as contacts_router
+from .operations import router as operations_router
 
 
 def create_app(settings: Settings, services: Services | None = None) -> FastAPI:
@@ -21,13 +28,46 @@ def create_app(settings: Settings, services: Services | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         with closing(open_db(database_path)) as conn:
             migrate(conn)
-        yield
+        if app.state.services.auto_run:
+            app.state.worker = WorkerRuntime(database_path, app.state.services,
+                lambda conn: selected_account(conn, app.state.settings, app.state.services))
+            app.state.worker.start()
+        try:
+            yield
+        finally:
+            if app.state.worker:
+                await app.state.worker.close()
 
     app = FastAPI(title="Wechat-Agent", lifespan=lifespan)
     app.state.settings = settings
     app.state.services = services if services is not None else Services()
     app.state.database_path = database_path
+    app.state.worker = None
+    if services is None:
+        def source_factory(account_id):
+            path = app.state.settings.source_config
+            try:
+                values = json.loads(path.read_text()) if path else {}
+                config = SourceConfig.model_validate(values)
+            except (OSError, ValueError, TypeError):
+                raise SourceError("source_config_invalid") from None
+            if config.expected_account_id and config.expected_account_id != account_id:
+                raise SourceError("source_account_mismatch")
+            config = config.model_copy(update={"expected_account_id": account_id})
+            return WXCLIAdapter(config)
+        app.state.services.source_factory = source_factory
     app.include_router(contacts_router)
+    app.include_router(operations_router)
+
+    @app.exception_handler(AccountError)
+    async def account_error(request, error):
+        return JSONResponse(status_code=error.status, content={
+            "code": error.code, "message": "工作账号不可用，请检查账号配置", "details": {}})
+
+    @app.exception_handler(OperationError)
+    async def operation_error(request, error):
+        return JSONResponse(status_code=error.status, content={
+            "code": error.code, "message": "操作未完成，请核对当前状态", "details": error.details})
 
     @app.exception_handler(ContactError)
     async def contact_error(request, error):

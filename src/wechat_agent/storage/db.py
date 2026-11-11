@@ -5,8 +5,8 @@ from pathlib import Path
 import sqlite3
 
 
-SCHEMA_VERSION = 2
-_MIGRATIONS = ((1, "001_archive.sql"), (2, "002_source_sync.sql"))
+SCHEMA_VERSION = 3
+_MIGRATIONS = ((1, "001_archive.sql"), (2, "002_source_sync.sql"), (3, "003_operations.sql"))
 
 
 def open_db(path: Path) -> sqlite3.Connection:

@@ -20,7 +20,8 @@ def client(tmp_path):
     from fastapi.testclient import TestClient
     from wechat_agent.api.app import create_app
     from wechat_agent.config import Settings
-    with TestClient(create_app(Settings(data_dir=tmp_path))) as client:
+    from wechat_agent.services import Services
+    with TestClient(create_app(Settings(data_dir=tmp_path), Services(auto_run=False))) as client:
         yield client
 
 

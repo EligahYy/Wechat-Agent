@@ -1,6 +1,8 @@
 """Explicit runtime dependencies; no global source or model client."""
 
 from dataclasses import dataclass
+from contextlib import AbstractAsyncContextManager
+from typing import Callable
 
 from .source.contracts import SourceAdapter
 
@@ -8,3 +10,5 @@ from .source.contracts import SourceAdapter
 @dataclass(slots=True)
 class Services:
     source: SourceAdapter | None = None
+    source_factory: Callable[[str], AbstractAsyncContextManager] | None = None
+    auto_run: bool = True

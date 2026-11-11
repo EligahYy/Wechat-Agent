@@ -1,7 +1,6 @@
 """Archive-backed contact routes; account selection is enforced server-side."""
 
 from contextlib import closing
-import json
 import sqlite3
 from typing import Literal
 
@@ -9,9 +8,9 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
+from ..accounts import authorize_account as check_account
 from ..contacts.service import ContactError, Role, list_contacts, set_roles
 from ..source.contracts import ContactKey
-from ..source.probe import SourceConfig
 from ..storage.db import open_existing_db
 
 
@@ -38,25 +37,7 @@ class RoleBatch(BaseModel):
 
 
 def authorize_account(request, conn, account_id):
-    binding = None
-    config = request.app.state.settings.source_config
-    if config:
-        try:
-            binding = SourceConfig.model_validate(json.loads(config.read_text())).expected_account_id
-        except (OSError, ValueError, TypeError):
-            raise ContactError("account_configuration_invalid", 503) from None
-    source = request.app.state.services.source
-    if source is not None:
-        if binding and binding != source.account_id:
-            raise ContactError("account_configuration_mismatch", 503)
-        binding = source.account_id
-    if binding is None:
-        accounts = conn.execute("SELECT account_id FROM accounts ORDER BY account_id LIMIT 2").fetchall()
-        if len(accounts) != 1:
-            raise ContactError("account_binding_required")
-        binding = accounts[0][0]
-    if account_id != binding:
-        raise ContactError("account_scope_forbidden", 403)
+    check_account(conn, request.app.state.settings, request.app.state.services, account_id)
 
 
 @router.get("/api/contacts")
