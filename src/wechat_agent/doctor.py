@@ -1,6 +1,7 @@
 """Offline diagnostics. Pending capabilities are never reported as verified."""
 
 import argparse
+import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -71,8 +72,22 @@ def build_report(*, data_dir: Path, source: dict | None, model: dict | None) -> 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Generate an offline local capability report.")
     parser.add_argument("--output", type=Path, help="Also write the JSON report to this path.")
+    parser.add_argument("--check-source", action="store_true", help="Check the local wx-cli HTTP service.")
+    parser.add_argument("--source-config", type=Path, help="Local source JSON configuration.")
+    parser.add_argument("--source-url", help="Loopback wx-cli URL; default http://127.0.0.1:9100.")
+    parser.add_argument("--source-account", help="Expected canonical wxid reported by health.")
+    parser.add_argument("--source-samples", action="store_true", help="Read bounded private/group samples, without model calls.")
     args = parser.parse_args(argv)
-    report = build_report(data_dir=Settings.load().data_dir, source=None, model=None)
+    if args.source_samples and not args.check_source:
+        parser.error("--source-samples requires --check-source")
+    settings = Settings.load()
+    source = None
+    if args.check_source:
+        from .source.probe import run_source_probe
+        source = asyncio.run(run_source_probe(args.source_config or settings.source_config,
+                                              base_url=args.source_url, expected_account_id=args.source_account,
+                                              samples=args.source_samples)).model_dump(mode="json")
+    report = build_report(data_dir=settings.data_dir, source=source, model=None)
     payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         try:

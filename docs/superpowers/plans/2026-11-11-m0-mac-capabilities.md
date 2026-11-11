@@ -69,7 +69,7 @@ def test_missing_connections_stay_pending(tmp_path, monkeypatch):
 
 **Interfaces:** Creates [M0 来源类型](CONTRACTS.md)；`normalize_probe(raw: dict, mapping: dict) -> CapabilityReport`；`run_source_probe(config_path: Path) -> CapabilityReport`（async）。mapping 只根据真实响应记录填写，不猜上游字段。
 
-- [ ] **Step 1 — 先写失败测试：**
+- [x] **Step 1 — 先写失败测试：**
 
 ```python
 def test_no_sender_mapping_cannot_pass():
@@ -79,11 +79,11 @@ def test_no_sender_mapping_cannot_pass():
     assert "sender_mapping_missing" in report.gaps
 ```
 
-- [ ] **Step 2 — 验证红灯：** `python -m pytest tests/test_source_probe.py -q`，预期尚无 probe 实现。
-- [ ] **Step 3 — 最小实现：** 按内部契约建立类型与探测器；来源命令／URL 必须来自显式配置和已核验的只读操作。不通过 shell 拼接执行来源参数。缺稳定发送者、消息身份、分页或账号信息分别列 gaps；不把 HTTP 200 当完整同步。
+- [x] **Step 2 — 验证红灯：** `python -m pytest tests/test_source_probe.py -q`，预期尚无 probe 实现。
+- [x] **Step 3 — 最小实现：** 按内部契约建立类型与探测器；来源命令／URL 必须来自显式配置和已核验的只读操作。不通过 shell 拼接执行来源参数。缺稳定发送者、消息身份、分页或账号信息分别列 gaps；不把 HTTP 200 当完整同步。
 - [ ] **Step 4 — 实机取证：** Mac 上检查实际安装及版本、官方帮助和运行模式；选择一个私信、一个含多人的群读取至少两页，保留发送者、备注／群名、引用、同文本不同消息、修订及终止游标样本。把原始结果放 `.local/evidence/source/`，仅把脱敏字段映射、实际只读命令和能力结论写入 source-capabilities.md。若源端缺功能，明确标注，修订 M1 适配范围后再进入 M1。
-- [ ] **Step 5 — 验证：** 添加同名不合并、改名 ID 不变、分页失败不 complete 的回放测试；`python -m pytest tests/test_source_probe.py -q` 全过，并在 Mac 运行 `python -m wechat_agent.doctor --check-source --output .local/evidence/m0.json`。该 CLI 选项在本任务接入，只调用已配置的只读探测。
-- [ ] **Step 6 — 提交检查点：** 仅暂存上述实现、脱敏 fixture 与能力文档；检查后 `git commit -m "feat: verify local source capabilities"` 并推 main。缺实机证据时本地验证项保持未完成，已通过回放测试的云端开发结果单独记录。
+- [ ] **Step 5 — 验证：** 云端已通过同名不合并、改名 ID 不变、账号／分页／错误回放测试；`python -m pytest tests/test_source_probe.py -q` 全过，本地仍待运行 `python -m wechat_agent.doctor --check-source --output .local/evidence/m0.json`。该 CLI 选项在本任务接入，只调用已配置的只读探测。
+- [x] **Step 6 — 提交检查点：** 仅暂存上述实现、脱敏 fixture 与能力文档；检查后 `git commit -m "feat: verify local source capabilities"` 并推 main。缺实机证据时本地验证项保持未完成，已通过回放测试的云端开发结果单独记录。
 
 ### Task 3: 模型真实能力与失败分类
 
@@ -131,7 +131,7 @@ def test_missing_media_is_not_parsed(tmp_path):
 ## 执行记录
 
 - M0 任务 1 已完成：7 个测试先失败后通过；离线 CLI 已实际运行，Linux 来源明确为 unsupported，模型／媒体为 pending。
-- 下一任务 2 继续在云端开发探测工具与回放测试；当前执行器没有真实 wx-cli／Mac 数据，实机结果保持待验证。可独立测试的底座模块继续云端开发，不要求用户本地写代码。
+- 任务2云端已实现：只读 HTTP 检查、来源契约、有限样本与错误分类，37个测试通过。已核对第三方 wx-cli v0.7.4 上游；应用端真实采样仍待用户运行，不声称全历史通过。
 
 ## 退出条件
 

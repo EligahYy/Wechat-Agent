@@ -1,0 +1,9 @@
+{
+  "provenance": "Synthetic fixture following pandorafuture/wx-cli v0.7.4, upstream 7bed9e7; not a real account or chat capture",
+  "health": {
+    "ready": true,
+    "worker_id": "worker-a",
+    "cli_version": "0.7.4 (7bed9e7)",
+    "current_account": {"wxid": "account-a", "name": "Synthetic account"}
+  }
+}

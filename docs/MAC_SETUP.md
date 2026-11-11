@@ -30,7 +30,7 @@ git pull --ff-only origin main
 
 ## 3. 当前 Python 验证步骤
 
-当前只实现 M0 任务 1 的离线环境检查，还没有正式 API 后端或 React 应用。
+当前已实现 M0 环境及来源检查，还没有正式 API 后端或 React 应用。
 
 需要 Python 3.12。已有 Homebrew 时：
 
@@ -50,7 +50,7 @@ python3.12 -m venv .venv
 .venv/bin/python -m wechat_agent.doctor --output .local/evidence/m0.json
 ```
 
-当前预期 7 个测试通过；doctor 默认不连微信、不调用模型，Mac 上 source/model/media 仍为 pending。CLI 成功表示诊断报告已生成，不表示微信或模型连接成功。此刻尚未实现 `--check-source`／`--check-model`，云端后续交付后再运行对应验证。
+测试应全部通过，数量以当前提交为准；doctor 默认不连微信、不调用模型。CLI 成功表示报告已生成，不表示微信、模型或完整历史已经核验。
 
 Superpowers 供云端开发使用；本地执行上述验证无需恢复技能。后续 React 代码交付时，云端会补充 Node 24、构建和启动的验证步骤。
 
@@ -71,3 +71,27 @@ python3 -m http.server 8765 --directory ui-prototype --bind 127.0.0.1
 微信数据只在本机读取；模型凭据只在本地受控配置，不发到聊天或提交 Git。反馈时提供提交号（`git rev-parse --short HEAD`）、命令、版本、退出码及必要的脱敏错误，不上传原始聊天或密钥。云端据此修代码，再推 main 复验。
 
 [六阶段开发计划](superpowers/plans/README.md)分别记录云端开发与本地验收，不把未实测内容标为成功。这里的命令尚未在你的 Mac 执行。
+
+## 6. 验证已有 wx-cli 服务
+
+来源是第三方 [pandorafuture/wx-cli](https://github.com/pandorafuture/wx-cli)，不是腾讯／微信官方工具。目前核对 v0.7.4；已有 `127.0.0.1:9100` 服务直接复用，无需重装或重启。
+
+先只检查健康状态，不读聊天：
+
+```bash
+.venv/bin/python -m wechat_agent.doctor --check-source --output .local/evidence/m0.json
+```
+
+未明确绑定账号时 source=pending，gap=source_account_not_pinned。下一步从 `wx-cli server status` 的 Account 获取 canonical wxid（不是启动参数中可能带目录后缀的选择值），替换下面的示例账号：
+
+```bash
+.venv/bin/python -m wechat_agent.doctor --check-source --source-account wxid_your_account --output .local/evidence/m0.json
+```
+
+预期 scope=connection、status=passed、history_complete=false，仅说明该账号的源服务连接通过。加 `--source-samples` 可以继续做有限私信／群聊采样，不调用模型，也不向终端输出聊天正文：
+
+```bash
+.venv/bin/python -m wechat_agent.doctor --check-source --source-account wxid_your_account --source-samples --output .local/evidence/m0.json
+```
+
+有限采样不会证明全历史完整；缺群聊样本、跳行或分片错误会给出具体 gap。若启用源服务 token，在 `.local/config/source.json` 配置 `token_env` 环境变量名，密钥值放本机环境变量。配置还支持 base_url、expected_account_id、timeout_seconds；配置目录不入 Git。
