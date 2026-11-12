@@ -22,7 +22,8 @@ def now():
 
 def initial_counts():
     return {name: 0 for name in ("inserted", "revised", "unchanged", "pages_processed", "conversations_total",
-        "completed_conversations", "failed_conversations", "incomplete_conversations", "analysis_required", "analysis_completed")}
+        "completed_conversations", "failed_conversations", "incomplete_conversations", "analysis_required", "analysis_completed",
+        'metadata_people', 'metadata_groups', 'names_scoped', 'names_missing')}
 
 
 def get_operation(conn, account_id, operation_id, *, include_items=True):
@@ -49,11 +50,13 @@ def get_operation(conn, account_id, operation_id, *, include_items=True):
 
 
 def create_operation(conn, action, scope, idempotency_key, *, options=None):
-    if action not in {"sync", "sync_and_organize"}:
+    if action not in {"sync", "sync_and_organize", 'refresh_contacts'}:
         raise OperationError("unsupported_action", 422)
     if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key)>256:
         raise OperationError("invalid_idempotency_key", 422)
     scope = OperationScope.model_validate(scope.model_dump())
+    if action == 'refresh_contacts' and scope.contact_id is not None:
+        raise OperationError('metadata_refresh_account_scope_required', 422)
     options = SyncOptions.model_validate(options.model_dump() if options else {})
     encoded = json.dumps(options.model_dump(), sort_keys=True)
     with transaction(conn):

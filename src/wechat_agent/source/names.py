@@ -36,7 +36,7 @@ def archive_room_names(conn, account_id, room, now):
 def finish_metadata(conn, account_id, people, rooms, metadata, now):
     info = metadata or {}
     errors = sum(getattr(person, field + '_state') == 'unreadable'
-                 for person in people for field in ('remark', 'nickname'))
+                 for person in people for field in ('remark', 'nickname')) + sum(room.title_state == 'unreadable' for room in rooms)
     conn.execute('''INSERT INTO source_metadata_status(account_id,observed_at,source_mode,patch_id,source_version,
         generation,resolver_generation,source_refreshed_at,people_seen,name_read_errors,groups_unreadable)
         VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account_id) DO UPDATE SET

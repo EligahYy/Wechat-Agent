@@ -1,3 +1,4 @@
+import { nameNotice, sourceLabel, avatarText } from "./presentation";
 import {
   useEffect,
   useLayoutEffect,
@@ -362,7 +363,7 @@ export function ContactsPage({
               {data?.total || 0} 位{view === "all" ? "联系人" : "商家"}
               {busy ? " · 更新中" : ""}
             </span>
-            <span>每页 20 位</span>
+            <span title="包含来源联系人资料和已有沟通人物；历史归档不代表当前微信好友">归档范围 · 每页 20 位</span>
           </div>
           <div
             className={`batch-collapse ${selected.size ? "is-open" : ""}`}
@@ -480,7 +481,7 @@ export function ContactsPage({
                       <td>
                         <div className="contact-name">
                           <span className="avatar" aria-hidden="true">
-                            {contact.display_name.slice(0, 2)}
+                            {avatarText(contact.display_name)}
                           </span>
                           <div>
                             <button
@@ -493,6 +494,7 @@ export function ContactsPage({
                             >
                               {contact.display_name}
                             </button>
+                            {nameNotice(contact) && <span className="source-line" title="群内、会话及历史名称不能作为当前全局微信名称复制">{nameNotice(contact)}</span>}
                             {view === "all" ? (
                               <div className="contact-id">
                                 {contact.key.contact_id}
@@ -526,8 +528,7 @@ export function ContactsPage({
                                   key={source.conversation_id}
                                   className="source-line"
                                 >
-                                  {source.title || "名称缺失"}
-                                  {source.kind === "private" ? "（私信）" : ""}
+                                  {sourceLabel(source)}
                                 </span>
                               ))
                             ) : (
@@ -569,7 +570,7 @@ export function ContactsPage({
                           <button
                             className="icon-button"
                             aria-label="复制微信名称"
-                            title="复制微信名称"
+                            title={contact.copy_name ? "复制微信名称" : "当前无可确认的全局微信名称"}
                             disabled={!contact.copy_name}
                             onClick={() => void copy(contact)}
                           >
@@ -669,7 +670,7 @@ export function ContactsPage({
           detail && (
             <span className="detail-heading">
               <span className="avatar" aria-hidden="true">
-                {detail.display_name.slice(0, 1)}
+                {avatarText(detail.display_name)}
               </span>
               <span>
                 <span className="detail-name">
@@ -685,6 +686,7 @@ export function ContactsPage({
                   <button
                     className="icon-button"
                     aria-label="复制微信名称"
+                    title={detail.copy_name ? "复制微信名称" : "当前无可确认的全局微信名称"}
                     disabled={!detail.copy_name}
                     onClick={() => void copy(detail)}
                   >
@@ -692,6 +694,7 @@ export function ContactsPage({
                   </button>
                 </span>
                 <span className="contact-id">{detail.key.contact_id}</span>
+                {nameNotice(detail) && <span className="source-line">{nameNotice(detail)}</span>}
               </span>
             </span>
           )

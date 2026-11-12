@@ -35,6 +35,10 @@ class SyncResult(BaseModel):
     gaps: list[str] = Field(default_factory=list)
     history_complete: bool = False
     stopped: bool = False
+    metadata_people: int = 0
+    metadata_groups: int = 0
+    names_scoped: int = 0
+    names_missing: int = 0
 
 
 @asynccontextmanager
@@ -66,7 +70,7 @@ def _now():
 
 
 async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None, page_size=200,
-                     max_pages=1000, from_start=False, sample=False, on_progress=None) -> SyncResult:
+                     max_pages=1000, from_start=False, sample=False, on_progress=None, metadata_only=False) -> SyncResult:
     result = SyncResult()
     if type(page_size) is not int or not 1 <= page_size <= 500 or type(max_pages) is not int or not 1 <= max_pages <= 10000:
         raise SourceError("source_sync_limits_invalid")
@@ -91,15 +95,24 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
         metadata = report.facts.get('metadata')
         if metadata:
             metadata = {**metadata, 'source_version': report.facts.get('cli_version')}
-        if archive_metadata(conn, scope.account_id, people, rooms, metadata=metadata):
+        if archive_metadata(conn, scope.account_id, people, rooms, metadata=metadata, cancellation=cancellation):
             result.gaps.append("source_contact_identity_invalid")
         result.gaps.extend(getattr(source, 'metadata_gaps', []))
-        if any(p.remark_state == 'unreadable' or p.nickname_state == 'unreadable' for p in people):
+        if any(p.remark_state == 'unreadable' or p.nickname_state == 'unreadable' for p in people) or any(r.title_state == 'unreadable' for r in rooms):
             result.gaps.append('source_name_read_failed')
         if any(r.membership_state == 'unreadable' for r in rooms):
             result.gaps.append('source_group_members_unreadable')
+        from ..contacts.names import identity_quality
+        quality = identity_quality(conn, scope.account_id)
+        result.metadata_people = sum(not person.is_self for person in people)
+        result.metadata_groups = sum(room.kind == 'group' for room in rooms)
+        result.names_scoped = quality['names_scoped']
+        result.names_missing = quality['names_unavailable']
     except SourceError as error:
         result.gaps = [str(error)]
+        result.stopped = str(error) == 'source_sync_stopped'
+        return result
+    if metadata_only:
         return result
     available = {room.conversation_id: room for room in rooms}
     targets = set(available)

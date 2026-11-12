@@ -67,6 +67,15 @@ class ConversationRecord(BaseModel):
     conversation_id: str = Field(min_length=1)
     kind: Literal["private", "group"]
     title: str | None
+    title_state: Literal['known', 'empty', 'unreadable', 'unknown'] = 'unknown'
+
+    @model_validator(mode='before')
+    @classmethod
+    def explicit_title_state(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            value.setdefault('title_state', 'known' if value.get('title') else 'empty')
+        return value
     origin: Literal['session', 'metadata_candidate', 'group_directory', 'unknown'] = 'unknown'
     member_ids: list[str] = Field(default_factory=list)
     membership_state: Literal['known', 'empty', 'unreadable', 'unknown'] = 'unknown'

@@ -236,6 +236,12 @@ export function App() {
             {page === "workspace" && (
               <div className="header-actions">
                 <button
+                  className="button secondary"
+                  disabled={operations.submitting || active(job) || !settings.account_id}
+                  title="只刷新名称和来源资料"
+                  onClick={() => void operations.refreshContacts()}
+                >刷新联系人</button>
+                <button
                   className="button primary"
                   disabled={
                     operations.submitting ||
@@ -295,7 +301,7 @@ export function App() {
                     <div>
                       <strong>{operationTitle(job)}</strong>
                       {job && (
-                        <p>
+                        job.action === "refresh_contacts" ? <p>已读取 {job.counts.metadata_people || 0} 位联系人 · 尚无名称 {job.counts.names_missing || 0} 位</p> : <p>
                           已归档 {job.counts.inserted || 0} 条新增 ·{" "}
                           {job.counts.unchanged || 0} 条不变 ·{" "}
                           {job.counts.completed_conversations || 0} 个会话完成

@@ -1,3 +1,4 @@
+ALTER TABLE conversations ADD COLUMN title_state TEXT NOT NULL DEFAULT 'unknown' CHECK(title_state IN ('known','empty','unreadable','unknown'));
 ALTER TABLE contacts ADD COLUMN metadata_current INTEGER NOT NULL DEFAULT 0 CHECK(metadata_current IN (0,1));
 ALTER TABLE contacts ADD COLUMN metadata_seen_at TEXT;
 ALTER TABLE conversations ADD COLUMN provenance TEXT NOT NULL DEFAULT 'unknown'

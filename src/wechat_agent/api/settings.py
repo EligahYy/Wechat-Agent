@@ -64,10 +64,21 @@ def _response(conn, request, account_id):
             model = {"state": "configured", "model_id": identifier}
         except (OSError, ValueError, AttributeError):
             model["state"] = "invalid"
-    previous = conn.execute("""SELECT i.state,o.updated_at FROM operations o JOIN operation_items i
+    previous = conn.execute("""SELECT i.state,o.updated_at,o.action FROM operations o JOIN operation_items i
         ON i.account_id=o.account_id AND i.operation_id=o.id AND i.item_id='source'
         WHERE o.account_id=? ORDER BY o.created_at DESC,o.rowid DESC LIMIT 1""", (account_id,)).fetchone()
-    source = {"state": "last_sync_" + previous[0], "last_sync_at": previous[1]} if previous else {"state": "not_checked", "last_sync_at": None}
+    source = {"state": "not_checked", "last_sync_at": None}
+    if previous:
+        metadata_only = previous[2] == 'refresh_contacts'
+        source['state'] = ('last_metadata_' if metadata_only else 'last_sync_') + previous[0]
+        if metadata_only:
+            source['last_metadata_at'] = previous[1]
+            last_sync = conn.execute("""SELECT updated_at FROM operations
+                WHERE account_id=? AND action!='refresh_contacts'
+                ORDER BY created_at DESC,rowid DESC LIMIT 1""", (account_id,)).fetchone()
+            source['last_sync_at'] = last_sync[0] if last_sync else None
+        else:
+            source['last_sync_at'] = previous[1]
     return {"account_id": account_id, "preferences": preferences.model_dump(), "version": version,
         "timezone": "Asia/Shanghai", "source": source, "model": model,
         "capabilities": {"organize": False, "scheduler": False, "raw_browser": False}}

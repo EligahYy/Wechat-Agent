@@ -113,7 +113,7 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
     catalog = load_catalog(conn, account_id)
     for row in rows:
         presentation = resolve_name(row, catalog[row['contact_id']])
-        sources = [dict(source) for source in conn.execute("""SELECT v.conversation_id,v.kind,v.title,v.provenance,
+        sources = [dict(source) for source in conn.execute("""SELECT v.conversation_id,v.kind,v.title,v.provenance,v.title_state,
                       EXISTS(SELECT 1 FROM messages m WHERE m.account_id=v.account_id
                              AND m.conversation_id=v.conversation_id) AS has_messages FROM members s
                       JOIN conversations v ON v.account_id=s.account_id AND v.conversation_id=s.conversation_id

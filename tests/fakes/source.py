@@ -31,6 +31,9 @@ class FakeSource:
     async def conversations(self):
         return self.rooms
 
+    async def refresh_metadata(self):
+        await asyncio.sleep(0)
+
     async def messages(self, conversation_id, cursor, limit):
         self.calls.append((conversation_id, cursor, limit))
         await asyncio.sleep(0)

@@ -11,9 +11,9 @@
 - 云端读取 v0.7.4 标签，确认为 `7bed9e767a55d86ac2b9142a49ca078f95623c8b`。
 - 只查阅旧项目的来源名称元信息，随后重新核对该上游版本源码；未恢复旧业务实现或产品规则。
 
-推荐继续使用该本机 HTTP 服务，适合当前桌面资料应用。应用仅使用经过核对的 GET 接口，通过独立适配器隔离来源升级，不自行维护微信数据库解密或在每次读取时拼 shell 命令。此选择不承诺源端覆盖完整、所有附件一定可取或模型归纳一定正确。
+推荐继续使用该本机 HTTP 服务，适合当前桌面资料应用。应用读取使用经过核对的GET接口，独立元数据刷新显式调用项目补丁的POST接口，通过独立适配器隔离来源升级，不自行维护微信数据库解密或在每次读取时拼 shell 命令。此选择不承诺源端覆盖完整、所有附件一定可取或模型归纳一定正确。
 
-## 已核对的上游协议
+## 原版0.7.4已核对的协议（历史基线）
 
 源码依据：[路由](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-cli/src/cmd/serve/routes.rs)、[处理器](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-cli/src/cmd/serve/handlers.rs)、[消息字段](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/model.rs)、[分页结构](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-cli/src/output.rs)、[媒体实现](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-cli/src/cmd/serve/media.rs)。
 
@@ -29,9 +29,9 @@
 
 启动时 `--account` 可接受工具的账号选择值；应用绑定的是 health 返回的 `current_account.wxid`，不能根据目录名后缀自行截断猜测。版本变化先重新验协议。0／缺失 server_id 暂不提供伪造稳定 ID，不以正文哈希去重。
 
-完整群成员目录没有独立 HTTP 路由；已发言成员通过 sender 稳定 ID 归一，不能声称已拿到每个未发言成员的完整资料。单独群成员目录是否需要其他来源，在 M1 接入时按真实缺口处理。
+原版0.7.4完整群成员目录没有独立HTTP路由；已发言成员通过 sender 稳定 ID 归一，不能声称已拿到每个未发言成员的完整资料。单独群成员目录是否需要其他来源，在 M1 接入时按真实缺口处理。
 
-## 当前探测范围
+## 诊断探测范围
 
 `--check-source` 只读取 health，不读聊天、不调用模型。未绑定账号为 pending；绑定正确后 `scope=connection` 的 passed 仅代表该连接检查通过。
 
@@ -65,4 +65,18 @@
 
 本次确认：群正文前缀拆分仍可能把URL等当发送人；名称读取错误可被上游吞成空串；会话携带的特定发送人名称未被本项目消费；DB已有群成员解码但HTTP未提供对应路由；缓存模式和启动时名称resolver也可能使派生名称滞后。具体截图记录的实际来源和真实库编码异常尚未证实。
 
-用户已授权必要时改进wx-cli。拟采用固定基线加可识别补丁，先补只读分层诊断，再修来源归属／名称状态与成员能力、本项目名称来源归档及旧数据回补。本次未改动wx-cli，未新增可调用的成员接口。完整证据与待实施验收见[独立审查](2026-11-12-contact-names-review.md)，当前阶段见[状态页](../STATUS.md)。
+用户已授权必要时改进wx-cli。拟采用固定基线加可识别补丁，先补只读分层诊断，再修来源归属／名称状态与成员能力、本项目名称来源归档及旧数据回补。审查当时未改动wx-cli、未新增成员接口；后续已实施的补丁见下节。完整证据与待实施验收见[独立审查](2026-11-12-contact-names-review.md)，当前阶段见[状态页](../STATUS.md)。
+
+
+## R1—R4已交付的项目补丁契约
+
+固定基线仍为7bed9e7，应用归档要求`0.7.4+wechat-agent.1`和`wechat-agent-source-v1`。补丁、SHA256及安装器见[patch说明](../../patches/wx-cli/README.md)。原版仅允许有限只读诊断，消息归档显式返回source_patch_required，不能静默信任旧前缀拆分。
+
+- GET identity/contacts提供known／empty／unreadable的原始备注和昵称；GET identity/groups提供成员目录与解码状态。路径均在`/api/v1/`下，分页带generation，要求show_hidden=1并沿用鉴权。
+- POST identity/refresh只发起来源缓存／连接／resolver刷新；202不代表完成。应用等待新generation和ready，失败或超时保留缺口。
+- health.metadata提供读取模式、服务代次、resolver代次和最近成功刷新时间；联系人与会话连接的SQLite data_version在元数据读取前后和health检查。外部写入使旧代次失效，直到成功刷新；不声称跨所有微信数据库拥有原子快照。应用从首次检查到消息页保持同一代次，变化即中止，已有已完成归档保留。
+- 发送人只采用Name2Id依据，原始前缀与其相同才剥离；冲突候选从剥离前保留，不二次解析正文。已知冲突保留两个候选与完整原文，不猜作者。
+- schema5保存人物全局名、群／会话名作用域、群目录和刷新状态；群标题同样区分明确清空和读取失败。名称读取失败保留旧值并提示；只有当前可确认的全局微信名称允许复制。
+- “刷新联系人”为账号范围持久化操作，只更新元数据，不请求聊天正文、不调用模型，不删除旧人物或修改旧消息作者／人工身份。完整群名单单独保存，不将所有未观察群成员创建为联系人。当前好友关系依旧unknown。
+
+云端Python276、前端20单元／14浏览器和生产构建通过；Rust800通过、11忽略、3个已在原版复现的云端进程回收失败。干净补丁安装、重复校验、合成加密来源与解包wheel的真实HTTP链路通过；Mac补丁及真实姓名准确性仍待[第15节](../MAC_SETUP.md#15-联系人来源与名称修复r1r4)复验。

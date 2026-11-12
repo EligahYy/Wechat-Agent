@@ -58,3 +58,11 @@ it("does not interpret history_complete false alone as failed sync", () => {
   expect(screen.getByText("本次来源同步已完成")).toBeVisible();
   expect(screen.queryByText("来源同步不完整")).not.toBeInTheDocument();
 });
+it("reports metadata refresh separately from chat synchronization", () => {
+  render(<OperationDetails operation={{...operation, action: "refresh_contacts", state: "succeeded", source_state: "succeeded", error_code: null, items: [], counts: {metadata_people: 12, metadata_groups: 3, names_scoped: 2, names_missing: 1}}} />);
+  expect(screen.getByText("联系人资料已刷新")).toBeVisible();
+  expect(screen.getByText("联系人资料 12")).toBeVisible();
+  expect(screen.getByText("群资料 3")).toBeVisible();
+  expect(screen.getByText("群内／会话名称 2")).toBeVisible();
+  expect(screen.queryByText(/目标会话|新增 0/)).not.toBeInTheDocument();
+});

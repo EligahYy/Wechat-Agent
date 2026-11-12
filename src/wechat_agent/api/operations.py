@@ -19,7 +19,7 @@ router = APIRouter()
 
 class CreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: Literal["sync", "sync_and_organize"]
+    action: Literal["sync", "sync_and_organize", 'refresh_contacts']
     scope: OperationScope
     idempotency_key: str = Field(min_length=1, max_length=256)
     options: SyncOptions = Field(default_factory=SyncOptions)

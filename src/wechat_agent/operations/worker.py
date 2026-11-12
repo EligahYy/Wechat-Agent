@@ -22,7 +22,7 @@ def _claim(conn, account_id):
     owner = f"{os.getpid()}:{uuid4()}"
     with transaction(conn):
         row = conn.execute("""SELECT o.* FROM operations o WHERE o.state='queued'
-            AND o.action IN ('sync','sync_and_organize') AND (? IS NULL OR o.account_id=?)
+            AND o.action IN ('sync','sync_and_organize','refresh_contacts') AND (? IS NULL OR o.account_id=?)
             AND NOT EXISTS(SELECT 1 FROM operations r WHERE r.account_id=o.account_id
                 AND r.state IN ('running','stop_requested')) ORDER BY o.created_at,o.rowid LIMIT 1""",
             (account_id, account_id)).fetchone()
@@ -56,6 +56,8 @@ async def _source(services, account_id):
 def _counts(result):
     counts = initial_counts()
     for name in ("inserted", "revised", "unchanged", "pages_processed"):
+        counts[name] = getattr(result, name)
+    for name in ('metadata_people', 'metadata_groups', 'names_scoped', 'names_missing'):
         counts[name] = getattr(result, name)
     counts["conversations_total"] = result.total_conversations
     for name in ("completed", "failed", "incomplete"):
@@ -155,9 +157,15 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
             _fail_source(conn, operation, owner, "invalid_operation_request", ["invalid_operation_request"])
             return get_operation(conn, operation.scope.account_id, operation.id)
         async with _source(services, operation.scope.account_id) as source:
+            if operation.action == 'refresh_contacts':
+                refresh = getattr(source, 'refresh_metadata', None)
+                if not callable(refresh):
+                    raise SourceError('source_metadata_refresh_unsupported')
+                await refresh()
             result = await sync_scope(conn, source, operation.scope,
                 CancellationToken(operation_id=operation.id, generation=operation.generation),
-                **options.model_dump(), on_progress=lambda value, target: _save_progress(conn, operation, owner, value, target))
+                **options.model_dump(), metadata_only=operation.action == 'refresh_contacts',
+                on_progress=lambda value, target: _save_progress(conn, operation, owner, value, target))
         _save_progress(conn, operation, owner, result, None)
         if result.stopped:
             _stop(conn, operation, owner)

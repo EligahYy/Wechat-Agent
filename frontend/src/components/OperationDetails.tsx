@@ -2,6 +2,16 @@ import type { Operation } from "../api/types";
 import { operationTitle } from "../app/useOperations";
 
 const gapLabels: Record<string, string> = {
+  source_patch_required: "来源需安装项目固定版本的 wx-cli 补丁。",
+  source_metadata_changed: "读取期间联系人资料代次发生变化，请重新刷新。",
+  source_metadata_refresh_failed: "来源联系人资料刷新失败，已有归档仍保留。",
+  source_metadata_refresh_timeout: "来源联系人资料刷新超时，请检查来源服务后重试。",
+  source_metadata_refresh_unsupported: "当前来源不支持独立刷新联系人。",
+  source_metadata_refreshing: "来源正在刷新联系人资料，请稍后重试。",
+  source_name_read_failed: "部分名称读取失败，保留旧值并标明来源状态。",
+  source_group_members_unreadable: "部分群成员资料无法读取，群内名称保留旧值。",
+  source_group_members_unavailable: "群成员资料暂时不可用，无法确认全部关联群聊。",
+  message_sender_conflict: "消息发送人证据冲突，原文与候选均保留，暂不归入联系人。",
   message_sender_invalid:
     "发送人标识异常：异常原文已隔离，需修复来源解析后重读。",
   message_sender_missing: "部分消息缺少发送人，尚未归入联系人。",
@@ -32,6 +42,7 @@ const gapLabels: Record<string, string> = {
 };
 
 export function OperationDetails({ operation }: { operation: Operation }) {
+  const metadataOnly = operation.action === "refresh_contacts";
   const counts = operation.counts;
   const total = counts.conversations_total || 0;
   const completed = counts.completed_conversations || 0;
@@ -50,7 +61,12 @@ export function OperationDetails({ operation }: { operation: Operation }) {
   return (
     <section className="operation-detail">
       <h3>{operationTitle(operation)}</h3>
-      <div className="operation-facts">
+      {metadataOnly ? <div className="operation-facts">
+        <span className="info-chip">联系人资料 {counts.metadata_people || 0}</span>
+        <span className="info-chip">群资料 {counts.metadata_groups || 0}</span>
+        <span className="info-chip">群内／会话名称 {counts.names_scoped || 0}</span>
+        <span className="info-chip">尚无名称 {counts.names_missing || 0}</span>
+      </div> : <><div className="operation-facts">
         <span className="info-chip">新增 {counts.inserted || 0}</span>
         <span className="info-chip">修订 {counts.revised || 0}</span>
         <span className="info-chip">不变 {counts.unchanged || 0}</span>
@@ -59,7 +75,7 @@ export function OperationDetails({ operation }: { operation: Operation }) {
         <span>目标会话 {total}</span>
         <span>已完成 {completed}</span>
         <span>未完成 {unfinished}</span>
-      </div>
+      </div></>}
       <p className="muted">
         来源阶段：
         {operation.source_state === "succeeded"
@@ -85,7 +101,7 @@ export function OperationDetails({ operation }: { operation: Operation }) {
             ))}
           </ul>
           <p className="muted">
-            已完成会话的原文仍然保留；来源缺口不等同于新增消息数量。
+            {metadataOnly ? "已有名称和人工身份仍保留；刷新只读取联系人和来源资料。" : "已完成会话的原文仍然保留；来源缺口不等同于新增消息数量。"}
           </p>
         </div>
       )}

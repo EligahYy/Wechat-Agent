@@ -5,6 +5,8 @@ export const active = (job: Operation | null) =>
   !!job && ["queued", "running", "stop_requested"].includes(job.state);
 export const operationTitle = (job: Operation | null) => {
   if (!job) return "尚无整理记录";
+  if (job.action === "refresh_contacts")
+    return {queued:"联系人刷新已排队", running:"正在刷新联系人资料", stop_requested:"正在停止联系人刷新", stopped:"联系人刷新已停止", failed:"联系人资料刷新未完成", succeeded:"联系人资料已刷新"}[job.state];
   if (job.state === "queued") return "任务已排队";
   if (job.state === "running")
     return job.phase === "source" ? "正在同步微信原文" : "正在整理资料";
@@ -82,7 +84,7 @@ export function useOperations(account: string | null, onDone: () => void) {
       clearTimeout(timer);
     };
   }, [account, job?.id, job?.state, read, onDone]);
-  const start = async (contactId?: string) => {
+  const start = async (contactId?: string, action?: "refresh_contacts") => {
     if (!account || lock.current) return;
     lock.current = true;
     setSubmitting(true);
@@ -91,7 +93,7 @@ export function useOperations(account: string | null, onDone: () => void) {
       const result = await request<Operation>("/api/operations", {
         method: "POST",
         body: JSON.stringify({
-          action: contactId ? "sync" : "sync_and_organize",
+          action: action || (contactId ? "sync" : "sync_and_organize"),
           scope: {
             account_id: account,
             ...(contactId ? { contact_id: contactId } : {}),
@@ -145,5 +147,5 @@ export function useOperations(account: string | null, onDone: () => void) {
       setSubmitting(false);
     }
   };
-  return { job, history, submitting, error, start, stop, read, loadHistory };
+  return { job, history, submitting, error, start, refreshContacts: () => start(undefined, "refresh_contacts"), stop, read, loadHistory };
 }

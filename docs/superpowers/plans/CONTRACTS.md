@@ -38,7 +38,7 @@
 - `Operation`包含id、scope、action、state、phase、generation、remaining、counts、error_code、source_state、options、history_complete=False、items、created_at、updated_at和available_actions。items含各项state／phase／counts／gaps／error_code及分析目标的role_version；不返回内部checkpoint。可变字段使用default_factory。M1仅queued／running支持stop，其余可用动作为空。
 - `SyncOptions(sample: bool=False, from_start: bool=False, page_size: int=200, max_pages: int=1000, conversation_ids: list[str] | None=None)`。sample自动收窄默认值到每页20条、每会话2页，并最多选择一个私信和一个群；显式超限拒绝。实际选择参数持久化且可查询，样本扫描完成不等于全历史完整。
 - `operations/service.py: create_operation(conn, action: str, scope: OperationScope, idempotency_key: str, *, options: SyncOptions | None=None) -> Operation`；`control_operation(conn, account_id, operation_id, action)`；`operations/worker.py: run_next(conn, services: Services, *, account_id=None, on_claim=None) -> Operation | None`为async。同账号幂等键对应同一不可变意图，改变action／scope／options返回409；不同键重复提交同一活动范围也返回409及已有operation_id。
-- POST `/api/operations`创建body为`{action:'sync'|'sync_and_organize', scope, idempotency_key, options?}`，落盘后返回202，表示接受而非完成。控制body为`{action:'stop', account_id, operation_id}`，返回200；服务端先验证账号，不接受伪造范围。GET `/api/operations/{id}?account_id=...`返回详情，GET `/api/operations?account_id=...&page=1&page_size=20`返回`{items,total,page,page_size}`，历史行省略items。读事务保证快照一致。
+- POST `/api/operations`创建body为`{action:'sync'|'sync_and_organize'|'refresh_contacts', scope, idempotency_key, options?}`，落盘后返回202，表示接受而非完成。控制body为`{action:'stop', account_id, operation_id}`，返回200；服务端先验证账号，不接受伪造范围。GET `/api/operations/{id}?account_id=...`返回详情，GET `/api/operations?account_id=...&page=1&page_size=20`返回`{items,total,page,page_size}`，历史行省略items。读事务保证快照一致。
 - M1执行真实来源同步，不调用模型。sync完成即可成功；sync_and_organize针对当前merchant且有已归档材料的目标生成分析项，即使本次无新消息也不能跳过首次整理。分析尚未实现时source_state可为succeeded，总操作为failed／capability_not_ready；无分析目标才只完成来源同步。单客户操作可归档共享群上下文，但只规划该客户的分析项。源端不可用为source_unavailable，页数上限或材料缺口为source_incomplete，不能解释成没有新消息。
 - SQLite schema3通过迁移003增加请求选项、worker所有权、项进度和role_version，保留001／002原文。领取用事务限定每账号一个运行操作；停止先落盘generation屏障，再取消本进程请求，迟到页不能提交。正常退出停止活动项；确认所有者进程已退出的遗留任务记为interrupted／stopped，不自动重放。PID复用、完整租约恢复及继续／重试由M4完成。
 - `api/app.py: create_app(settings: Settings, services: Services | None = None) -> FastAPI`；`Services`含`source: SourceAdapter | None`、`source_factory: Callable[[str], AbstractAsyncContextManager] | None`及`auto_run: bool=True`。应用lifespan拥有worker；未注入Services时按配置延迟构造固定账号WXCLIAdapter，每个操作关闭自己的连接。注入source由调用方管理，factory上下文按操作关闭。空队列启动不读取微信。测试通常用auto_run=False手动驱动，生命周期用例例外；以后增加model／strategy而不更换入口。
@@ -105,9 +105,12 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 
 - 固定来源补丁`0.7.4+wechat-agent.1`／`wechat-agent-source-v1`，manifest及安装器见patches/wx-cli。Health.metadata包含mode、generation、resolver_generation、refreshed_at及refresh_state；ready时resolver代次必须相同。分页代次与health不符停止，不混合写库；未知版本不静默接受。
 - ContactRecord增加remark_state／nickname_state（known／empty／unreadable／unknown）。内部旧格式记录按显式提供的值推导known／empty；原版wx-cli无法证明空值状态，adapter显式设unknown，只允许诊断。完整同步在任何归档前拒绝缺少补丁能力的原版。
-- ConversationRecord增加origin（session／metadata_candidate／group_directory／unknown）、membership_state和name_evidence。NameEvidence以contact_id、conversation_id和origin（group_member／session_sender）限定，含value、state、observed_at；必须与父会话范围一致。
+- ConversationRecord增加origin（session／metadata_candidate／group_directory／unknown）、membership_state、title_state和name_evidence。NameEvidence以contact_id、conversation_id和origin（group_member／session_sender）限定，含value、state、observed_at；必须与父会话范围一致。
 - schema5保存contacts字段状态与最后观察、contact_names作用域证据、source_metadata_status及source_group_members。完整群目录单独保存，不把未出现／未观察的所有群成员自动建成联系人；已知人物仍可按目录定位和补名。旧原文、修订、成员历史和人工角色保留。
 - known／empty可更新当前字段；unreadable／unknown保留最后成功值并标为待核实。群／会话候选不可冒充全局昵称；复制微信名称只返回当前可用全局备注／昵称。display_name_source之外返回name_status、name_scope、name_conflict、name_reason、metadata_current／metadata_seen_at，缺名计数按实际显示候选计算。
 - 来源title仅在呈现时移除与稳定ID完全匹配的上游装饰后缀并统一质量检查，原始title保留；sources返回provenance及has_messages，合成的潜在私聊来源不能被当作已有聊天记录。
 - SourceIssue增加message_sender_conflict，保留原始HTTP中的sender_fallback／sender_candidate。无充分证据不改旧作者或按昵称合并；后续上下文构建继续尊重归属缺口。
 - contacts.check只GET元数据并只读应用库，返回来源字段读取失败、归档显示质量、最近成功metadata观察和来源代次；无姓名、正文及原始人物ID。unknown不能填0假称读取正常。
+
+- refresh_contacts仅允许账号scope，返回202持久化操作；后台显式刷新来源后归档联系人／群／名称元数据，不调用messages或模型。counts增加metadata_people／metadata_groups／names_scoped／names_missing；停止和幂等沿用现有操作约束，提交前检查取消代次。settings.source以last_metadata_*区分，不将元数据时间冒充last_sync_at。
+- 源端用联系人／会话SQLite data_version核验外部写入，变化使旧代次失效。应用首次正常health绑定代次，跨metadata到messages不重置；显式刷新成功才绑定新代次。群title_state入库，known／empty可替换，unreadable／unknown保留最后值；来源信息返回title_state供界面提示。

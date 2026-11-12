@@ -5,12 +5,21 @@ export type Contact = {
   display_name: string;
   display_name_source: string;
   copy_name: string | null;
+  name_status: "current" | "scoped" | "historical" | "last_known" | "missing";
+  name_scope: string | null;
+  name_conflict: boolean;
+  name_reason: string | null;
+  metadata_current: boolean;
+  metadata_seen_at: string | null;
   role: Role;
   role_version: number;
   sources: {
     conversation_id: string;
     kind: "private" | "group";
     title: string | null;
+    provenance: "session" | "metadata_candidate" | "group_directory" | "unknown";
+    has_messages: boolean;
+    title_state?: "known" | "empty" | "unreadable" | "unknown";
   }[];
   last_message_at: string | null;
   last_business_at: string | null;

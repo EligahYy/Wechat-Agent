@@ -30,6 +30,11 @@ export function SettingsPage({
           <div className="config-status">
             <span className="info-chip">
               {{
+                last_metadata_succeeded: "上次联系人刷新完成",
+                last_metadata_failed: "上次联系人刷新未完成",
+                last_metadata_stopped: "上次联系人刷新已停止",
+                last_metadata_running: "正在刷新联系人",
+                last_metadata_queued: "联系人刷新已排队",
                 last_sync_succeeded: "上次同步成功",
                 last_sync_failed: "上次同步未完成",
                 last_sync_stopped: "上次同步已停止",

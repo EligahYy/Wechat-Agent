@@ -132,3 +132,64 @@ async def test_synthetic_private_scope_is_distinct_from_a_recent_session():
         rooms = await source.conversations()
     assert next(r for r in rooms if r.conversation_id == 'no-session-person').origin == 'metadata_candidate'
     assert next(r for r in rooms if r.conversation_id == 'merchant-a').origin == 'session'
+
+@pytest.mark.asyncio
+async def test_metadata_epoch_change_after_initial_health_stops_before_archive(db):
+    from wechat_agent.source.sync import sync_scope
+    from wechat_agent.operations.contracts import OperationScope
+    class ChangedAfterCheck(NativeServer):
+        def respond(self, request):
+            response = super().respond(request)
+            if request.url.path.endswith('/health') and len(self.requests) == 1:
+                self.generation += 1
+            return response
+    before = db.total_changes
+    async with adapter(ChangedAfterCheck()) as source:
+        result = await sync_scope(db, source, OperationScope(account_id='account-a'), None, metadata_only=True)
+    assert result.gaps == ['source_metadata_changed']
+    assert db.total_changes == before
+
+
+@pytest.mark.asyncio
+async def test_metadata_epoch_is_kept_through_message_phase():
+    server = NativeServer()
+    async with adapter(server) as source:
+        await source.check()
+        await source.contacts()
+        await source.conversations()
+        server.generation += 1
+        with pytest.raises(SourceError, match='source_metadata_changed'):
+            await source.messages('room@chatroom',None,2)
+    assert all(not request.url.path.endswith('/messages') for request in server.requests)
+
+
+@pytest.mark.asyncio
+async def test_direct_message_read_rejects_mid_page_metadata_refresh():
+    class ChangedDuringMessages(NativeServer):
+        def respond(self, request):
+            response = super().respond(request)
+            if request.url.path.endswith('/messages'):
+                self.generation += 1
+            return response
+    async with adapter(ChangedDuringMessages()) as source:
+        with pytest.raises(SourceError, match='source_metadata_changed'):
+            await source.messages('room@chatroom',None,2)
+
+@pytest.mark.asyncio
+async def test_failed_group_name_read_keeps_last_title_but_explicit_empty_clears(db):
+    from wechat_agent.source.sync import sync_scope
+    from wechat_agent.operations.contracts import OperationScope
+    server = NativeServer(); server.sessions = []
+    server.people[-1].update(remark='业务群',nick_name='')
+    async def refresh():
+        async with adapter(server) as source:
+            return await sync_scope(db,source,OperationScope(account_id='account-a'),None,metadata_only=True)
+    assert not (await refresh()).gaps
+    server.people[-1].update(remark={'value':None,'state':'unreadable'},nickname={'value':None,'state':'unreadable'})
+    result = await refresh()
+    assert 'source_name_read_failed' in result.gaps
+    row = db.execute("SELECT title,title_state FROM conversations WHERE conversation_id='room@chatroom'").fetchone()
+    assert tuple(row) == ('业务群','unreadable')
+    server.people[-1].update(remark={'value':None,'state':'empty'},nickname={'value':None,'state':'empty'})
+    assert not (await refresh()).gaps
+    assert db.execute("SELECT title FROM conversations WHERE conversation_id='room@chatroom'").fetchone()[0] is None

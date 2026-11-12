@@ -81,6 +81,7 @@ async def collect_contact_diagnostics(source, conn=None):
     if metadata.get('patch_id'):
         errors = {field: sum(getattr(person, field + '_state') == 'unreadable' for person in people if not person.is_self)
                   for field in ('remark','nickname')}
+        errors['group_titles'] = sum(room.title_state == 'unreadable' for room in rooms)
         errors['group_rosters'] = sum(room.membership_state == 'unreadable' for room in rooms)
         report['source']['field_errors'] = errors
         counts['scoped_name_candidates'] = sum(len(room.name_evidence) for room in rooms)

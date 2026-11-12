@@ -1,6 +1,6 @@
 # Mac 拉取项目与本地验证
 
-更新：2026-11-11（北京时间）。所有开发在云端完成，测试通过后直接推送 `main`；Mac 只拉取、安装运行依赖并验证，问题由云端修复。
+更新：2026-11-12（北京时间）。所有开发在云端完成，测试通过后直接推送 `main`；Mac 只拉取、安装运行依赖并验证，问题由云端修复。
 
 ## 1. 首次下载
 
@@ -274,3 +274,59 @@ pull／build／重启不会隐式发起微信同步。启动自动执行migratio
 报告的source_gaps表示该次记录保存的具体缺口；contact_quality.quarantined为当前隔离的异常联系人数量，names_unavailable为有效标识但无可用备注／昵称的数量，均为当前账号的全局计数。它们不包含姓名、消息正文或来源ID。联系人质量读取失败时省略contact_quality，仍返回任务诊断。
 
 “来源同步不完整”表示本次存在具体读取／归属／覆盖缺口，例如发送人标识异常、源端跳过记录、页数上限或单客户群覆盖范围无法确认；已完成会话数量不代表没有其他缺口。新增为0或history_complete=false本身不触发这个状态。真实缺少昵称的群成员仍显示“名称缺失”，不会用wxid或猜测名称代替；本次隔离也不代表已修复wx-cli上游解析或恢复了其丢失的发送人。
+
+
+## 15. 联系人来源与名称修复R1—R4
+
+这一节替代第14节作为当前版本验证流程；历史实机结果不改写。当前应用schema5，来源要求项目固定补丁`0.7.4+wechat-agent.1`，只pull应用不会更新已有wx-cli服务。
+
+先在应用终端按Ctrl+C停止旧API，在项目根目录拉取并检查：
+
+```bash
+git pull --ff-only origin main
+.venv/bin/python -m pytest -q
+npm --prefix frontend ci --engine-strict
+npm --prefix frontend run build
+```
+
+安装来源补丁需要Git、Rust/Cargo及Xcode命令行工具。`cargo --version`应可运行；缺少时安装Rust稳定工具链，缺少编译工具时执行`xcode-select --install`。安装器从固定上游commit应用仓库内校验过的patch并构建，首次耗时取决于网络和编译；不用编辑源码，不覆盖原`~/.local/bin/wx-cli`。
+
+```bash
+bash scripts/install-wx-cli.sh --transport ssh
+.local/tools/wx-cli/0.7.4+wechat-agent.1/bin/wx-cli --version
+```
+
+先停止旧来源，再用项目工具启动。将示例账号替换为本机已验证的账号；保留原有账号目录参数（若使用），不要误选其他微信：
+
+```bash
+~/.local/bin/wx-cli server stop
+.local/tools/wx-cli/0.7.4+wechat-agent.1/bin/wx-cli server run \
+  --host 127.0.0.1 --port 9100 --account wxid_your_account
+curl -fsS http://127.0.0.1:9100/api/v1/health
+```
+
+健康返回应有新CLI版本及metadata：`contract=wechat-agent-source-v1`、`patch_id=wechat-agent.1`、`refresh_state=ready`，generation与resolver_generation一致。若仍是旧版本，先检查旧worker是否已停止；显示“server already running”不证明已更换服务。启用了Bearer鉴权时，沿用本机环境变量／配置，不把token粘贴到聊天或仓库。
+
+启动应用后访问`http://127.0.0.1:8766`：
+
+```bash
+.venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory \
+  --host 127.0.0.1 --port 8766
+```
+
+另一终端检查`curl -fsS http://127.0.0.1:8766/api/health`应返回schema_version=5。在工作台顶部点击“刷新联系人”，等待“联系人资料已刷新”，在整理记录查看联系人／群资料数量和缺口。该操作只读取来源元数据，不读取聊天正文、不调用模型；不删除旧人物、不改旧消息作者或人工身份。部分失败会保留旧值并显示具体原因，不以0新增消息判断成功。
+
+可分别搜索几个微信中能确认的人，检查备注／昵称优先级、群内／会话／历史名称提示及复制按钮；群内与历史名称不能复制成已确认的全局微信名称。归档可包含历史人物和非好友，补丁没有可靠好友关系字段，微信搜不到不自动等于乱码。现存无证据的旧作者不会按昵称批量重写；重新读取原文时仍须检查来源缺口。
+
+只读脱敏诊断（不创建刷新操作、不读取消息正文）用于回传技术证据：
+
+```bash
+.venv/bin/python -m wechat_agent.contacts.check \
+  --account wxid_your_account --output .local/evidence/contact-names.json
+.venv/bin/python -m wechat_agent.operations.check \
+  --account wxid_your_account --latest --output .local/evidence/operation-latest.json
+```
+
+诊断只导出计数／状态，包含源与归档差异、名称质量、读取模式和刷新代次；pending或非零退出码表示仍有缺口，不能改成成功。回传这两份脱敏结果及健康schema即可，不上传聊天或联系人原始库。
+
+如需回退来源，先停止项目工具的服务，再用原`~/.local/bin/wx-cli server run ...`启动原工具；归档不清库。原版0.7.4可做有限诊断，应用会拒绝继续信任其未修复的群作者解析，显示需安装补丁。

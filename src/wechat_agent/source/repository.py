@@ -52,7 +52,7 @@ def _person(conn, account_id, contact_id):
                     "active" if valid else "quarantined", None if valid else "source_identity_invalid"))
 
 
-def archive_metadata(conn, account_id, contacts, conversations, *, metadata=None):
+def archive_metadata(conn, account_id, contacts, conversations, *, metadata=None, cancellation=None):
     try:
         contacts = [ContactRecord.model_validate(person.model_dump()) for person in contacts]
         conversations = [ConversationRecord.model_validate(room.model_dump()) for room in conversations]
@@ -63,6 +63,8 @@ def archive_metadata(conn, account_id, contacts, conversations, *, metadata=None
         raise SourceError("source_metadata_scope_mismatch")
     invalid = set()
     with transaction(conn):
+        if cancellation_requested(conn, account_id, cancellation):
+            raise SourceError('source_sync_stopped')
         _account(conn, account_id)
         now = start_metadata(conn, account_id)
         for person in contacts:
@@ -81,10 +83,11 @@ def archive_metadata(conn, account_id, contacts, conversations, *, metadata=None
                           "active" if valid else "quarantined", None if valid else "source_identity_invalid",
                           person.remark_state, person.nickname_state, now))
         for room in conversations:
-            conn.execute("""INSERT INTO conversations(account_id,conversation_id,kind,title,provenance) VALUES (?,?,?,?,?)
-                            ON CONFLICT(account_id,conversation_id) DO UPDATE SET kind=excluded.kind,title=excluded.title,
-                            provenance=excluded.provenance""",
-                         (account_id, room.conversation_id, room.kind, room.title, room.origin))
+            conn.execute("""INSERT INTO conversations(account_id,conversation_id,kind,title,provenance,title_state) VALUES (?,?,?,?,?,?)
+                            ON CONFLICT(account_id,conversation_id) DO UPDATE SET kind=excluded.kind,
+                            title=CASE WHEN excluded.title_state IN ('known','empty') THEN excluded.title ELSE conversations.title END,
+                            provenance=excluded.provenance,title_state=excluded.title_state""",
+                         (account_id, room.conversation_id, room.kind, room.title, room.origin, room.title_state))
             for member in room.member_ids:
                 if not is_person_identifier(member):
                     invalid.add(member)
@@ -99,6 +102,8 @@ def archive_metadata(conn, account_id, contacts, conversations, *, metadata=None
                              (account_id, room.conversation_id, member))
             archive_room_names(conn, account_id, room, now)
         finish_metadata(conn, account_id, contacts, conversations, metadata, now)
+        if cancellation_requested(conn, account_id, cancellation):
+            raise SourceError('source_sync_stopped')
     return len(invalid)
 
 

@@ -48,6 +48,7 @@ class WXCLIAdapter:
         self._worker = None
         self._people = None
         self._groups = {}
+        self._group_title_states = {}
         self._self_name = None
         self._latest_metadata = None
         self._metadata_epoch = None
@@ -91,6 +92,8 @@ class WXCLIAdapter:
         if self._metadata_epoch is not None and active.metadata and active.metadata.generation != self._metadata_epoch:
             raise SourceError('source_metadata_changed')
         self._latest_metadata = active.metadata if verified_identity_patch(active) else None
+        if not allow_refresh and self._latest_metadata and self._metadata_epoch is None:
+            self._metadata_epoch = self._latest_metadata.generation
         self._worker = active.worker_id
         self._self_name = active.current_account.name or None
         return active
@@ -176,6 +179,11 @@ class WXCLIAdapter:
                               'nickname_state': 'known' if row.get('nick_name') else 'unknown'}
                 if identifier.endswith('@chatroom'):
                     groups[identifier] = values['remark'] or values['nickname']
+                    states = (values['remark_state'], values['nickname_state'])
+                    self._group_title_states[identifier] = ('known' if groups[identifier] else
+                        'unreadable' if 'unreadable' in states else 'empty' if states == ('empty','empty') else 'unknown')
+                    if 'unreadable' in states:
+                        self.metadata_gaps.append('source_name_read_failed')
                     continue
                 people.append(ContactRecord(key=ContactKey(account_id=self.account_id, contact_id=identifier),
                                             is_self=identifier == self.account_id, **values))
@@ -206,8 +214,11 @@ class WXCLIAdapter:
             except ValidationError:
                 raise SourceError('source_conversation_contract_invalid') from None
         for identifier, title in self._groups.items():
-            rooms.setdefault(identifier, ConversationRecord(account_id=self.account_id, conversation_id=identifier,
-                                                            kind='group', title=title, origin='group_directory'))
+            existing = rooms.get(identifier)
+            rooms[identifier] = ConversationRecord(account_id=self.account_id, conversation_id=identifier,
+                kind='group', title=title, title_state=self._group_title_states[identifier],
+                origin=existing.origin if existing else 'group_directory',
+                name_evidence=existing.name_evidence if existing else [])
         if self._latest_metadata:
             try:
                 group_rows = await self._metadata('/api/v1/identity/groups', 'username')
@@ -246,7 +257,6 @@ class WXCLIAdapter:
                 rooms.setdefault(identifier, ConversationRecord(account_id=self.account_id, conversation_id=identifier,
                     kind='private', title=person.remark or person.nickname, member_ids=[identifier, self.account_id], origin='metadata_candidate'))
         await self._health()
-        self._metadata_epoch = None
         return list(rooms.values())
 
     async def refresh_metadata(self):
@@ -270,6 +280,7 @@ class WXCLIAdapter:
                 raise SourceError('source_metadata_refresh_failed')
             if active.metadata.generation > generation and active.metadata.refresh_state == 'ready' and active.ready:
                 self._people = None
+                self._metadata_epoch = active.metadata.generation
                 return
             await asyncio.sleep(0.2)
         raise SourceError('source_metadata_refresh_timeout')

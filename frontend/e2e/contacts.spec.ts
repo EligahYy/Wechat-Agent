@@ -391,3 +391,18 @@ test("customer sync belongs to header and incomplete history discloses reasons",
   await expect(history.getByText(/发送人标识异常/)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("source-gaps.png") });
 });
+test("top metadata refresh is a durable operation and does not synchronize messages", async ({ page, request }) => {
+  const sent: string[] = [];
+  page.on("request", req => { if (req.method() === "POST" && req.url().endsWith("/api/operations")) sent.push(req.postDataJSON().action); });
+  await page.getByRole("button", {name:"刷新联系人",exact:true}).click();
+  await expect(page.getByText("联系人资料已刷新",{exact:true})).toBeVisible();
+  expect(sent).toEqual(["refresh_contacts"]);
+  await page.getByRole("button", {name:"整理记录",exact:true}).click();
+  const dialog = page.getByRole("dialog",{name:"整理记录"});
+  await dialog.getByRole("button", {name:/联系人资料已刷新/}).click();
+  const history = await (await request.get("/api/operations?account_id=acct-1")).json();
+  expect(history.items[0].counts.pages_processed).toBe(0);
+  expect(history.items[0].counts.analysis_required).toBe(0);
+  await expect(dialog.getByText(`联系人资料 ${history.items[0].counts.metadata_people}`, {exact:true})).toBeVisible();
+  await expect(dialog.getByText(/目标会话/)).toHaveCount(0);
+});
