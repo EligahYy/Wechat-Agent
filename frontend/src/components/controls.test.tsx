@@ -133,3 +133,20 @@ it("opening the clock with typed text creates a draft and cancellation restores 
   await user.click(screen.getByRole("button", { name: "取消" }));
   expect(input).toHaveValue("08:30");
 });
+
+it("puts customer actions in the dialog header beside close", () => {
+  render(
+    <Dialog
+      open
+      title="客户资料"
+      onClose={() => {}}
+      headerActions={<button>同步此客户</button>}
+    >
+      <p>资料正文</p>
+    </Dialog>,
+  );
+  const button = screen.getByRole("button", { name: "同步此客户" });
+  expect(
+    screen.getByRole("dialog").querySelector(".dialog-header"),
+  ).toContainElement(button);
+});

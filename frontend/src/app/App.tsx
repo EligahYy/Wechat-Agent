@@ -17,6 +17,7 @@ import type { AppSettings, Preferences, Operation } from "../api/types";
 import { ContactsPage } from "../features/contacts/ContactsPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { Dialog } from "../components/Dialog";
+import { OperationDetails } from "../components/OperationDetails";
 import { active, operationTitle, useOperations } from "./useOperations";
 export function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null),
@@ -143,7 +144,13 @@ export function App() {
       </main>
     );
   const job = operations.job;
-  const current = selectedJob?.id === job?.id ? job : selectedJob;
+  const current =
+    selectedJob &&
+    selectedJob.id === job?.id &&
+    job?.items &&
+    Date.parse(job.updated_at) >= Date.parse(selectedJob.updated_at)
+      ? job
+      : selectedJob;
   return (
     <MotionConfig
       reducedMotion={settings.preferences.reduce_motion ? "always" : "user"}
@@ -344,35 +351,8 @@ export function App() {
             </div>
           )}
           {current && (
-            <section className="operation-detail">
-              <h3>{operationTitle(current)}</h3>
-              <div className="operation-facts">
-                <span className="info-chip">
-                  新增 {current.counts.inserted || 0}
-                </span>
-                <span className="info-chip">
-                  修订 {current.counts.revised || 0}
-                </span>
-                <span className="info-chip">
-                  不变 {current.counts.unchanged || 0}
-                </span>
-                <span className="info-chip">
-                  完成会话 {current.counts.completed_conversations || 0}
-                </span>
-              </div>
-              <p className="muted">
-                来源阶段：
-                {current.source_state === "succeeded"
-                  ? "已完成"
-                  : current.source_state === "failed"
-                    ? "未完成"
-                    : current.source_state === "stopped"
-                      ? "已停止"
-                      : "处理中"}
-                {current.error_code === "capability_not_ready"
-                  ? " · 分析能力尚未接入"
-                  : ""}
-              </p>
+            <>
+              <OperationDetails operation={current} />
               {current.available_actions.includes("stop") &&
                 current.id === job?.id && (
                   <button
@@ -383,7 +363,7 @@ export function App() {
                     停止本次
                   </button>
                 )}
-            </section>
+            </>
           )}
           {recordsLoading ? (
             <p className="muted" role="status">

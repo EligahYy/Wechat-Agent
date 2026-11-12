@@ -706,11 +706,6 @@ small {
   gap: 3px;
   align-items: center;
 }
-.detail-top-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 22px;
-}
 .detail-tabs {
   margin-bottom: 24px;
 }
@@ -781,6 +776,27 @@ small {
   border-bottom: 1px solid var(--line);
   padding-bottom: 20px;
   margin-bottom: 20px;
+}
+.operation-gaps {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+.operation-gaps ul {
+  padding-left: 20px;
+  margin: 10px 0;
+}
+.operation-gaps li + li {
+  margin-top: 10px;
+}
+.operation-gaps code {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
 }
 .code-line {
   font-family: ui-monospace, SFMono-Regular, monospace;

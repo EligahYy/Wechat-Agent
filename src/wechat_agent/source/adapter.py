@@ -13,7 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from .contracts import (AttachmentFetch, CapabilityReport, ContactKey, ContactRecord,
                         ConversationRecord, SourceIssue, SourcePage)
 from .probe import ProbeError, SourceConfig, _get
-from .wx_cli import Envelope, Health, parse_message
+from .wx_cli import Envelope, Health, parse_message, sender_issue_code
+from ..identities import is_person_identifier
 
 
 class SourceError(Exception):
@@ -166,7 +167,7 @@ class WXCLIAdapter:
             rooms.setdefault(identifier, ConversationRecord(account_id=self.account_id, conversation_id=identifier,
                                                             kind="group", title=title))
         for person in self._people:
-            if not person.is_self:
+            if not person.is_self and is_person_identifier(person.key.contact_id):
                 identifier = person.key.contact_id
                 rooms.setdefault(identifier, ConversationRecord(
                     account_id=self.account_id, conversation_id=identifier, kind="private",
@@ -207,8 +208,7 @@ class WXCLIAdapter:
             try:
                 record = parse_message(row, self.account_id)
             except ValidationError as error:
-                code = ("message_sender_missing" if any(e["loc"] == ("sender",) for e in error.errors())
-                        else "message_contract_invalid")
+                code = sender_issue_code(error)
             except (ValueError, OverflowError, OSError) as error:
                 code = "source_message_id_unavailable" if str(error) == "message_id_unavailable" else "message_contract_invalid"
             else:

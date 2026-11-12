@@ -8,6 +8,7 @@ from urllib.parse import quote
 from pydantic import BaseModel, Field, StrictBool, StrictInt, ValidationInfo, field_validator, model_validator
 
 from .contracts import MessageRecord
+from ..identities import is_person_identifier
 
 
 class Account(BaseModel):
@@ -64,6 +65,8 @@ class WireMessage(BaseModel):
     def event_or_person_sender(cls, value: str, info: ValidationInfo):
         if (not value.strip() or value.endswith("@chatroom")) and info.data.get("msg_type") not in {10000, 10002}:
             raise ValueError("blank_source_sender")
+        if not is_person_identifier(value) and info.data.get("msg_type") not in {10000, 10002}:
+            raise ValueError("invalid_source_sender")
         return value
 
     @field_validator("talker")
@@ -72,6 +75,13 @@ class WireMessage(BaseModel):
         if not value.strip():
             raise ValueError("blank_source_identity")
         return value
+
+
+def sender_issue_code(error):
+    for item in error.errors():
+        if item["loc"] == ("sender",):
+            return "message_sender_invalid" if str(item.get("ctx", {}).get("error")) == "invalid_source_sender" else "message_sender_missing"
+    return "message_contract_invalid"
 
 
 def parse_message(raw: dict, account_id: str) -> MessageRecord:
@@ -99,7 +109,7 @@ def parse_message(raw: dict, account_id: str) -> MessageRecord:
     identity = f"wx-cli:{quote(row.talker, safe='')}:{row.server_id}"
     return MessageRecord(
         account_id=account_id, conversation_id=row.talker, message_id=identity,
-        sender_id=row.sender if row.sender.strip() and not row.sender.endswith("@chatroom") else None,
+        sender_id=row.sender if is_person_identifier(row.sender) else None,
         sent_at=datetime.fromtimestamp(row.create_time, timezone.utc),
         kind=kind, body=body,
         attachment_ids=[f"media:{identity}"] if kind in {"image", "voice", "video", "file"} else [],

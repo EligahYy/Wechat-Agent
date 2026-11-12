@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from .adapter import SourceError
 from .contracts import ContactKey, SourcePage
+from ..identities import is_person_identifier
 
 
 @dataclass(slots=True)
@@ -44,30 +45,41 @@ def _person(conn, account_id, contact_id):
         ContactKey(account_id=account_id, contact_id=contact_id)
     except ValidationError:
         raise SourceError("source_sender_identity_invalid") from None
-    conn.execute("""INSERT INTO contacts(account_id,contact_id,is_self) VALUES (?,?,?)
-                    ON CONFLICT DO NOTHING""", (account_id, contact_id, int(contact_id == account_id)))
+    valid = is_person_identifier(contact_id)
+    conn.execute("""INSERT INTO contacts(account_id,contact_id,is_self,identity_state,identity_reason) VALUES (?,?,?,?,?)
+                    ON CONFLICT DO NOTHING""", (account_id, contact_id, int(contact_id == account_id),
+                    "active" if valid else "quarantined", None if valid else "source_identity_invalid"))
 
 
 def archive_metadata(conn, account_id, contacts, conversations):
     if any(person.key.account_id != account_id for person in contacts) or any(
             room.account_id != account_id for room in conversations):
         raise SourceError("source_metadata_scope_mismatch")
+    invalid = set()
     with transaction(conn):
         _account(conn, account_id)
         for person in contacts:
-            conn.execute("""INSERT INTO contacts(account_id,contact_id,remark,nickname,is_self) VALUES (?,?,?,?,?)
+            valid = is_person_identifier(person.key.contact_id)
+            if not valid:
+                invalid.add(person.key.contact_id)
+            conn.execute("""INSERT INTO contacts(account_id,contact_id,remark,nickname,is_self,identity_state,identity_reason) VALUES (?,?,?,?,?,?,?)
                             ON CONFLICT(account_id,contact_id) DO UPDATE SET
-                            remark=excluded.remark,nickname=excluded.nickname,is_self=excluded.is_self""",
-                         (account_id, person.key.contact_id, person.remark, person.nickname, int(person.is_self)))
+                            remark=excluded.remark,nickname=excluded.nickname,is_self=excluded.is_self,
+                            identity_state=excluded.identity_state,identity_reason=excluded.identity_reason""",
+                         (account_id, person.key.contact_id, person.remark, person.nickname, int(person.is_self),
+                          "active" if valid else "quarantined", None if valid else "source_identity_invalid"))
         for room in conversations:
             conn.execute("""INSERT INTO conversations(account_id,conversation_id,kind,title) VALUES (?,?,?,?)
                             ON CONFLICT(account_id,conversation_id) DO UPDATE SET kind=excluded.kind,title=excluded.title""",
                          (account_id, room.conversation_id, room.kind, room.title))
             for member in room.member_ids:
                 _person(conn, account_id, member)
+                if not is_person_identifier(member):
+                    invalid.add(member)
                 conn.execute("""INSERT INTO members(account_id,conversation_id,contact_id,provenance)
                                 VALUES (?,?,?,'source_membership') ON CONFLICT DO NOTHING""",
                              (account_id, room.conversation_id, member))
+    return len(invalid)
 
 
 def cancellation_requested(conn, account_id, cancellation):

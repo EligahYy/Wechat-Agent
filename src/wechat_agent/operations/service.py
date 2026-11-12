@@ -71,12 +71,14 @@ def create_operation(conn, action, scope, idempotency_key, *, options=None):
                 raise OperationError("operation_already_active", details={"operation_id": active[0]})
             conn.execute("INSERT INTO accounts(account_id) VALUES (?) ON CONFLICT DO NOTHING", (scope.account_id,))
             if scope.contact_id is not None:
-                person = conn.execute("SELECT is_self FROM contacts WHERE account_id=? AND contact_id=?",
+                person = conn.execute("SELECT is_self,identity_state FROM contacts WHERE account_id=? AND contact_id=?",
                                       (scope.account_id, scope.contact_id)).fetchone()
                 if person is None:
                     raise OperationError("contact_not_found", 404)
                 if person[0]:
                     raise OperationError("self_contact_not_target")
+                if person[1] != "active":
+                    raise OperationError("contact_identity_quarantined")
             operation_id = str(uuid4())
             stamp = now()
             conn.execute("""INSERT INTO operations(account_id,id,contact_id,action,idempotency_key,remaining,

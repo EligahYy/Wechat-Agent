@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from ..source.contracts import ContactKey
+from ..identities import choose_name
 
 
 Role = Literal["merchant", "provider", "platform", "unknown"]
@@ -41,7 +42,7 @@ class RoleUpdateResult(BaseModel):
 
 
 def _filters(account_id, q, role=None):
-    clauses = ["c.account_id=?", "c.is_self=0"]
+    clauses = ["c.account_id=?", "c.is_self=0", "c.identity_state='active'"]
     params = [account_id]
     if q:
         literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -108,12 +109,7 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
         LIMIT ? OFFSET ?""", [*params, account_id, page_size, (page - 1) * page_size]).fetchall()
     items = []
     for row in rows:
-        name, name_source = None, "missing"
-        for field in ("remark", "nickname"):
-            value = row[field]
-            if value and value.strip() and value.strip() != row["contact_id"]:
-                name, name_source = value.strip(), field
-                break
+        name, name_source = choose_name(row["remark"], row["nickname"], row["contact_id"])
         sources = [dict(source) for source in conn.execute("""SELECT v.conversation_id,v.kind,v.title FROM members s
                       JOIN conversations v ON v.account_id=s.account_id AND v.conversation_id=s.conversation_id
                       WHERE s.account_id=? AND s.contact_id=? ORDER BY v.kind,v.conversation_id""",
@@ -124,8 +120,14 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
                       "last_message_at": row["last_message_at"], "last_business_at": None,
                       "profile_status": ("pending" if row["last_message_at"] else "no_data") if row["role"] == "merchant" else None,
                       "profile_updated_at": None, "source_gaps": _source_gaps(conn, account_id, row["contact_id"])})
+    quality = {"quarantined": 0, "names_unavailable": 0}
+    for person in conn.execute("SELECT contact_id,remark,nickname,identity_state FROM contacts WHERE account_id=? AND is_self=0", (account_id,)):
+        if person["identity_state"] == "quarantined":
+            quality["quarantined"] += 1
+        elif choose_name(person["remark"], person["nickname"], person["contact_id"])[0] is None:
+            quality["names_unavailable"] += 1
     return {"items": items, "total": total, "page": page, "page_size": page_size,
-            "role_counts": {"all": sum(counts.values()), **counts}}
+            "role_counts": {"all": sum(counts.values()), **counts}, "identity_quality": quality}
 
 
 def set_roles(conn, keys: list[ContactKey], role: str, expected_versions: dict[str, int]) -> RoleUpdateResult:
@@ -140,7 +142,7 @@ def set_roles(conn, keys: list[ContactKey], role: str, expected_versions: dict[s
     try:
         conn.execute("BEGIN IMMEDIATE")
         for key in keys:
-            row = conn.execute("SELECT role,role_version,is_self FROM contacts WHERE account_id=? AND contact_id=?",
+            row = conn.execute("SELECT role,role_version,is_self,identity_state FROM contacts WHERE account_id=? AND contact_id=?",
                                (key.account_id, key.contact_id)).fetchone()
             code = None
             expected = expected_versions.get(key.contact_id)
@@ -148,6 +150,8 @@ def set_roles(conn, keys: list[ContactKey], role: str, expected_versions: dict[s
                 code = "contact_not_found"
             elif row[2]:
                 code = "self_role_locked"
+            elif row[3] != "active":
+                code = "contact_identity_quarantined"
             elif type(expected) is not int or not 1 <= expected <= 2**63 - 1:
                 code = "expected_version_required"
             elif row[1] != expected:

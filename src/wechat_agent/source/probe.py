@@ -9,7 +9,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .contracts import CapabilityReport, ContactKey, ContactRecord
-from .wx_cli import Envelope, Health, parse_message
+from .wx_cli import Envelope, Health, parse_message, sender_issue_code
 
 
 WX_MESSAGE_MAPPING = {"sender_id": "sender", "message_id": "server_id", "conversation_id": "talker", "sent_at": "create_time"}
@@ -99,8 +99,7 @@ def normalize_probe(raw: dict, mapping: dict) -> CapabilityReport:
         try:
             parsed = parse_message(row, account)
         except ValidationError as error:
-            reason = ("message_sender_missing" if any(item["loc"] == ("sender",) for item in error.errors())
-                      else "message_contract_invalid")
+            reason = sender_issue_code(error)
         except ValueError as error:
             reason = "source_message_id_unavailable" if str(error) == "message_id_unavailable" else "message_contract_invalid"
         except (OverflowError, OSError):

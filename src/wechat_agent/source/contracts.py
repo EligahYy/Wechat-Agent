@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Literal, Protocol
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from ..identities import is_person_identifier
 
 
 class ContactKey(BaseModel):
@@ -64,11 +65,13 @@ class MessageRecord(BaseModel):
             raise ValueError("blank_message_sender")
         elif self.sender_id.endswith("@chatroom"):
             raise ValueError("group_is_not_person")
+        elif not is_person_identifier(self.sender_id):
+            raise ValueError("invalid_source_sender")
         return self
 
 
 class SourceIssue(BaseModel):
-    code: Literal["message_sender_missing", "source_message_id_unavailable", "message_contract_invalid"]
+    code: Literal["message_sender_missing", "message_sender_invalid", "source_message_id_unavailable", "message_contract_invalid"]
     message_id: str | None = None
     raw: dict
 

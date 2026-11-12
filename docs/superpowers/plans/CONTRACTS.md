@@ -12,7 +12,7 @@
 - `MessageRecord(account_id: str, conversation_id: str, message_id: str, sender_id: str | None, sent_at: datetime, kind: str, body: str, reply_to: str | None, attachment_ids: list[str], source_revision: str, raw: dict)`；时间需带时区，修订由源字段或经验证的同消息版本摘要映射。只有来源明确识别的 system／revoke 事件允许 sender_id=None；保留内容、时间和原始来源，已有真实发送人则保留。普通聊天仍要求非空稳定发送人，不按名称或方向推断。
 - 此处 message_id 是保留来源命名空间／会话的规范化稳定身份，避免不同会话的本地 ID 相撞；原始源标识另存在 raw。数据库自增修订 revision 与源端 source_revision 的映射由归档层维护。
 - `SourcePage(account_id: str, conversation_id: str, records: list[MessageRecord], next_cursor: str | None, complete: bool, gaps: list[str], conversation_kind: Literal['private','group'] | None=None, issues: list[SourceIssue]=[])`；列表使用default_factory。空页也能保存明确会话的游标，records的账号／会话必须一致；complete与游标／缺口不能矛盾。
-- `SourceIssue(code: Literal['message_sender_missing','source_message_id_unavailable','message_contract_invalid'], message_id: str | None, raw: dict)`；归属不足的原文单独保存，不能强行插入正常消息或静默丢弃。已知稳定消息ID只按身份和版本去重问题记录；没有稳定ID时保留各次观察，不按正文合并。修复后重读可标记旧问题已解决，旧原文仍保留。
+- `SourceIssue(code: Literal['message_sender_missing','message_sender_invalid','source_message_id_unavailable','message_contract_invalid'], message_id: str | None, raw: dict)`；归属不足或发送人标识异常的原文单独保存，不能强行插入正常消息或静默丢弃。已知稳定消息ID只按身份和版本去重问题记录；没有稳定ID时保留各次观察，不按正文合并。修复后重读可标记旧问题已解决，旧原文仍保留。
 - `SourceAdapter` Protocol：只读属性`account_id: str`；`check() -> CapabilityReport`；`contacts() -> list[ContactRecord]`；`conversations() -> list[ConversationRecord]`；`messages(conversation_id: str, cursor: str | None, limit: int) -> SourcePage`；`fetch_attachment(attachment_id: str) -> AttachmentFetch`。方法均为async；账号固定在适配器实例中。
 - `AttachmentFetch(attachment_id: str, state: Literal['original','thumbnail','missing','unavailable','failed'], content: bytes | None, mime: str | None, reason: str | None)`。
 - `CapabilityReport(component: str, status: Literal['passed','failed','pending','unsupported'], facts: dict, gaps: list[str], checked_at: datetime)`；未实际调用不得 passed。
@@ -25,7 +25,9 @@
 - `open_existing_db(path: Path, *, readonly: bool=False)`供运行时请求使用，URI模式为ro／rw，缺失数据库直接失败；只有显式初始化／迁移入口可创建数据库。联系人GET只读，单次查询的计数与行使用同一读事务。
 - 数据库路径为Settings.data_dir下的archive.sqlite3；已交付迁移不原地修改，后续表结构变更新增版本。FTS搜索必须关联messages并按account_id限定，不能把全库索引结果直接返回给联系人接口。设置按账号保存，应用级偏好若需要持久化另加迁移。
 - `source/repository.py: archive_page(conn, page: SourcePage) -> ArchiveDelta`，返回 `inserted: int, revised: int, unchanged: int`，同一事务保存消息及游标。
-- `archive_metadata(conn, account_id, contacts, conversations) -> None`保存真实来源名称、会话与成员，不覆盖人工role／role_version。archive_page在写入前重验页内范围，缺口页保存有效消息和原始问题但不推进游标；修订保留原时间偏移和raw，后续跨偏移排序须按真实时间值换算，不能直接比较ISO字符串。
+- `archive_metadata(conn, account_id, contacts, conversations) -> int`保存真实来源名称、会话与成员，不覆盖人工role／role_version；返回本次元数据中不同异常人物标识的数量，非零时记录source_contact_identity_invalid缺口。archive_page在写入前重验页内范围，缺口页保存有效消息和原始问题但不推进游标；修订保留原时间偏移和raw，后续跨偏移排序须按真实时间值换算，不能直接比较ISO字符串。
+- schema4为contacts增加identity_state（active／quarantined）与identity_reason。异常标识隔离但不删除原文、来源关系或人工身份；列表／计数、身份修改、操作目标及分析规划只接受active。后续原文浏览、导入及模型上下文必须遵守同一边界，不把旧归档里的异常发送人作为有效人物。编号做结构性校验，不以wxid前缀筛选，保留有效旧ID和企业微信openim；缺少昵称不等于编号无效。
+- GET /api/contacts增加identity_quality（当前账号全局quarantined／names_unavailable计数，不受搜索筛选影响）。名称选择可用备注、可用昵称；缺失或明显损坏的名称不复制、不按编号猜测。operations.check的--latest只读最新既有操作及技术计数，不触发来源同步。
 - `contacts/service.py: set_roles(conn, keys: list[ContactKey], role: str, expected_versions: dict[str,int]) -> RoleUpdateResult`；角色值 `merchant / provider / platform / unknown`，禁止修改本人为商家。
 - 身份批次只含同一账号，expected_versions以contact_id为键。PATCH `/api/contacts/roles`接收`{account_id, role, items:[{key:{account_id,contact_id},expected_version}]}`，最多500项，重复联系人为422。实际变更才递增role_version，同角色为不改版本的成功项；本人业务身份锁定。
 - `RoleUpdateResult(status:'succeeded'|'partial'|'failed', updated:[{key,role,role_version,changed,cancelled_analysis_items,cancelled_operations}], failed:[{key,code,current_version}])`。全部通过返回200；有逻辑冲突返回409，错误details中保留完整结果。合法项已提交，前端必须应用updated的新版本、仅保留失败选择，不能把整个409当成全部回滚或盲目重试旧版本。数据库执行失败则整批回滚、返回503，不回显底层错误。

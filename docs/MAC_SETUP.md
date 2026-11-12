@@ -130,7 +130,7 @@ git pull --ff-only origin main
 .venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
 ```
 
-浏览器打开 http://127.0.0.1:8766/api/health ，或在另一终端执行 `curl -fsS http://127.0.0.1:8766/api/health`。任务1检查点返回schema_version=1；拉取后会自动升级，当前预期为 `{"status":"ok","schema_version":3}`。结束按Control+C。
+浏览器打开 http://127.0.0.1:8766/api/health ，或在另一终端执行 `curl -fsS http://127.0.0.1:8766/api/health`。任务1检查点返回schema_version=1；拉取后会自动升级，当前预期为 `{"status":"ok","schema_version":4}`。结束按Control+C。
 
 首次启动在应用数据目录创建`archive.sqlite3`，启用外键和WAL，原子执行迁移；需要SQLite的FTS5／trigram与JSON支持。默认Mac路径为`~/Library/Application Support/Wechat-Agent/`，可用`WECHAT_AGENT_DATA_DIR`指定独立测试目录。迁移失败或数据库版本高于程序时拒绝启动，不自动降级或清库；健康查询只读，不创建或修复数据库。
 
@@ -159,11 +159,11 @@ done
 
 归属不足或没有稳定ID的原文保存在数据库source_issues中，该页游标不推进。报告仅列计数、具体gap和最多20类issue_types技术类型，不含姓名、消息ID、正文、本机路径或凭据。unresolved_issues_total是该账号的问题观察记录数；没有稳定ID的多次观察不能当成同一条消息合并。反馈两份报告和测试结果即可，原始聊天留在本机。
 
-任务2检查点API为schema_version=2，当前任务4版本为3。指定其他已知会话可用重复的`--conversation`参数；不传--from-start时续读已保存的未完成游标，必须沿用原page-size。完成的会话下一次会从头检查修订；当前实现优先保证可追溯，不声称已有只取增量的源端变更流。附件先保留引用，文件获取／解析和模型整理仍在后续阶段。
+任务2检查点API为schema_version=2，任务4检查点为3，当前修复版本为4。指定其他已知会话可用重复的`--conversation`参数；不传--from-start时续读已保存的未完成游标，必须沿用原page-size。完成的会话下一次会从头检查修订；当前实现优先保证可追溯，不声称已有只取增量的源端变更流。附件先保留引用，文件获取／解析和模型整理仍在后续阶段。
 
 ## 11. M1任务3：联系人API验证
 
-任务3检查点没有新增依赖或迁移，schema为2；当前任务4启动会升级到3。停止旧API后拉取、运行测试并重启：
+任务3检查点没有新增依赖或迁移，schema为2；任务4检查点升级到3，当前修复启动升级到4。停止旧API后拉取、运行测试并重启：
 
 ```bash
 git pull --ff-only origin main
@@ -232,7 +232,7 @@ npm --prefix frontend run build
 .venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
 ```
 
-浏览器打开 http://127.0.0.1:8766/ 。这是正式React页面，API和静态资源同源，继续使用现有本机数据库及schema3；8765的静态原型仍只作效果参照。每次拉取前端更新后重跑build，重启后端以加载最新接口；未构建时API仍可用，首页返回404。Node只用于安装／构建前端，运行已构建页面只需后端服务。
+浏览器打开 http://127.0.0.1:8766/ 。这是正式React页面，API和静态资源同源，继续使用现有本机数据库并升级至schema4；8765的静态原型仍只作效果参照。每次拉取前端更新后重跑build，重启后端以加载最新接口；未构建时API仍可用，首页返回404。Node只用于安装／构建前端，运行已构建页面只需后端服务。
 
 验证重点：
 
@@ -245,3 +245,32 @@ npm --prefix frontend run build
 每日开关和时间目前仅持久化设置，界面明确标为“调度待接入”，尚不会自动执行。模型档案、编辑资料、附件处理按后续阶段接入；沟通原文浏览及手动导入在M1任务6。来源标签表示上次同步证据，不把历史成功冒充当前在线健康。
 
 开发预览可在另一个终端运行`WECHAT_API_URL=http://127.0.0.1:8766 npm --prefix frontend run dev`，打开5173；Vite默认代理8000，上述变量沿用当前8766。浏览器验收在云端完成，本机不必安装Playwright。若要自行重跑，先在frontend执行`npx playwright install chromium`，再执行`npm run test:e2e`；隔离测试使用18001／18002和临时合成库，不读取真实归档。
+
+
+## 14. 联系人异常标识与同步缺口修复
+
+先在运行API的终端按Control+C结束旧进程，再更新、构建和启动。不要让schema3旧进程与升级后的schema4同时使用同一数据库；不需要清库或重新安装wx-cli。
+
+```bash
+git pull --ff-only origin main
+.venv/bin/python -m pytest -q
+npm --prefix frontend ci --engine-strict
+npm --prefix frontend run build
+.venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
+```
+
+启动自动执行migration004，隔离XML／正文等明显无效的联系人标识，保留消息、来源关系、人工身份及其版本。健康接口应返回schema_version=4。刷新正式页面后，客户详情的“同步此客户”位于顶部关闭按钮左侧；整理记录显示目标／完成／未完成会话数及已保存的来源缺口，已有记录无需重跑同步即可查看。
+
+在另一终端运行只读诊断，将示例账号替换为已验证的canonical账号：
+
+```bash
+.venv/bin/python -m wechat_agent.operations.check \
+  --account wxid_your_account --latest \
+  --output .local/evidence/operation-latest.json
+```
+
+`--latest`只读取该账号最近一次操作，不创建同步任务；没有历史时返回operation_check_failed。若最近一条不是待查记录，使用第12节的`--operation-id`读取指定UUID。失败记录会保留state=failed并返回退出码1，这是诊断结果，不会被改成成功。
+
+报告的source_gaps表示该次记录保存的具体缺口；contact_quality.quarantined为当前隔离的异常联系人数量，names_unavailable为有效标识但无可用备注／昵称的数量，均为当前账号的全局计数。它们不包含姓名、消息正文或来源ID。联系人质量读取失败时省略contact_quality，仍返回任务诊断。
+
+“来源同步不完整”表示本次存在具体读取／归属／覆盖缺口，例如发送人标识异常、源端跳过记录、页数上限或单客户群覆盖范围无法确认；已完成会话数量不代表没有其他缺口。新增为0或history_complete=false本身不触发这个状态。真实缺少昵称的群成员仍显示“名称缺失”，不会用wxid或猜测名称代替；本次隔离也不代表已修复wx-cli上游解析或恢复了其丢失的发送人。

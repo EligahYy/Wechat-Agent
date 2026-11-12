@@ -14,7 +14,16 @@ from ..source.probe import SourceConfig
 from .service import initial_counts
 
 
-def check_operation(client, account_id, *, wait_seconds=30, operation_id=None):
+def check_operation(client, account_id, *, wait_seconds=30, operation_id=None, latest=False):
+    if latest:
+        if operation_id is not None:
+            raise ValueError("conflicting_operation_selection")
+        response = client.get("/api/operations", params={"account_id": account_id, "page": 1, "page_size": 1})
+        response.raise_for_status()
+        items = response.json()["items"]
+        if not items:
+            raise ValueError("operation_not_found")
+        operation_id = items[0]["id"]
     if operation_id is None:
         response = client.post("/api/operations", json={
             "action": "sync", "scope": {"account_id": account_id},
@@ -33,7 +42,7 @@ def check_operation(client, account_id, *, wait_seconds=30, operation_id=None):
         if operation["state"] in {"succeeded", "failed", "stopped"} or time.monotonic() >= deadline:
             break
         time.sleep(min(0.2, max(0, deadline - time.monotonic())))
-    return {
+    report = {
         "schema_version": 1,
         "operation_id": operation_id,
         "state": operation["state"],
@@ -44,6 +53,17 @@ def check_operation(client, account_id, *, wait_seconds=30, operation_id=None):
         "counts": {key: operation["counts"].get(key, 0) for key in initial_counts()},
         "source_gaps": [gap for item in operation["items"] if item["phase"] == "source" for gap in item["gaps"]],
     }
+    try:
+        response = client.get("/api/contacts", params={"account_id": account_id, "page_size": 1})
+        response.raise_for_status()
+        quality = response.json().get("identity_quality", {})
+        report["contact_quality"] = {
+            key: value for key in ("quarantined", "names_unavailable")
+            if type(value := quality.get(key)) is int and value >= 0
+        }
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
+        pass  # Contact diagnostics must not hide a saved source failure.
+    return report
 
 
 def main(argv=None):
@@ -51,7 +71,9 @@ def main(argv=None):
     parser.add_argument("--account", required=True)
     parser.add_argument("--url", default="http://127.0.0.1:8766")
     parser.add_argument("--wait", type=float, default=30)
-    parser.add_argument("--operation-id", help="Read an existing operation without creating another.")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--operation-id", help="Read an existing operation without creating another.")
+    selection.add_argument("--latest", action="store_true", help="Read the latest saved operation; do not start a sync.")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
     if not 0 <= args.wait <= 300:
@@ -70,7 +92,7 @@ def main(argv=None):
         parser.error("report_output_conflicts_with_input")
     try:
         with httpx.Client(base_url=base_url, trust_env=False, follow_redirects=False, timeout=5) as client:
-            report = check_operation(client, args.account, wait_seconds=args.wait, operation_id=args.operation_id)
+            report = check_operation(client, args.account, wait_seconds=args.wait, operation_id=args.operation_id, latest=args.latest)
     except (httpx.HTTPError, ValueError, KeyError, TypeError):
         report = {"schema_version": 1, "state": "failed", "error_code": "operation_check_failed"}
     rendered = json.dumps(report, ensure_ascii=False, indent=2)

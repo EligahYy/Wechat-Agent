@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Copy,
   FileText,
+  RefreshCw,
   Search,
   Users,
   X,
@@ -653,6 +654,17 @@ export function ContactsPage({
         open={detailOpen && !!detail}
         wide
         onClose={() => setDetailOpen(false)}
+        headerActions={
+          detail && (
+            <button
+              className="button secondary"
+              onClick={() => void onSync(detail.key.contact_id)}
+            >
+              <RefreshCw size={15} />
+              同步此客户
+            </button>
+          )
+        }
         title={
           detail && (
             <span className="detail-heading">
@@ -687,14 +699,6 @@ export function ContactsPage({
       >
         {detail && (
           <>
-            <div className="detail-top-actions">
-              <button
-                className="button secondary"
-                onClick={() => void onSync(detail.key.contact_id)}
-              >
-                同步此客户
-              </button>
-            </div>
             <h3 className="detail-tabs">资料概览</h3>
             <div className="detail-unavailable">
               <FileText size={28} />

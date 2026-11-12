@@ -321,3 +321,73 @@ test("dark appearance is applied before delayed bootstrap after reload", async (
   await page.reload({ waitUntil: "domcontentloaded" });
   expect(await page.locator("html").getAttribute("data-theme")).toBe("dark");
 });
+
+test("customer sync belongs to header and incomplete history discloses reasons", async ({
+  page,
+  request,
+}, testInfo) => {
+  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("searchbox").fill("商家甲");
+  await expect(page.locator("tbody tr[data-contact]")).toHaveCount(1);
+  await page.getByRole("button", { name: "查看 商家甲", exact: true }).click();
+  const customer = page
+    .getByRole("dialog")
+    .filter({ has: page.getByRole("heading", { name: /商家甲/ }) });
+  await expect(
+    customer
+      .locator(".dialog-header")
+      .getByRole("button", { name: "同步此客户", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("customer-header.png") });
+  await customer.getByRole("button", { name: "关闭弹窗" }).click();
+  const submitted = await (
+    await request.post("/api/operations", {
+      data: {
+        action: "sync",
+        scope: { account_id: "acct-1" },
+        idempotency_key: "diagnostic",
+      },
+    })
+  ).json();
+  const detail = await (
+    await request.get(`/api/operations/${submitted.id}?account_id=acct-1`)
+  ).json();
+  const record = {
+    ...detail,
+    state: "failed",
+    source_state: "failed",
+    error_code: "source_incomplete",
+    counts: {
+      ...detail.counts,
+      conversations_total: 3,
+      completed_conversations: 2,
+      failed_conversations: 1,
+    },
+    items: [
+      {
+        phase: "source",
+        state: "failed",
+        error_code: "source_incomplete",
+        gaps: ["message_sender_invalid"],
+      },
+    ],
+  };
+  const { items, ...summary } = record;
+  await page.route("**/api/operations?**", (route) =>
+    route.fulfill({
+      json: { items: [summary], total: 1, page: 1, page_size: 20 },
+    }),
+  );
+  await page.route(`**/api/operations/${submitted.id}?**`, (route) =>
+    route.fulfill({ json: record }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "整理记录", exact: true }).click();
+  const history = page.getByRole("dialog", { name: "整理记录" });
+  await history.getByRole("button", { name: /来源同步不完整/ }).click();
+  await expect(history.getByText("目标会话 3")).toBeVisible();
+  await expect(history.getByText("已完成 2")).toBeVisible();
+  await expect(history.getByText("未完成 1")).toBeVisible();
+  await expect(history.getByText(/发送人标识异常/)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("source-gaps.png") });
+});

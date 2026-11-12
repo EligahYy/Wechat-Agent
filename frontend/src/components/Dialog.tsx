@@ -6,6 +6,7 @@ export function Dialog({
   onClose,
   children,
   footer,
+  headerActions,
   wide = false,
 }: {
   open: boolean;
@@ -13,6 +14,7 @@ export function Dialog({
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  headerActions?: ReactNode;
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null),
@@ -92,14 +94,17 @@ export function Dialog({
     >
       <header className="dialog-header">
         <h2 id={titleId}>{title}</h2>
-        <button
-          type="button"
-          className="icon-button"
-          aria-label="关闭弹窗"
-          onClick={onClose}
-        >
-          <X size={20} />
-        </button>
+        <div className="dialog-header-actions">
+          {headerActions}
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="关闭弹窗"
+            onClick={onClose}
+          >
+            <X size={20} />
+          </button>
+        </div>
       </header>
       <div className="dialog-body">{children}</div>
       {footer && <footer className="dialog-footer">{footer}</footer>}

@@ -117,7 +117,7 @@ def _complete_source(conn, operation, owner, result):
         targets = []
         if operation.action == "sync_and_organize":
             targets = conn.execute("""SELECT c.contact_id,c.role_version FROM contacts c
-                WHERE c.account_id=? AND c.role='merchant' AND c.is_self=0
+                WHERE c.account_id=? AND c.role='merchant' AND c.is_self=0 AND c.identity_state='active'
                 AND (? IS NULL OR c.contact_id=?) AND EXISTS (
                     SELECT 1 FROM messages m WHERE m.account_id=c.account_id AND (m.sender_id=c.contact_id OR EXISTS(
                         SELECT 1 FROM members s WHERE s.account_id=c.account_id AND s.contact_id=c.contact_id

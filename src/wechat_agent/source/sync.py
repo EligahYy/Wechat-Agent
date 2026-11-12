@@ -85,14 +85,16 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
             return result
         people = await source.contacts()
         rooms = await source.conversations()
-        archive_metadata(conn, scope.account_id, people, rooms)
+        if archive_metadata(conn, scope.account_id, people, rooms):
+            result.gaps.append("source_contact_identity_invalid")
     except SourceError as error:
         result.gaps = [str(error)]
         return result
     available = {room.conversation_id: room for room in rooms}
     targets = set(available)
     if scope.contact_id is not None:
-        if not any(person.key.contact_id == scope.contact_id for person in people):
+        if not conn.execute("SELECT 1 FROM contacts WHERE account_id=? AND contact_id=? AND identity_state='active'",
+                            (scope.account_id, scope.contact_id)).fetchone():
             raise SourceError("source_contact_unavailable")
         linked = {row[0] for row in conn.execute("SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?",
                                                (scope.account_id, scope.contact_id))}
@@ -225,7 +227,7 @@ async def _run_cli(args, settings):
         for row in conn.execute("""SELECT i.code,i.raw_json,c.kind FROM source_issues i JOIN conversations c
                                    ON c.account_id=i.account_id AND c.conversation_id=i.conversation_id
                                    WHERE i.account_id=? AND i.resolved=0""", (args.source_account,)):
-            code = row[0] if row[0] in {"message_sender_missing", "message_contract_invalid", "source_message_id_unavailable"} else "message_contract_invalid"
+            code = row[0] if row[0] in {"message_sender_missing", "message_sender_invalid", "message_contract_invalid", "source_message_id_unavailable"} else "message_contract_invalid"
             technical = _message_issue(json.loads(row[1]), 0, code)
             counts[(code, technical["msg_type"], technical["sub_type"], row[2])] += 1
         summary = [{"code": key[0], "msg_type": key[1], "sub_type": key[2], "conversation_kind": key[3], "count": count}

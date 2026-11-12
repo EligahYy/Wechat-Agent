@@ -3,10 +3,11 @@
 from importlib.resources import files
 from pathlib import Path
 import sqlite3
+from ..identities import is_person_identifier
 
 
-SCHEMA_VERSION = 3
-_MIGRATIONS = ((1, "001_archive.sql"), (2, "002_source_sync.sql"), (3, "003_operations.sql"))
+SCHEMA_VERSION = 4
+_MIGRATIONS = ((1, "001_archive.sql"), (2, "002_source_sync.sql"), (3, "003_operations.sql"), (4, "004_identity_integrity.sql"))
 
 
 def open_db(path: Path) -> sqlite3.Connection:
@@ -53,6 +54,7 @@ def _execute_script(conn: sqlite3.Connection, script: str) -> None:
 def migrate(conn: sqlite3.Connection) -> None:
     if conn.in_transaction:
         raise RuntimeError("migration_requires_idle_connection")
+    conn.create_function("wechat_person_id_valid", 1, lambda value: int(is_person_identifier(value)), deterministic=True)
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("""CREATE TABLE IF NOT EXISTS schema_version (

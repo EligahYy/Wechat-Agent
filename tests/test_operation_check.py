@@ -40,3 +40,24 @@ def test_verifier_output_cannot_overwrite_archive(tmp_path, monkeypatch):
         main(["--account", "acct-1", "--output", str(path)])
     assert error.value.code == 2
     assert path.read_bytes() == b"existing database"
+
+
+def test_latest_diagnostic_reads_existing_failure_without_starting_a_job(client):
+    from tests.factories import seed_case
+    from wechat_agent.operations.check import check_operation
+    from wechat_agent.storage.db import open_db
+    with closing(open_db(client.app.state.database_path)) as conn:
+        seed_case(conn)
+    created = client.post("/api/operations", json={
+        "action": "sync", "scope": {"account_id": "acct-1"}, "idempotency_key": "existing",
+    }).json()
+    with closing(open_db(client.app.state.database_path)) as conn, conn:
+        conn.execute("UPDATE operations SET state='failed',error_code='source_incomplete' WHERE id=?", (created["id"],))
+        conn.execute("UPDATE operation_items SET state='failed',gaps_json=? WHERE operation_id=?",
+                     (json.dumps(["message_sender_invalid"]), created["id"]))
+    report = check_operation(client, "acct-1", latest=True)
+    assert report["operation_id"] == created["id"]
+    assert report["source_gaps"] == ["message_sender_invalid"]
+    assert report["contact_quality"]["quarantined"] == 0
+    assert client.get("/api/operations", params={"account_id": "acct-1"}).json()["total"] == 1
+    assert "acct-1" not in json.dumps(report)

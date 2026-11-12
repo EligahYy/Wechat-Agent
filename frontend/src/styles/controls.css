@@ -359,6 +359,12 @@ input[type="checkbox"] {
   font-size: 22px;
   min-width: 0;
 }
+.dialog-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
 .dialog-body {
   padding: 26px 28px;
   overflow: auto;
