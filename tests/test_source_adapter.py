@@ -19,21 +19,48 @@ class NativeServer:
                          {"username": "room@chatroom", "display_name": "Real room"}]
         self.rows = [message(i, talker="room@chatroom") for i in range(1, 4)]
         self.skipped = 0
+        self.patched = True
+        self.groups = []
+        self.generation = 0
+        self.refresh_state = 'ready'
+        self.metadata_override = None
 
     def respond(self, request):
         self.requests.append(request)
         if request.url.path.endswith("health"):
-            return httpx.Response(200, json=health(account=self.account))
+            value = health(account=self.account)
+            if self.patched:
+                value.update(cli_version='0.7.4+wechat-agent.1', metadata=self.metadata())
+            return httpx.Response(200, json=value)
+        if request.url.path.endswith('/identity/refresh'):
+            self.generation += 1
+            return httpx.Response(202, json={'generation': self.generation - 1, 'refresh_state':'queued'})
         offset = int(request.url.params["offset"])
         limit = int(request.url.params["limit"])
-        if request.url.path.endswith("contacts"):
+        if request.url.path.endswith('/identity/contacts'):
+            def field(row, key):
+                value = row.get(key)
+                if isinstance(value, dict): return value
+                return {'value': value or None, 'state': 'known' if value else 'empty'}
+            rows = [{'user_name': row['user_name'], 'remark':field(row,'remark'),
+                     'nickname':field(row,'nick_name'), 'relationship':'unknown'} for row in self.people]
+        elif request.url.path.endswith('/identity/groups'):
+            rows = self.groups
+        elif request.url.path.endswith("contacts"):
             rows = self.people
         elif request.url.path.endswith("sessions"):
             rows = self.sessions
         else:
             rows = self.rows
-        return httpx.Response(200, json=envelope(rows[offset:offset + limit], offset=offset, limit=limit,
-                                                total=len(rows), skipped=self.skipped))
+        value = envelope(rows[offset:offset + limit], offset=offset, limit=limit,
+                         total=len(rows), skipped=self.skipped)
+        if '/identity/' in request.url.path: value['metadata'] = self.metadata()
+        return httpx.Response(200, json=value)
+
+    def metadata(self):
+        return self.metadata_override or {'contract':'wechat-agent-source-v1', 'patch_id':'wechat-agent.1',
+            'mode':'sqlcipher','generation':self.generation,'resolver_generation':self.generation,
+            'refreshed_at':'2026-11-12T00:00:00Z','refresh_state':self.refresh_state}
 
 
 def adapter(server):

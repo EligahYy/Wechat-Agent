@@ -32,6 +32,34 @@ class ContactRecord(BaseModel):
     remark: str | None
     nickname: str | None
     is_self: bool
+    remark_state: Literal['known', 'empty', 'unreadable', 'unknown'] = 'unknown'
+    nickname_state: Literal['known', 'empty', 'unreadable', 'unknown'] = 'unknown'
+
+    @model_validator(mode='before')
+    @classmethod
+    def explicit_internal_names(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            for field in ('remark', 'nickname'):
+                value.setdefault(field + '_state', 'known' if value.get(field) else 'empty')
+        return value
+
+
+class NameEvidence(BaseModel):
+    contact_id: str = Field(min_length=1)
+    origin: Literal['group_member', 'session_sender']
+    conversation_id: str = Field(min_length=1)
+    value: str | None
+    state: Literal['known', 'empty', 'unreadable', 'unknown']
+    observed_at: AwareDatetime | None = None
+
+    @model_validator(mode='after')
+    def valid_evidence(self):
+        if not is_person_identifier(self.contact_id):
+            raise ValueError('invalid_name_identity')
+        if self.state == 'known' and not self.value:
+            raise ValueError('known_name_requires_value')
+        return self
 
 
 class ConversationRecord(BaseModel):
@@ -39,7 +67,18 @@ class ConversationRecord(BaseModel):
     conversation_id: str = Field(min_length=1)
     kind: Literal["private", "group"]
     title: str | None
+    origin: Literal['session', 'metadata_candidate', 'group_directory', 'unknown'] = 'unknown'
     member_ids: list[str] = Field(default_factory=list)
+    membership_state: Literal['known', 'empty', 'unreadable', 'unknown'] = 'unknown'
+    name_evidence: list[NameEvidence] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def names_match_scope(self):
+        if any(name.conversation_id != self.conversation_id for name in self.name_evidence):
+            raise ValueError('name_conversation_mismatch')
+        if self.kind != 'group' and any(name.origin == 'group_member' for name in self.name_evidence):
+            raise ValueError('group_name_requires_group')
+        return self
 
 
 class MessageRecord(BaseModel):
@@ -71,7 +110,7 @@ class MessageRecord(BaseModel):
 
 
 class SourceIssue(BaseModel):
-    code: Literal["message_sender_missing", "message_sender_invalid", "source_message_id_unavailable", "message_contract_invalid"]
+    code: Literal["message_sender_missing", "message_sender_invalid", "message_sender_conflict", "source_message_id_unavailable", "message_contract_invalid"]
     message_id: str | None = None
     raw: dict
 

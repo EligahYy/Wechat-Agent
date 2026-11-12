@@ -17,6 +17,7 @@ async def test_contact_diagnostic_compares_names_without_messages_or_writes(db):
         remark='archived old name', nickname=None, is_self=False)], [])
     before = db.total_changes
     server = NativeServer()
+    server.patched = False
     async with adapter(server) as source:
         report = await collect_contact_diagnostics(source, db)
     assert report['comparison'] == {'shared': 1, 'source_only': 1, 'archive_only': 0, 'different_names': 1}
@@ -34,6 +35,7 @@ async def test_contact_diagnostic_compares_names_without_messages_or_writes(db):
 async def test_contact_diagnostic_distinguishes_empty_rejected_and_valid_names(db):
     from wechat_agent.contacts.check import collect_contact_diagnostics
     server = NativeServer()
+    server.patched = False
     server.people = [
         {'user_name': 'one', 'remark': '', 'nick_name': ''},
         {'user_name': 'two', 'remark': 'bad\ufffdname', 'nick_name': ''},
@@ -50,6 +52,7 @@ async def test_contact_diagnostic_distinguishes_empty_rejected_and_valid_names(d
 async def test_contact_diagnostic_never_reads_metadata_after_account_mismatch(db):
     from wechat_agent.contacts.check import collect_contact_diagnostics
     server = NativeServer()
+    server.patched = False
     server.account = 'wrong-account'
     async with adapter(server) as source:
         report = await collect_contact_diagnostics(source, db)
@@ -71,3 +74,23 @@ def test_diagnostic_report_cannot_replace_database_or_config(tmp_path, monkeypat
         main(['--account', 'account-a', '--source-config', str(config), '--output', str(path)])
     assert error.value.code == 2
     assert path.read_text() == 'do not change'
+
+
+@pytest.mark.asyncio
+async def test_patched_diagnostic_reports_errors_and_last_successful_metadata(db):
+    from wechat_agent.contacts.check import collect_contact_diagnostics
+    archive_metadata(db, 'account-a', [ContactRecord(
+        key=ContactKey(account_id='account-a',contact_id='merchant-a'),
+        remark='old name',nickname=None,is_self=False)], [], metadata={
+        'mode':'sqlcipher','generation':2,'resolver_generation':2,
+        'patch_id':'wechat-agent.1','refreshed_at':'2026-11-12T00:00:00Z'})
+    server = NativeServer()
+    server.people[0]['remark'] = {'value':None,'state':'unreadable'}
+    async with adapter(server) as source:
+        report = await collect_contact_diagnostics(source,db)
+    assert report['source']['field_errors']['remark'] == 1
+    assert report['archive']['metadata']['generation'] == 2
+    assert report['archive']['metadata']['observed_at']
+    assert 'source_name_read_failed' in report['gaps']
+    assert 'old name' not in json.dumps(report)
+    assert 'account-a' not in json.dumps(report)

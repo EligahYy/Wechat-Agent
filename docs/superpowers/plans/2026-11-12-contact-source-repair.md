@@ -48,10 +48,10 @@
 
 **Files:** Create storage/migrations/005_contact_names.sql、source/names.py、tests/test_contact_names.py；Modify source契约／adapter／repository、contacts/service、db版本和诊断。
 
-- [ ] 失败测试覆盖状态明确清空／失败保留、已标识session发送人名、群作用域与冲突、真实备注优先、旧库升级／回滚、跨账号。
-- [ ] `NameEvidence`保存origin／conversation／value／state／observed_at；成功元数据记录来源版本与代次、最后观察时间。只消费核验能力，原版保留显式未验证状态。
-- [ ] 全部读取名称字段统一质量规则；群／会话名不冒充全局昵称，复制微信名称仅用于可确认的全局名称；保留原文／人工身份。
-- [ ] 验证并提交R3。
+- [x] 失败测试覆盖状态明确清空／失败保留、已标识session发送人名、群作用域与冲突、真实备注优先、旧库升级／回滚、跨账号。
+- [x] `NameEvidence`保存origin／conversation／value／state／observed_at；成功元数据记录来源版本与代次、最后观察时间。只消费核验能力，原版保留显式未验证状态。
+- [x] 全部读取名称字段统一质量规则；群／会话名不冒充全局昵称，复制微信名称仅用于可确认的全局名称；保留原文／人工身份。
+- [x] 验证并提交R3。
 
 ### Task 4: R4 独立刷新入口与旧数据回补
 

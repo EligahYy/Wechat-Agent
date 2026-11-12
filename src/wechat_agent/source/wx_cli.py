@@ -5,7 +5,8 @@ import hashlib
 import json
 from urllib.parse import quote
 
-from pydantic import BaseModel, Field, StrictBool, StrictInt, ValidationInfo, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, StrictBool, StrictInt, ValidationInfo, field_validator, model_validator
+from typing import Literal
 
 from .contracts import MessageRecord
 from ..identities import is_person_identifier
@@ -16,11 +17,36 @@ class Account(BaseModel):
     name: str = ""
 
 
+class MetadataInfo(BaseModel):
+    contract: Literal['wechat-agent-source-v1']
+    patch_id: Literal['wechat-agent.1']
+    mode: Literal['sqlcipher', 'decrypted_cache']
+    generation: StrictInt = Field(ge=0)
+    resolver_generation: StrictInt = Field(ge=0)
+    refreshed_at: AwareDatetime
+    refresh_state: Literal['ready', 'running', 'failed']
+
+    @model_validator(mode='after')
+    def consistent_resolver(self):
+        if self.refresh_state == 'ready' and self.generation != self.resolver_generation:
+            raise ValueError('resolver_generation_mismatch')
+        return self
+
+
 class Health(BaseModel):
     ready: StrictBool
     worker_id: str = Field(min_length=1)
     cli_version: str = Field(min_length=1)
     current_account: Account
+    metadata: MetadataInfo | None = None
+
+
+def verified_identity_patch(active):
+    return active.cli_version.split()[0] == '0.7.4+wechat-agent.1' and active.metadata is not None
+
+
+def supported_source_version(active):
+    return active.cli_version.split()[0] == '0.7.4' or verified_identity_patch(active)
 
 
 class Paging(BaseModel):
@@ -59,6 +85,13 @@ class WireMessage(BaseModel):
     create_time: StrictInt
     content: dict | str
     status: StrictInt
+    sender_issue: Literal['sender_prefix_conflict'] | None = None
+
+    @model_validator(mode='after')
+    def conflicting_sender_is_not_attributed(self):
+        if self.sender_issue and self.msg_type not in {10000, 10002}:
+            raise ValueError('source_sender_conflict')
+        return self
 
     @field_validator("sender")
     @classmethod
@@ -77,7 +110,9 @@ class WireMessage(BaseModel):
         return value
 
 
-def sender_issue_code(error):
+def sender_issue_code(error, raw=None):
+    if raw and raw.get('sender_issue') == 'sender_prefix_conflict':
+        return 'message_sender_conflict'
     for item in error.errors():
         if item["loc"] == ("sender",):
             return "message_sender_invalid" if str(item.get("ctx", {}).get("error")) == "invalid_source_sender" else "message_sender_missing"

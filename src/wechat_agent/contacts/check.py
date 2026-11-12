@@ -13,6 +13,7 @@ from ..identities import choose_name, is_person_identifier
 from ..source.adapter import SourceError, WXCLIAdapter
 from ..source.probe import SourceConfig
 from ..storage.db import open_existing_db
+from .names import metadata_status, identity_quality
 
 
 def _summarize(rows):
@@ -40,7 +41,9 @@ def _archive(conn, account_id):
     rows = conn.execute('''SELECT contact_id,remark,nickname,identity_state FROM contacts
                            WHERE account_id=? AND is_self=0''', (account_id,))
     counts, names = _summarize((row[0], row[1], row[2], row[3] == 'quarantined') for row in rows)
-    return {'status': 'read', 'counts': counts}, names
+    status = metadata_status(conn, account_id)
+    quality = identity_quality(conn, account_id) if status is not None else None
+    return {'status': 'read', 'counts': counts, 'metadata': status, 'display_quality': quality}, names
 
 
 async def collect_contact_diagnostics(source, conn=None):
@@ -73,7 +76,21 @@ async def collect_contact_diagnostics(source, conn=None):
     report['source'] = {
         'version': checked.facts.get('cli_version', '').split(' ')[0],
         'metadata': metadata, 'counts': counts, 'field_errors': None,
+
     }
+    if metadata.get('patch_id'):
+        errors = {field: sum(getattr(person, field + '_state') == 'unreadable' for person in people if not person.is_self)
+                  for field in ('remark','nickname')}
+        errors['group_rosters'] = sum(room.membership_state == 'unreadable' for room in rooms)
+        report['source']['field_errors'] = errors
+        counts['scoped_name_candidates'] = sum(len(room.name_evidence) for room in rooms)
+        counts['group_rosters_known'] = sum(room.kind == 'group' and room.membership_state == 'known' for room in rooms)
+        counts['group_rosters_unknown'] = sum(room.kind == 'group' and room.membership_state != 'known' for room in rooms)
+        if errors['remark'] or errors['nickname']:
+            report['gaps'].append('source_name_read_failed')
+        if errors['group_rosters']:
+            report['gaps'].append('source_group_members_unreadable')
+        report['gaps'].extend(getattr(source, 'metadata_gaps', []))
     if old_names is not None:
         shared = new_names.keys() & old_names.keys()
         report['comparison'] = {

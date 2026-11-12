@@ -12,7 +12,7 @@ class FakeSource:
         data = json.loads((Path(__file__).parents[1] / "fixtures/source-overlap.json").read_text())
         self.account_id = data["account_id"]
         self.people = [ContactRecord.model_validate(row) for row in data["contacts"]]
-        self.rooms = [ConversationRecord.model_validate(row) for row in data["conversations"]]
+        self.rooms = [ConversationRecord.model_validate({**row, "membership_state": "known" if row["kind"] == "group" and row.get("member_ids") else "unknown"}) for row in data["conversations"]]
         self.pages = pages or {row["conversation_id"]: [SourcePage.model_validate(row)] for row in data["pages"]}
         self.calls = []
 

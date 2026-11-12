@@ -9,7 +9,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from .contracts import CapabilityReport, ContactKey, ContactRecord
-from .wx_cli import Envelope, Health, parse_message, sender_issue_code
+from .wx_cli import Envelope, Health, parse_message, sender_issue_code, supported_source_version
 
 
 WX_MESSAGE_MAPPING = {"sender_id": "sender", "message_id": "server_id", "conversation_id": "talker", "sent_at": "create_time"}
@@ -45,6 +45,8 @@ async def _get(client: httpx.AsyncClient, path: str, params=None) -> dict:
     response = await client.get(path, params=params)
     if response.status_code == 401:
         raise ProbeError("source_authentication_failed")
+    if response.status_code == 409:
+        raise ProbeError('source_metadata_changed')
     if 300 <= response.status_code < 400:
         raise ProbeError("source_redirect_refused")
     if response.status_code >= 500:
@@ -99,7 +101,7 @@ def normalize_probe(raw: dict, mapping: dict) -> CapabilityReport:
         try:
             parsed = parse_message(row, account)
         except ValidationError as error:
-            reason = sender_issue_code(error)
+            reason = sender_issue_code(error, row)
         except ValueError as error:
             reason = "source_message_id_unavailable" if str(error) == "message_id_unavailable" else "message_contract_invalid"
         except (OverflowError, OSError):
@@ -233,7 +235,7 @@ async def run_source_probe(config_path: Path | None, *, transport: httpx.AsyncBa
                 return CapabilityReport(component="source", status="pending", facts=facts, gaps=["source_account_not_pinned"])
             if active.current_account.wxid != config.expected_account_id:
                 raise ProbeError("source_account_mismatch")
-            if active.cli_version.split()[0] != "0.7.4":
+            if not supported_source_version(active):
                 return CapabilityReport(component="source", status="pending", facts=facts, gaps=["source_version_unverified"])
             gaps = await _samples(client, active, facts) if samples else []
             return CapabilityReport(component="source", status="pending" if gaps else "passed", facts=facts, gaps=gaps)

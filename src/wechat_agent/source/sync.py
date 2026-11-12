@@ -83,10 +83,21 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
         if report.status != "passed":
             result.gaps = report.gaps or ["source_not_ready"]
             return result
+        if report.facts.get('sender_provenance_verified') is False:
+            result.gaps = ['source_patch_required']
+            return result
         people = await source.contacts()
         rooms = await source.conversations()
-        if archive_metadata(conn, scope.account_id, people, rooms):
+        metadata = report.facts.get('metadata')
+        if metadata:
+            metadata = {**metadata, 'source_version': report.facts.get('cli_version')}
+        if archive_metadata(conn, scope.account_id, people, rooms, metadata=metadata):
             result.gaps.append("source_contact_identity_invalid")
+        result.gaps.extend(getattr(source, 'metadata_gaps', []))
+        if any(p.remark_state == 'unreadable' or p.nickname_state == 'unreadable' for p in people):
+            result.gaps.append('source_name_read_failed')
+        if any(r.membership_state == 'unreadable' for r in rooms):
+            result.gaps.append('source_group_members_unreadable')
     except SourceError as error:
         result.gaps = [str(error)]
         return result
@@ -100,9 +111,7 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
                                                (scope.account_id, scope.contact_id))}
         linked.add(scope.contact_id)
         targets &= linked
-        if any(room.kind == "group" and not conn.execute(
-                "SELECT 1 FROM members WHERE account_id=? AND conversation_id=? LIMIT 1",
-                (scope.account_id, room.conversation_id)).fetchone() for room in rooms):
+        if any(room.kind == 'group' and (room.membership_state != 'known' or not room.member_ids) for room in rooms):
             result.gaps.append("source_group_membership_unverified")
     if conversation_ids is not None:
         requested = set(conversation_ids)
@@ -227,7 +236,7 @@ async def _run_cli(args, settings):
         for row in conn.execute("""SELECT i.code,i.raw_json,c.kind FROM source_issues i JOIN conversations c
                                    ON c.account_id=i.account_id AND c.conversation_id=i.conversation_id
                                    WHERE i.account_id=? AND i.resolved=0""", (args.source_account,)):
-            code = row[0] if row[0] in {"message_sender_missing", "message_sender_invalid", "message_contract_invalid", "source_message_id_unavailable"} else "message_contract_invalid"
+            code = row[0] if row[0] in {"message_sender_missing", "message_sender_invalid", "message_sender_conflict", "message_contract_invalid", "source_message_id_unavailable"} else "message_contract_invalid"
             technical = _message_issue(json.loads(row[1]), 0, code)
             counts[(code, technical["msg_type"], technical["sub_type"], row[2])] += 1
         summary = [{"code": key[0], "msg_type": key[1], "sub_type": key[2], "conversation_kind": key[3], "count": count}

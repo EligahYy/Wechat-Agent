@@ -1,5 +1,6 @@
 """Pinned, read-only wx-cli adapter. No shell commands, proxies or media parsing."""
 
+import asyncio
 import hashlib
 import json
 import os
@@ -11,9 +12,10 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 
 from .contracts import (AttachmentFetch, CapabilityReport, ContactKey, ContactRecord,
-                        ConversationRecord, SourceIssue, SourcePage)
+                        ConversationRecord, NameEvidence, SourceIssue, SourcePage)
 from .probe import ProbeError, SourceConfig, _get
-from .wx_cli import Envelope, Health, parse_message, sender_issue_code
+from .wx_cli import Envelope, Health, MetadataInfo, parse_message, sender_issue_code, verified_identity_patch, supported_source_version
+from .identity_wire import WireName
 from ..identities import is_person_identifier
 
 
@@ -47,6 +49,9 @@ class WXCLIAdapter:
         self._people = None
         self._groups = {}
         self._self_name = None
+        self._latest_metadata = None
+        self._metadata_epoch = None
+        self.metadata_gaps = []
 
     @property
     def account_id(self):
@@ -68,19 +73,24 @@ class WXCLIAdapter:
         except httpx.RequestError:
             raise SourceError("source_unreachable") from None
 
-    async def _health(self):
+    async def _health(self, *, allow_refresh=False):
         try:
             active = Health.model_validate(await self._read("/api/v1/health"))
         except ValidationError:
             raise SourceError("source_contract_invalid") from None
         if active.current_account.wxid != self.account_id:
             raise SourceError("source_account_mismatch")
-        if not active.ready:
+        if active.metadata and not allow_refresh and active.metadata.refresh_state != 'ready':
+            raise SourceError('source_metadata_refresh_failed' if active.metadata.refresh_state == 'failed' else 'source_metadata_refreshing')
+        if not active.ready and not (allow_refresh and active.metadata and active.metadata.refresh_state != 'ready'):
             raise SourceError("source_not_ready")
-        if active.cli_version.split()[0] != "0.7.4":
+        if not supported_source_version(active):
             raise SourceError("source_version_unverified")
         if self._worker is not None and self._worker != active.worker_id:
             raise SourceError("source_changed_during_sync")
+        if self._metadata_epoch is not None and active.metadata and active.metadata.generation != self._metadata_epoch:
+            raise SourceError('source_metadata_changed')
+        self._latest_metadata = active.metadata if verified_identity_patch(active) else None
         self._worker = active.worker_id
         self._self_name = active.current_account.name or None
         return active
@@ -93,12 +103,24 @@ class WXCLIAdapter:
         return CapabilityReport(component="source", status="passed", facts={
             "scope": "connection", "history_complete": False, "ready": True,
             "cli_version": active.cli_version,
+            "sender_provenance_verified": verified_identity_patch(active),
+            "metadata": active.metadata.model_dump(mode='json') if verified_identity_patch(active) else None,
             "account_fingerprint": hashlib.sha256(self.account_id.encode()).hexdigest()[:12]})
 
     async def _page(self, path, params):
         await self._health()
         raw = await self._read(path, params)
         await self._health()
+        if '/identity/' in path:
+            info = raw.get('metadata')
+            if isinstance(info, dict) and info.get('generation') != self._metadata_epoch:
+                raise SourceError('source_metadata_changed')
+            try:
+                metadata = MetadataInfo.model_validate(info)
+            except ValidationError:
+                raise SourceError('source_contract_invalid') from None
+            if metadata.generation != self._metadata_epoch or metadata.refresh_state != 'ready':
+                raise SourceError('source_metadata_changed')
         try:
             page = Envelope.model_validate(raw)
         except ValidationError:
@@ -109,10 +131,16 @@ class WXCLIAdapter:
         return page
 
     async def _metadata(self, path, identity):
+        await self._health()
+        if self._latest_metadata and self._metadata_epoch is None:
+            self._metadata_epoch = self._latest_metadata.generation
         rows = []
         seen = set()
         for offset in range(0, 200000, 200):
-            page = await self._page(path, {"limit": 200, "offset": offset, "show_hidden": "1", "order": "asc"})
+            params = {"limit": 200, "offset": offset, "show_hidden": "1", "order": "asc"}
+            if '/identity/' in path:
+                params['generation'] = self._metadata_epoch
+            page = await self._page(path, params)
             if page.stats.skipped or page.stats.shard_warnings:
                 raise SourceError("source_metadata_partial")
             for row in page.items:
@@ -130,19 +158,29 @@ class WXCLIAdapter:
         raise SourceError("source_metadata_page_limit_reached")
 
     async def contacts(self):
-        people = []
-        groups = {}
-        for row in await self._metadata("/api/v1/contacts", "user_name"):
-            identifier = row["user_name"]
-            if identifier.endswith("@chatroom"):
-                groups[identifier] = row.get("remark") or row.get("nick_name") or None
-                continue
+        await self._health()
+        self.metadata_gaps = []
+        strict = self._latest_metadata is not None
+        people, groups = [], {}
+        path = '/api/v1/identity/contacts' if strict else '/api/v1/contacts'
+        for row in await self._metadata(path, 'user_name'):
+            identifier = row['user_name']
             try:
+                if strict:
+                    remark, nickname = WireName.model_validate(row.get('remark')), WireName.model_validate(row.get('nickname'))
+                    values = {'remark': remark.value, 'nickname': nickname.value,
+                              'remark_state': remark.state, 'nickname_state': nickname.state}
+                else:
+                    values = {'remark': row.get('remark') or None, 'nickname': row.get('nick_name') or None,
+                              'remark_state': 'known' if row.get('remark') else 'unknown',
+                              'nickname_state': 'known' if row.get('nick_name') else 'unknown'}
+                if identifier.endswith('@chatroom'):
+                    groups[identifier] = values['remark'] or values['nickname']
+                    continue
                 people.append(ContactRecord(key=ContactKey(account_id=self.account_id, contact_id=identifier),
-                                            remark=row.get("remark") or None, nickname=row.get("nick_name") or None,
-                                            is_self=identifier == self.account_id))
+                                            is_self=identifier == self.account_id, **values))
             except ValidationError:
-                raise SourceError("source_contact_contract_invalid") from None
+                raise SourceError('source_contact_contract_invalid') from None
         if not any(person.is_self for person in people):
             people.append(ContactRecord(key=ContactKey(account_id=self.account_id, contact_id=self.account_id),
                                         remark=None, nickname=self._self_name, is_self=True))
@@ -153,28 +191,94 @@ class WXCLIAdapter:
         if self._people is None:
             await self.contacts()
         rooms = {}
-        for row in await self._metadata("/api/v1/sessions", "username"):
-            identifier = row["username"]
-            kind = "group" if identifier.endswith("@chatroom") else "private"
+        for row in await self._metadata('/api/v1/sessions', 'username'):
+            identifier = row['username']
+            kind = 'group' if identifier.endswith('@chatroom') else 'private'
+            evidence = []
+            sender, value = row.get('last_msg_sender'), row.get('last_sender_display_name')
+            if is_person_identifier(sender) and isinstance(value, str) and value.strip() and value.strip() != sender:
+                evidence.append(NameEvidence(contact_id=sender, conversation_id=identifier,
+                    value=value, state='known' if self._latest_metadata else 'unknown', origin='session_sender'))
             try:
-                rooms[identifier] = ConversationRecord(
-                    account_id=self.account_id, conversation_id=identifier, kind=kind,
-                    title=row.get("display_name") or None,
-                    member_ids=[] if kind == "group" else list({identifier, self.account_id}))
+                rooms[identifier] = ConversationRecord(account_id=self.account_id, conversation_id=identifier,
+                    kind=kind, title=row.get('display_name') or None, name_evidence=evidence, origin='session',
+                    member_ids=[] if kind == 'group' else list({identifier, self.account_id}))
             except ValidationError:
-                raise SourceError("source_conversation_contract_invalid") from None
+                raise SourceError('source_conversation_contract_invalid') from None
         for identifier, title in self._groups.items():
             rooms.setdefault(identifier, ConversationRecord(account_id=self.account_id, conversation_id=identifier,
-                                                            kind="group", title=title))
+                                                            kind='group', title=title, origin='group_directory'))
+        if self._latest_metadata:
+            try:
+                group_rows = await self._metadata('/api/v1/identity/groups', 'username')
+            except SourceError as error:
+                if str(error) not in {'source_server_error', 'source_request_failed'}:
+                    raise
+                self.metadata_gaps.append('source_group_members_unavailable')
+                group_rows = []
+            for row in group_rows:
+                identifier = row['username']
+                if not identifier.endswith('@chatroom') or row.get('members_state') not in {'known','empty','unreadable'}:
+                    raise SourceError('source_group_contract_invalid')
+                members = row.get('members')
+                if not isinstance(members, list):
+                    raise SourceError('source_group_contract_invalid')
+                evidence, identifiers = [], []
+                try:
+                    for member in members:
+                        if not isinstance(member, dict) or not is_person_identifier(member.get('user_name')):
+                            raise ValueError()
+                        person_id = member['user_name']
+                        identifiers.append(person_id)
+                        value = member.get('display_name')
+                        evidence.append(NameEvidence(contact_id=person_id, conversation_id=identifier,
+                            origin='group_member', value=value, state='known' if value else 'empty'))
+                    room = rooms.setdefault(identifier, ConversationRecord(account_id=self.account_id,
+                        conversation_id=identifier, kind='group', title=self._groups.get(identifier), origin='group_directory'))
+                    rooms[identifier] = ConversationRecord.model_validate({**room.model_dump(),
+                        'member_ids': identifiers, 'membership_state': 'empty' if row['members_state'] == 'known' and not identifiers else row['members_state'],
+                        'name_evidence': [*room.name_evidence, *evidence]})
+                except (ValidationError, ValueError, TypeError):
+                    raise SourceError('source_group_contract_invalid') from None
         for person in self._people:
             if not person.is_self and is_person_identifier(person.key.contact_id):
                 identifier = person.key.contact_id
-                rooms.setdefault(identifier, ConversationRecord(
-                    account_id=self.account_id, conversation_id=identifier, kind="private",
-                    title=person.remark or person.nickname, member_ids=[identifier, self.account_id]))
+                rooms.setdefault(identifier, ConversationRecord(account_id=self.account_id, conversation_id=identifier,
+                    kind='private', title=person.remark or person.nickname, member_ids=[identifier, self.account_id], origin='metadata_candidate'))
+        await self._health()
+        self._metadata_epoch = None
         return list(rooms.values())
 
+    async def refresh_metadata(self):
+        self._metadata_epoch = None
+        active = await self._health(allow_refresh=True)
+        if not verified_identity_patch(active):
+            raise SourceError('source_patch_required')
+        generation = active.metadata.generation
+        try:
+            response = await self._client.post('/api/v1/identity/refresh')
+        except httpx.HTTPError:
+            raise SourceError('source_metadata_refresh_failed') from None
+        if response.status_code != 202:
+            raise SourceError('source_metadata_refresh_failed')
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            active = await self._health(allow_refresh=True)
+            if active.metadata is None:
+                raise SourceError('source_patch_required')
+            if active.metadata.refresh_state == 'failed':
+                raise SourceError('source_metadata_refresh_failed')
+            if active.metadata.generation > generation and active.metadata.refresh_state == 'ready' and active.ready:
+                self._people = None
+                return
+            await asyncio.sleep(0.2)
+        raise SourceError('source_metadata_refresh_timeout')
+
     async def messages(self, conversation_id, cursor, limit):
+        if self._latest_metadata is None:
+            active = await self._health()
+            if not verified_identity_patch(active):
+                raise SourceError('source_patch_required')
         if type(limit) is not int or not 1 <= limit <= 500:
             raise SourceError("source_page_size_invalid")
         if not isinstance(conversation_id, str) or not conversation_id.strip():
@@ -208,7 +312,7 @@ class WXCLIAdapter:
             try:
                 record = parse_message(row, self.account_id)
             except ValidationError as error:
-                code = sender_issue_code(error)
+                code = sender_issue_code(error, row)
             except (ValueError, OverflowError, OSError) as error:
                 code = "source_message_id_unavailable" if str(error) == "message_id_unavailable" else "message_contract_invalid"
             else:

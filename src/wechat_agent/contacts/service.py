@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from ..source.contracts import ContactKey
-from ..identities import choose_name
+from .names import load_catalog, resolve_name, identity_quality, metadata_status, present_source_title
 
 
 Role = Literal["merchant", "provider", "platform", "unknown"]
@@ -52,8 +52,10 @@ def _filters(account_id, q, role=None):
                           SELECT 1 FROM members s JOIN conversations v
                           ON v.account_id=s.account_id AND v.conversation_id=s.conversation_id
                           WHERE s.account_id=c.account_id AND s.contact_id=c.contact_id
-                          AND v.title LIKE ? ESCAPE '\\'))""")
-        params.extend([pattern] * 4)
+                          AND v.title LIKE ? ESCAPE '\\') OR EXISTS (
+                          SELECT 1 FROM contact_names n WHERE n.account_id=c.account_id
+                          AND n.contact_id=c.contact_id AND n.value LIKE ? ESCAPE '\\'))""")
+        params.extend([pattern] * 5)
     if role and role != "all":
         clauses.append("c.role=?")
         params.append(role)
@@ -108,26 +110,28 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
             COALESCE(NULLIF(trim(c.remark),''),NULLIF(trim(c.nickname),''),'') COLLATE NOCASE,c.contact_id
         LIMIT ? OFFSET ?""", [*params, account_id, page_size, (page - 1) * page_size]).fetchall()
     items = []
+    catalog = load_catalog(conn, account_id)
     for row in rows:
-        name, name_source = choose_name(row["remark"], row["nickname"], row["contact_id"])
-        sources = [dict(source) for source in conn.execute("""SELECT v.conversation_id,v.kind,v.title FROM members s
+        presentation = resolve_name(row, catalog[row['contact_id']])
+        sources = [dict(source) for source in conn.execute("""SELECT v.conversation_id,v.kind,v.title,v.provenance,
+                      EXISTS(SELECT 1 FROM messages m WHERE m.account_id=v.account_id
+                             AND m.conversation_id=v.conversation_id) AS has_messages FROM members s
                       JOIN conversations v ON v.account_id=s.account_id AND v.conversation_id=s.conversation_id
                       WHERE s.account_id=? AND s.contact_id=? ORDER BY v.kind,v.conversation_id""",
                     (account_id, row["contact_id"]))]
+        for source in sources:
+            source['title'] = present_source_title(source['title'], source['conversation_id'])
+            source['has_messages'] = bool(source['has_messages'])
         items.append({"key": {"account_id": account_id, "contact_id": row["contact_id"]},
-                      "display_name": name or "名称缺失", "display_name_source": name_source, "copy_name": name,
+                      **presentation,
                       "role": row["role"], "role_version": row["role_version"], "sources": sources,
                       "last_message_at": row["last_message_at"], "last_business_at": None,
                       "profile_status": ("pending" if row["last_message_at"] else "no_data") if row["role"] == "merchant" else None,
                       "profile_updated_at": None, "source_gaps": _source_gaps(conn, account_id, row["contact_id"])})
-    quality = {"quarantined": 0, "names_unavailable": 0}
-    for person in conn.execute("SELECT contact_id,remark,nickname,identity_state FROM contacts WHERE account_id=? AND is_self=0", (account_id,)):
-        if person["identity_state"] == "quarantined":
-            quality["quarantined"] += 1
-        elif choose_name(person["remark"], person["nickname"], person["contact_id"])[0] is None:
-            quality["names_unavailable"] += 1
+    quality = identity_quality(conn, account_id, catalog)
     return {"items": items, "total": total, "page": page, "page_size": page_size,
-            "role_counts": {"all": sum(counts.values()), **counts}, "identity_quality": quality}
+            "role_counts": {"all": sum(counts.values()), **counts}, "identity_quality": quality,
+            "metadata_status": metadata_status(conn, account_id)}
 
 
 def set_roles(conn, keys: list[ContactKey], role: str, expected_versions: dict[str, int]) -> RoleUpdateResult:

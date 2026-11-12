@@ -10,8 +10,9 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from .adapter import SourceError
-from .contracts import ContactKey, SourcePage
+from .contracts import ContactKey, ContactRecord, ConversationRecord, SourcePage
 from ..identities import is_person_identifier
+from .names import start_metadata, archive_room_names, finish_metadata
 
 
 @dataclass(slots=True)
@@ -51,34 +52,53 @@ def _person(conn, account_id, contact_id):
                     "active" if valid else "quarantined", None if valid else "source_identity_invalid"))
 
 
-def archive_metadata(conn, account_id, contacts, conversations):
+def archive_metadata(conn, account_id, contacts, conversations, *, metadata=None):
+    try:
+        contacts = [ContactRecord.model_validate(person.model_dump()) for person in contacts]
+        conversations = [ConversationRecord.model_validate(room.model_dump()) for room in conversations]
+    except (ValidationError, AttributeError):
+        raise SourceError('source_metadata_contract_invalid') from None
     if any(person.key.account_id != account_id for person in contacts) or any(
             room.account_id != account_id for room in conversations):
         raise SourceError("source_metadata_scope_mismatch")
     invalid = set()
     with transaction(conn):
         _account(conn, account_id)
+        now = start_metadata(conn, account_id)
         for person in contacts:
             valid = is_person_identifier(person.key.contact_id)
             if not valid:
                 invalid.add(person.key.contact_id)
-            conn.execute("""INSERT INTO contacts(account_id,contact_id,remark,nickname,is_self,identity_state,identity_reason) VALUES (?,?,?,?,?,?,?)
+            conn.execute("""INSERT INTO contacts(account_id,contact_id,remark,nickname,is_self,identity_state,identity_reason,
+                            remark_state,nickname_state,metadata_current,metadata_seen_at) VALUES (?,?,?,?,?,?,?,?,?,1,?)
                             ON CONFLICT(account_id,contact_id) DO UPDATE SET
-                            remark=excluded.remark,nickname=excluded.nickname,is_self=excluded.is_self,
-                            identity_state=excluded.identity_state,identity_reason=excluded.identity_reason""",
+                            remark=CASE WHEN excluded.remark_state IN ('known','empty') THEN excluded.remark ELSE contacts.remark END,
+                            nickname=CASE WHEN excluded.nickname_state IN ('known','empty') THEN excluded.nickname ELSE contacts.nickname END,
+                            is_self=excluded.is_self,identity_state=excluded.identity_state,identity_reason=excluded.identity_reason,
+                            remark_state=excluded.remark_state,nickname_state=excluded.nickname_state,
+                            metadata_current=1,metadata_seen_at=excluded.metadata_seen_at""",
                          (account_id, person.key.contact_id, person.remark, person.nickname, int(person.is_self),
-                          "active" if valid else "quarantined", None if valid else "source_identity_invalid"))
+                          "active" if valid else "quarantined", None if valid else "source_identity_invalid",
+                          person.remark_state, person.nickname_state, now))
         for room in conversations:
-            conn.execute("""INSERT INTO conversations(account_id,conversation_id,kind,title) VALUES (?,?,?,?)
-                            ON CONFLICT(account_id,conversation_id) DO UPDATE SET kind=excluded.kind,title=excluded.title""",
-                         (account_id, room.conversation_id, room.kind, room.title))
+            conn.execute("""INSERT INTO conversations(account_id,conversation_id,kind,title,provenance) VALUES (?,?,?,?,?)
+                            ON CONFLICT(account_id,conversation_id) DO UPDATE SET kind=excluded.kind,title=excluded.title,
+                            provenance=excluded.provenance""",
+                         (account_id, room.conversation_id, room.kind, room.title, room.origin))
             for member in room.member_ids:
+                if not is_person_identifier(member):
+                    invalid.add(member)
+                if room.kind == 'group' and room.membership_state == 'known' and not conn.execute(
+                        'SELECT 1 FROM contacts WHERE account_id=? AND contact_id=?', (account_id, member)).fetchone():
+                    continue
                 _person(conn, account_id, member)
                 if not is_person_identifier(member):
                     invalid.add(member)
                 conn.execute("""INSERT INTO members(account_id,conversation_id,contact_id,provenance)
                                 VALUES (?,?,?,'source_membership') ON CONFLICT DO NOTHING""",
                              (account_id, room.conversation_id, member))
+            archive_room_names(conn, account_id, room, now)
+        finish_metadata(conn, account_id, contacts, conversations, metadata, now)
     return len(invalid)
 
 

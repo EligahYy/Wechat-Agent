@@ -99,3 +99,15 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 - 前端request仅访问同源`/api/`，ApiError保留409 details以处理身份部分成功。Vite默认代理8000，WECHAT_API_URL可覆盖；正式页面与API同源。测试复位接口仅tests.webserver注册，临时合成库逐用例清空、workers=1，不使用真实资料。
 - 公共FormField单行／多行／搜索／时间统一样式；TimePicker面板草稿仅应用时保存，直接输入失焦／Enter规范化保存，重复触发只产生一次在途保存。取消／Escape／外部点击不保存面板草稿；键盘与鼠标进入时钟分别处理。偏好更新失败恢复服务端版本，界面如实报错。
 - 前端最低兼容Node为24.14.1（24.x），package.json的engines与安装说明一致。更新依赖锁必须在该最低版本下执行npm ci --engine-strict、单元测试和构建；云端较新的Node通过不能替代基线验证。
+
+
+## 2026-11-12：来源名称与scope契约（schema5）
+
+- 固定来源补丁`0.7.4+wechat-agent.1`／`wechat-agent-source-v1`，manifest及安装器见patches/wx-cli。Health.metadata包含mode、generation、resolver_generation、refreshed_at及refresh_state；ready时resolver代次必须相同。分页代次与health不符停止，不混合写库；未知版本不静默接受。
+- ContactRecord增加remark_state／nickname_state（known／empty／unreadable／unknown）。内部旧格式记录按显式提供的值推导known／empty；原版wx-cli无法证明空值状态，adapter显式设unknown，只允许诊断。完整同步在任何归档前拒绝缺少补丁能力的原版。
+- ConversationRecord增加origin（session／metadata_candidate／group_directory／unknown）、membership_state和name_evidence。NameEvidence以contact_id、conversation_id和origin（group_member／session_sender）限定，含value、state、observed_at；必须与父会话范围一致。
+- schema5保存contacts字段状态与最后观察、contact_names作用域证据、source_metadata_status及source_group_members。完整群目录单独保存，不把未出现／未观察的所有群成员自动建成联系人；已知人物仍可按目录定位和补名。旧原文、修订、成员历史和人工角色保留。
+- known／empty可更新当前字段；unreadable／unknown保留最后成功值并标为待核实。群／会话候选不可冒充全局昵称；复制微信名称只返回当前可用全局备注／昵称。display_name_source之外返回name_status、name_scope、name_conflict、name_reason、metadata_current／metadata_seen_at，缺名计数按实际显示候选计算。
+- 来源title仅在呈现时移除与稳定ID完全匹配的上游装饰后缀并统一质量检查，原始title保留；sources返回provenance及has_messages，合成的潜在私聊来源不能被当作已有聊天记录。
+- SourceIssue增加message_sender_conflict，保留原始HTTP中的sender_fallback／sender_candidate。无充分证据不改旧作者或按昵称合并；后续上下文构建继续尊重归属缺口。
+- contacts.check只GET元数据并只读应用库，返回来源字段读取失败、归档显示质量、最近成功metadata观察和来源代次；无姓名、正文及原始人物ID。unknown不能填0假称读取正常。
