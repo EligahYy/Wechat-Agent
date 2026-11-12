@@ -1,3 +1,4 @@
+import { ImportDialog } from "./ImportDialog";
 import { useState } from "react";
 import { Clock3, ExternalLink, Monitor, ShieldCheck } from "lucide-react";
 import { TimePicker } from "../../components/TimePicker";
@@ -8,12 +9,15 @@ export function SettingsPage({
   settings,
   saving,
   onSave,
+  onImported,
 }: {
   settings: AppSettings;
   saving: boolean;
   onSave: (changes: Partial<Preferences>) => Promise<void>;
+  onImported?:()=>void;
 }) {
   const [info, setInfo] = useState(false);
+  const [importOpen,setImportOpen]=useState(false);
   const disabled = saving || !settings.account_id;
   return (
     <div className="settings-stack">
@@ -152,6 +156,8 @@ export function SettingsPage({
           </button>
         </div>
       </section>
+      <section className="settings-card"><header><ShieldCheck size={21}/><h3>消息导入</h3></header><div className="settings-row"><div><strong>导入聊天原文</strong><p>CSV／JSON先预览，核对字段后导入</p></div><button className="button secondary" disabled={disabled} onClick={()=>setImportOpen(true)}>导入消息</button></div></section>
+      {importOpen&&settings.account_id&&<ImportDialog accountId={settings.account_id} onClose={()=>setImportOpen(false)} onImported={()=>onImported?.()}/>}
       <Dialog
         open={info}
         title="连接说明"

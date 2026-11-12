@@ -1,1 +1,1 @@
-"""Local media availability diagnostics; parsing is a separate stage."""
+"""Local attachment references; source download and parsing are later stages."""

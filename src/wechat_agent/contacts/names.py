@@ -14,11 +14,14 @@ def present_source_title(value, identifier):
     return usable_name(value, identifier)
 
 
-def load_catalog(conn, account_id):
+def load_catalog(conn, account_id, contact_ids=None):
     result = defaultdict(list)
+    if contact_ids is not None and not contact_ids:
+        return result
+    scope = ' AND n.contact_id IN (' + ','.join('?' for _ in contact_ids) + ')' if contact_ids is not None else ''
     for row in conn.execute('''SELECT n.* FROM contact_names n JOIN contacts c
         ON c.account_id=n.account_id AND c.contact_id=n.contact_id
-        WHERE n.account_id=? AND c.identity_state='active' ''', (account_id,)):
+        WHERE n.account_id=? AND c.identity_state='active' ''' + scope, [account_id, *(contact_ids or [])]):
         result[row['contact_id']].append(dict(row))
     return result
 

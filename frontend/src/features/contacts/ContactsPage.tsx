@@ -1,3 +1,4 @@
+import { MessageTimeline } from "../messages/MessageTimeline";
 import { nameNotice, sourceLabel, avatarText } from "./presentation";
 import {
   useEffect,
@@ -63,6 +64,7 @@ export function ContactsPage({
   const [selected, setSelected] = useState<Map<string, Contact>>(new Map()),
     [detail, setDetail] = useState<Contact | null>(null),
     [detailOpen, setDetailOpen] = useState(false);
+  const [detailView,setDetailView]=useState<"overview"|"messages">("overview");
   const [roleOpen, setRoleOpen] = useState(false),
     [roleTargets, setRoleTargets] = useState<Contact[]>([]),
     [nextRole, setNextRole] = useState<Role>("merchant"),
@@ -74,8 +76,16 @@ export function ContactsPage({
   const tableContent = useRef<HTMLDivElement>(null);
   const [tableHeight, setTableHeight] = useState<number>();
   useLayoutEffect(() => {
-    if (tableContent.current)
-      setTableHeight(tableContent.current.getBoundingClientRect().height);
+    const node=tableContent.current;
+    if(!node)return;
+    const measure=()=>{
+      const height=node.getBoundingClientRect().height;
+      if(height>0)setTableHeight(previous=>previous!==undefined&&Math.abs(previous-height)<0.5?previous:height);
+    };
+    measure();
+    if(typeof ResizeObserver==="undefined")return;
+    const observer=new ResizeObserver(measure);observer.observe(node);
+    return ()=>observer.disconnect();
   }, [data, view]);
   const account = settings.account_id;
   useEffect(() => {
@@ -489,6 +499,7 @@ export function ContactsPage({
                               aria-label={`查看 ${contact.display_name}`}
                               onClick={() => {
                                 setDetail(contact);
+                                setDetailView("overview");
                                 setDetailOpen(true);
                               }}
                             >
@@ -589,6 +600,7 @@ export function ContactsPage({
                               aria-label={`打开 ${contact.display_name}`}
                               onClick={() => {
                                 setDetail(contact);
+                                setDetailView("overview");
                                 setDetailOpen(true);
                               }}
                             >
@@ -702,8 +714,8 @@ export function ContactsPage({
       >
         {detail && (
           <>
-            <h3 className="detail-tabs">资料概览</h3>
-            <div className="detail-unavailable">
+            <div className="detail-tabs"><SegmentedControl label="客户资料视图" value={detailView} onChange={setDetailView} options={[{value:"overview",label:"资料概览"},{value:"messages",label:"沟通原文"}]}/></div>
+            {detailView==="messages"?<MessageTimeline key={`${detail.key.account_id}:${detail.key.contact_id}`} contact={detail.key} revision={revision}/>:<div className="detail-unavailable">
               <FileText size={28} />
               <strong>
                 {detail.role === "merchant" ? "档案尚未生成" : "仅保留沟通资料"}
@@ -713,8 +725,7 @@ export function ContactsPage({
                   ? "模型整理将在后续阶段接入"
                   : "此身份不参与商家档案整理"}
               </span>
-              <span className="muted">沟通原文浏览将在下一任务开放</span>
-            </div>
+            </div>}
           </>
         )}
       </Dialog>

@@ -337,6 +337,7 @@ export function App() {
               settings={settings}
               saving={saving}
               onSave={savePreferences}
+              onImported={finished}
             />
           </div>
         </main>

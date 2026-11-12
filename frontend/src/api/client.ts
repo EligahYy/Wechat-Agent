@@ -38,6 +38,23 @@ export async function request<T>(
 export const messageFor = (error: unknown) =>
   error instanceof ApiError
     ? {
+        message_cursor_stale: "原文已更新，请重新加载",
+        message_cursor_invalid: "分页信息已失效，请重新加载",
+        messages_not_found: "该联系人的原文不可用",
+        archive_not_found: "当前账号下没有这份归档",
+        import_preview_expired: "预览已过期，请重新预览后导入",
+        import_preview_not_found: "预览已失效，请重新预览",
+        import_write_failed: "导入未完成，原文已回滚，可重试",
+        import_too_large: "文件或请求过大，请使用不超过2MB的文件",
+        import_too_many_rows: "文件超过5000行，请拆分后导入",
+        import_encoding_invalid: "请使用UTF-8编码的文件",
+        import_content_invalid: "文件内容无法解析，请检查CSV或JSON格式",
+        import_columns_invalid: "列名缺失、重复或过长，请检查文件",
+        import_empty: "文件内没有可导入的记录",
+        import_rows_required: "JSON文件需要使用记录数组格式",
+        import_request_invalid: "导入信息无效，请重新选择文件并核对字段",
+        attachment_not_available: "附件尚未获取或本机文件缺失",
+        attachment_not_found: "附件引用不存在",
         settings_version_conflict: "设置已被修改，请刷新后重试",
         account_binding_required: "请先归档微信资料或配置工作账号",
         account_scope_forbidden: "当前工作账号不匹配",

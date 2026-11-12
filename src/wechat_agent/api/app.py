@@ -18,6 +18,9 @@ from ..services import Services
 from ..source.adapter import WXCLIAdapter, SourceError
 from ..source.probe import SourceConfig
 from ..storage.db import SCHEMA_VERSION, migrate, open_db
+from .messages import router as messages_router
+from .imports import router as imports_router
+from .attachments import router as attachments_router
 from .contacts import router as contacts_router
 from .operations import router as operations_router
 from .settings import router as settings_router
@@ -59,6 +62,9 @@ def create_app(settings: Settings, services: Services | None = None) -> FastAPI:
             return WXCLIAdapter(config)
         app.state.services.source_factory = source_factory
     app.include_router(contacts_router)
+    app.include_router(messages_router)
+    app.include_router(imports_router)
+    app.include_router(attachments_router)
     app.include_router(operations_router)
     app.include_router(settings_router)
 

@@ -80,3 +80,17 @@ export type Operation = {
     gaps: string[];
   }[];
 };
+export type TimelineItem = {
+  message_id:string;conversation_id:string;source_title:string|null;source_kind:"private"|"group";
+  sender:{contact_id:string|null;display_name:string;role:Role|null;is_self:boolean;identity_state:string;name_status?:string};
+  sent_at:string;kind:string;body:string;revision:number;reply_to:string|null;origin:"import"|"archive";
+  attachments:{id:string;state:string;mime:string|null;reason:string|null;downloadable:boolean}[];
+};
+export type TimelinePage = {items:TimelineItem[];total:number;sources:{conversation_id:string;kind:string;title:string|null}[];next_cursor:string|null;has_more:boolean;timezone:string};
+export type ImportPreview = {
+  preview_id:string|null;columns:string[];sample_rows:Record<string,string>[];total_rows:number;mapping_defaults:Record<string,string>;
+  counts?:{valid:number;rejected:number;new:number;unchanged:number;total:number};
+  issues:{row:number;code:string}[];issues_truncated?:boolean;
+  sample_messages?:{row:number;sender_id:string|null;conversation_id:string;sent_at:string;body:string;status:string}[];
+};
+export type ImportResult = {status:string;preview_id:string;already_committed:boolean;counts:{inserted:number;unchanged:number;rejected:number;total:number};issues:{row:number;code:string}[]};

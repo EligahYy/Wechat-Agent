@@ -81,7 +81,7 @@ def _response(conn, request, account_id):
             source['last_sync_at'] = previous[1]
     return {"account_id": account_id, "preferences": preferences.model_dump(), "version": version,
         "timezone": "Asia/Shanghai", "source": source, "model": model,
-        "capabilities": {"organize": False, "scheduler": False, "raw_browser": False}}
+        "capabilities": {"organize": False, "scheduler": False, "raw_browser": True}}
 
 
 @router.get("/api/settings")
