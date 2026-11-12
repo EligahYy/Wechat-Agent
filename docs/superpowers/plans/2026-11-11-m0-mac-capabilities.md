@@ -82,7 +82,7 @@ def test_no_sender_mapping_cannot_pass():
 - [x] **Step 2 — 验证红灯：** `python -m pytest tests/test_source_probe.py -q`，预期尚无 probe 实现。
 - [x] **Step 3 — 最小实现：** 按内部契约建立类型与探测器；来源命令／URL 必须来自显式配置和已核验的只读操作。不通过 shell 拼接执行来源参数。缺稳定发送者、消息身份、分页或账号信息分别列 gaps；不把 HTTP 200 当完整同步。
 - [ ] **Step 4 — 实机取证：** Mac 上检查实际安装及版本、官方帮助和运行模式；选择一个私信、一个含多人的群读取至少两页，保留发送者、备注／群名、引用、同文本不同消息、修订及终止游标样本。把原始结果放 `.local/evidence/source/`，仅把脱敏字段映射、实际只读命令和能力结论写入 source-capabilities.md。若源端缺功能，明确标注，修订 M1 适配范围后再进入 M1。
-- [ ] **Step 5 — 验证：** 云端已通过同名不合并、改名 ID 不变、账号／分页／错误回放测试；`python -m pytest tests/test_source_probe.py -q` 全过，本地仍待运行 `python -m wechat_agent.doctor --check-source --output .local/evidence/m0.json`。该 CLI 选项在本任务接入，只调用已配置的只读探测。
+- [x] **Step 5 — 有限验证：** 云端同名、账号、分页及错误回放通过；Mac已回传来源有限采样passed：4页8条有效消息、0异常，含2条无人物系统事件。只证明该样本；Step4要求的修订／引用及完整姓名覆盖证据尚未全部取得，不能将其标为完整实机通过。
 - [x] **Step 6 — 提交检查点：** 仅暂存上述实现、脱敏 fixture 与能力文档；检查后 `git commit -m "feat: verify local source capabilities"` 并推 main。缺实机证据时本地验证项保持未完成，已通过回放测试的云端开发结果单独记录。
 
 ### Task 3: 模型真实能力与失败分类
@@ -133,7 +133,7 @@ def test_missing_media_is_not_parsed(tmp_path):
 - M0 任务 1 已完成：7 个测试先失败后通过；离线 CLI 已实际运行，Linux 来源明确为 unsupported，模型／媒体为 pending。
 - 任务4云端已实现：媒体只读检查、流式哈希和脱敏报告；79个Python测试通过。
 - 任务3云端已实现：明确配置的最小模型探测、错误分类、容量声明与实际验证区分；真实Pro ID、凭据、容量及视觉仍待实测。
-- 任务2云端已实现：只读 HTTP 检查、来源契约、有限样本与错误分类，37个测试通过。已核对第三方 wx-cli v0.7.4 上游；应用端真实采样仍待用户运行，不声称全历史通过。
+- 任务2云端已实现：只读 HTTP 检查、来源契约、有限样本与错误分类，37个测试通过。已核对第三方 wx-cli v0.7.4 上游；随后Mac有限采样passed（8条有效、0异常），不声称全历史或姓名准确性已通过。当前执行位置见[状态页](../../STATUS.md)。
 
 ## 退出条件
 

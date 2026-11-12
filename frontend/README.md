@@ -9,7 +9,7 @@ npm --prefix frontend ci --engine-strict
 npm --prefix frontend run build
 ```
 
-从根目录启动后端时，Settings.load选择`frontend/dist`，静态资源和API由同一端口提供。Python wheel本身尚不捆绑前端，独立打包在M5交付。Mac完整命令见[验证指南](../docs/MAC_SETUP.md#13-m1任务5正式桌面页面与设置)。
+从根目录启动后端时，Settings.load选择`frontend/dist`，静态资源和API由同一端口提供。Python wheel本身尚不捆绑前端，独立打包在M5交付。Mac完整命令见[验证指南](../docs/MAC_SETUP.md#13-m1任务5正式桌面页面与设置)，执行位置及未闭合问题见[当前状态](../docs/STATUS.md)。
 
 开发模式：
 

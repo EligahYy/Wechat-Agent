@@ -148,7 +148,7 @@ it("shows the platform identity", () => {
 - [x] **Step 4 — 绿灯：** API 测试检验设置持久化；`npm run test:unit -- --run`、`npm run build`、`npm run test:e2e -- contacts.spec.ts` 通过。E2E 覆盖 20/8 分页、跨页选择、切页签清空、身份修改及列表不闪、复制真实名称；Vite 开发代理 `/api` 到 127.0.0.1:8000。
 - [x] **Step 5 — 提交检查点：** 获准时提交前端源代码／锁文件及路由，忽略 node_modules／dist，消息 `feat: build desktop workspace with shared controls`。
 
-- [ ] **Mac验收：** 按指南第13节安装Node24前端依赖并构建，以同源8766打开正式页面；真实归档读取、深浅色及时间交互待验证。
+- [ ] **Mac验收（2026-11-12更新）：** 用户已打开正式页面，拉取137f246后仍反馈大量缺名及微信搜索不到的联系人；名称准确性尚未闭合，深浅色／时间等全套交互未收到逐项验收。先处理[独立审查及修复方案](../../verification/2026-11-12-contact-names-review.md)，再按指南复验；不能把页面可访问视为整项通过。
 
 ### Task 6: 原文浏览与唯一导入入口
 

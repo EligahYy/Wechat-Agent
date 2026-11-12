@@ -182,11 +182,11 @@ HTTP应为200，每页最多20位，不包含本人或群标识。首次归档�
 
 接口文档在 http://127.0.0.1:8766/docs ，可查看搜索、分页和PATCH身份的结构。真实身份由用户确认后再修改；云端已在临时库覆盖单个／批量修改、版本冲突、部分成功和原文保留，不需要为本轮验收批量改动真实联系人。
 
-角色变更带expected_version；409的details.updated可能已成功提交，details.failed才是失败项。冲突时核对新版本后只重试失败项。原文与来源不会被角色切换删除；商家分析和正式桌面页面仍在后续任务接入。反馈测试结果和上述统计即可，不回传联系人清单。
+角色变更带expected_version；409的details.updated可能已成功提交，details.failed才是失败项。冲突时核对新版本后只重试失败项。原文与来源不会被角色切换删除；正式桌面页面已在任务5交付，商家分析仍未接入。反馈测试结果和上述统计即可，不回传联系人清单。
 
 ## 12. M1任务4：后台同步任务验证
 
-先Control+C停止旧API，再拉取并重启。本次无新增依赖，启动会将现有数据库原子升级到schema3，保留已有归档。云端当前203项测试通过。
+本节是任务4的历史检查点（当时schema3／203项测试）；当前版本为schema4，执行位置见[状态页](STATUS.md)。先Control+C停止旧API，再拉取并重启，保留已有归档。
 
 ```bash
 git pull --ff-only origin main
@@ -218,7 +218,7 @@ git pull --ff-only origin main
 
 接口文档仍在 http://127.0.0.1:8766/docs 。GET /api/operations携带account_id查询历史，GET /api/operations/{id}查询实际进度；POST停止body为`{action:"stop",account_id:"...",operation_id:"..."}`。停止先写generation屏障，迟到页不能归档；已经提交的原文保留。M1暂不提供继续／重试；普通退出或确认进程已退出的遗留任务记为stopped，完整恢复在M4交付。
 
-目前sync_and_organize若存在需要分析的商家，来源可成功但总任务会failed／capability_not_ready，因为模型整理尚未接入。这是能力边界，不能据此宣称已生成真实档案。正式UI和设置交互在下一任务实现。
+目前sync_and_organize若存在需要分析的商家，来源可成功但总任务会failed／capability_not_ready，因为模型整理尚未接入。这是能力边界，不能据此宣称已生成真实档案。正式UI和设置交互已由任务5交付，启动见第13节；当前名称问题仍按审查修复。
 
 ## 13. M1任务5：正式桌面页面与设置
 
@@ -259,7 +259,7 @@ npm --prefix frontend run build
 .venv/bin/python -m uvicorn wechat_agent.api.app:app_factory --factory --host 127.0.0.1 --port 8766
 ```
 
-启动自动执行migration004，隔离XML／正文等明显无效的联系人标识，保留消息、来源关系、人工身份及其版本。健康接口应返回schema_version=4。刷新正式页面后，客户详情的“同步此客户”位于顶部关闭按钮左侧；整理记录显示目标／完成／未完成会话数及已保存的来源缺口，已有记录无需重跑同步即可查看。
+pull／build／重启不会隐式发起微信同步。启动自动执行migration004，隔离XML／正文等明显无效的联系人标识，保留消息、来源关系、人工身份及其版本；它不会重新读取名称，也不会补出群成员昵称。健康接口应返回schema_version=4。刷新正式页面后，客户详情的“同步此客户”位于顶部关闭按钮左侧；整理记录显示目标／完成／未完成会话数及已保存的来源缺口，已有记录无需重跑同步即可查看。
 
 在另一终端运行只读诊断，将示例账号替换为已验证的canonical账号：
 
