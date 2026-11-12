@@ -62,9 +62,10 @@ def test_one_person_has_private_and_group_sources_without_duplicate_rows(contact
     assert item["profile_updated_at"] is None
 
 
-def test_group_name_search_uses_actual_members_and_excludes_self(contacts_client):
+def test_source_group_titles_are_outside_contact_name_search(contacts_client):
     result = fetch(contacts_client, q="业务群").json()
-    assert {row["key"]["contact_id"] for row in result["items"]} == {"merchant-a", "merchant-b", "provider-p"}
+    assert result["total"] == 0
+    assert result["items"] == []
 
 
 def test_duplicate_display_names_are_distinct_stable_people(contacts_client):
@@ -95,7 +96,7 @@ def test_role_filter_counts_and_out_of_range_pages_are_consistent(contacts_clien
 def test_missing_name_never_copies_wxid(contacts_client):
     with archive(contacts_client) as conn, conn:
         conn.execute("UPDATE contacts SET remark=NULL,nickname=NULL WHERE contact_id='contact-01'")
-    item = fetch(contacts_client, q="contact-01").json()["items"][0]
+    item = next(item for page in (1,2) for item in fetch(contacts_client,page=page).json()["items"] if item["key"]["contact_id"]=="contact-01")
     assert item["display_name"] == "名称缺失"
     assert item["display_name_source"] == "missing"
     assert item["copy_name"] is None
@@ -303,7 +304,7 @@ def test_name_falls_back_to_real_nickname_but_never_identifier(contacts_client):
     assert item["copy_name"] == "实际昵称"
     with archive(contacts_client) as conn, conn:
         conn.execute("UPDATE contacts SET nickname=contact_id WHERE contact_id='contact-01'")
-    assert fetch(contacts_client, q="contact-01").json()["items"][0]["copy_name"] is None
+    assert next(item for page in (1,2) for item in fetch(contacts_client,page=page).json()["items"] if item["key"]["contact_id"]=="contact-01")["copy_name"] is None
 
 
 def test_list_counts_and_rows_share_one_read_snapshot_during_role_change(contacts_client, monkeypatch):
@@ -338,7 +339,9 @@ def test_search_work_stays_bounded_for_thousands_of_contacts_and_shared_groups(d
             [(f'room-{g}',f'TEMU业务{g}' if g%2 else f'普通群{g}') for g in range(80)])
         db.executemany("INSERT INTO members(account_id,conversation_id,contact_id) VALUES('scale-account',?,?)",
             [(f'room-{g}',f'person-{i}') for i in range(2420) for g in range(80) if (i+g)%8==0])
-    for query,expected in [('Temu',1210),('货主2419',1),('no-matching-name',0)]:
+    import sqlite3
+    for query,expected in [('Temu',0),('货主2419',1),('货主',2420),('no-matching-name',0)]:
+        previous_limit=db.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER,512)
         steps=[0]
         def budget():
             steps[0]+=1000
@@ -348,6 +351,46 @@ def test_search_work_stays_bounded_for_thousands_of_contacts_and_shared_groups(d
             result=list_contacts(db,'scale-account',q=query)
         finally:
             db.set_progress_handler(None,0)
+            db.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER,previous_limit)
         assert result['total']==expected
         assert result['role_counts']['all']==expected
         assert len(result['items'])==min(20,expected)
+
+
+def test_search_matches_nickname_or_remark_but_not_ids_or_source_titles(contacts_client):
+    with archive(contacts_client) as conn, conn:
+        conn.execute("UPDATE contacts SET remark='独立备注',nickname='Temu昵称' WHERE contact_id='merchant-a'")
+    for query in ('独立备注','temu昵称'):
+        result=fetch(contacts_client,q=query).json()
+        assert result['total']==1
+        assert result['items'][0]['key']['contact_id']=='merchant-a'
+    for query in ('merchant-a','业务群'):
+        result=fetch(contacts_client,q=query).json()
+        assert result['total']==result['role_counts']['all']==0
+
+
+def test_search_ignores_surrounding_whitespace(contacts_client):
+    assert fetch(contacts_client,q='  商家甲  ').json()['total']==1
+
+
+def test_name_search_does_not_rank_unrelated_message_history(db):
+    from tests.factories import seed_case
+    from wechat_agent.contacts.service import list_contacts
+    seed_case(db)
+    before=list_contacts(db,'acct-1',q='商家甲')
+    with db:
+        db.execute("INSERT INTO conversations(account_id,conversation_id,kind,title) VALUES('acct-1','unrelated-room','group','无关群')")
+        db.executemany("""INSERT INTO messages(account_id,message_id,conversation_id,sender_id,sent_at,kind,body,source_revision,raw_json)
+            VALUES('acct-1',?,'unrelated-room','contact-01','2026-11-11T00:00:00+00:00','text','synthetic','r1','{}')""",
+            [(f'unrelated-{i}',) for i in range(20000)])
+    steps=[0]
+    def budget():
+        steps[0]+=1000
+        return steps[0]>500_000
+    db.set_progress_handler(budget,1000)
+    try:
+        after=list_contacts(db,'acct-1',q='商家甲')
+    finally:
+        db.set_progress_handler(None,0)
+    assert after['items']==before['items']
+    assert after['total']==before['total']==1

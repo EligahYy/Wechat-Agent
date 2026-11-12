@@ -63,7 +63,7 @@ async def test_unreadable_names_report_partial_refresh_and_keep_old_name(db):
     result = await run_next(db,Services(source=source))
     assert result.state == 'failed'
     assert 'source_name_read_failed' in result.items[0].gaps
-    item = list_contacts(db,'acct-1',q='merchant-a')['items'][0]
+    item = list_contacts(db,'acct-1',q='商家甲')['items'][0]
     assert item['display_name'] == '商家甲'
     assert item['name_status'] == 'last_known' and item['copy_name'] is None
 
@@ -84,7 +84,7 @@ async def test_stop_while_metadata_is_in_flight_does_not_commit_late_names(db):
     release.set()
     result = await running
     assert result.state == 'stopped'
-    assert list_contacts(db,'acct-1',q='merchant-a')['items'][0]['copy_name'] == '商家甲'
+    assert list_contacts(db,'acct-1',q='商家甲')['items'][0]['copy_name'] == '商家甲'
     assert db.execute('SELECT COUNT(*) FROM messages').fetchone()[0] == 4
 
 

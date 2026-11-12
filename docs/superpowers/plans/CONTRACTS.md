@@ -116,3 +116,5 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 - 源端用联系人／会话SQLite data_version核验外部写入，变化使旧代次失效。应用首次正常health绑定代次，跨metadata到messages不重置；显式刷新成功才绑定新代次。群title_state入库，known／empty可替换，unreadable／unknown保留最后值；来源信息返回title_state供界面提示。
 
 - 刷新计数：metadata_people是本次来源资料条数；contacts_total／contacts_current／contacts_retained为元数据归档后同一快照的有效非本人归档人物、其中本次联系人资料收录、其余归档，total=current+retained。快照未形成或旧记录未保存时三键缺省，不补0、不以raw来源条数相减。角色unknown与姓名缺失是独立维度；operations.check仅输出存在的非负整数快照。普通消息同步中这些数仍表示其元数据阶段，非之后消息导入完成时的实时人数。
+
+- 最新q范围以用户姓名／备注要求为准：trim后按字面子串、不区分大小写（Unicode casefold）匹配当前known全局备注／昵称及resolve_name实际采用的展示姓名；不匹配contact_id、来源title或未采用历史候选。匹配集合按当前账号、非本人、active人物的数据库整数rowid构造，避免大量匹配超过SQLite参数上限；count／role_counts／分页复用同一集合和读取快照。按作者及成员关联会话缩小消息窗口输入，保留匹配人物的原始最近沟通时间。群内名只作有作用域的显示／检索补位，不提高复制或身份可信度。

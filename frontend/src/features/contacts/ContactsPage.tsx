@@ -299,7 +299,7 @@ export function ContactsPage({
             <FormField
               label={view === "all" ? "搜索联系人" : "搜索商家"}
               type="search"
-              placeholder="搜索姓名、备注、微信 ID 或群名"
+              placeholder="搜索姓名或备注"
               value={query}
               leading={<Search size={17} />}
               onChange={(event) => {

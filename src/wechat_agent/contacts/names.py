@@ -64,7 +64,24 @@ def resolve_name(row, evidence):
             'metadata_current': current, 'metadata_seen_at': row['metadata_seen_at']}
 
 
-def identity_quality(conn, account_id, catalog=None):
+def match_contact_names(conn, account_id, query, catalog):
+    """Match literal name text once; never search IDs, source titles or unused aliases."""
+    needle = query.casefold()
+    rowids, presentations = [], {}
+    for row in conn.execute("""SELECT rowid AS search_rowid,* FROM contacts
+        WHERE account_id=? AND is_self=0 AND identity_state='active' """, (account_id,)):
+        presentation = resolve_name(row, catalog[row['contact_id']])
+        presentations[row['contact_id']] = presentation
+        names = [usable_name(row[field], row['contact_id']) for field in ('remark', 'nickname')
+                 if row['metadata_current'] and row[field + '_state'] == 'known']
+        if presentation['name_status'] != 'missing':
+            names.append(presentation['display_name'])
+        if any(needle in name.casefold() for name in names if name):
+            rowids.append(row['search_rowid'])
+    return rowids, presentations
+
+
+def identity_quality(conn, account_id, catalog=None, presentations=None):
     catalog = load_catalog(conn, account_id) if catalog is None else catalog
     counts = {'quarantined': 0, 'names_unavailable': 0, 'names_scoped': 0,
               'names_historical': 0, 'name_read_errors': 0, 'not_in_contact_metadata': 0}
@@ -72,7 +89,7 @@ def identity_quality(conn, account_id, catalog=None):
         if row['identity_state'] == 'quarantined':
             counts['quarantined'] += 1
             continue
-        name = resolve_name(row, catalog[row['contact_id']])
+        name = (presentations or {}).get(row['contact_id']) or resolve_name(row, catalog[row['contact_id']])
         counts['names_unavailable'] += name['name_status'] == 'missing'
         counts['names_scoped'] += name['name_status'] == 'scoped'
         counts['names_historical'] += name['name_status'] in ('historical', 'last_known')

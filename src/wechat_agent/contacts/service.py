@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from ..source.contracts import ContactKey
-from .names import load_catalog, resolve_name, identity_quality, metadata_status, present_source_title
+from .names import load_catalog, resolve_name, identity_quality, metadata_status, present_source_title, match_contact_names
 
 
 Role = Literal["merchant", "provider", "platform", "unknown"]
@@ -41,20 +41,15 @@ class RoleUpdateResult(BaseModel):
     failed: list[RoleFailure] = Field(default_factory=list)
 
 
-def _filters(account_id, q, role=None):
+def _filters(account_id, q, role=None, *, matching_rowids=None):
     clauses = ["c.account_id=?", "c.is_self=0", "c.identity_state='active'"]
     params = [account_id]
     if q:
-        literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        pattern = "%" + literal + "%"
-        clauses.append("""(c.remark LIKE ? ESCAPE '\\' OR c.nickname LIKE ? ESCAPE '\\'
-                          OR c.contact_id LIKE ? ESCAPE '\\' OR c.contact_id IN (
-                          SELECT s.contact_id FROM members s JOIN conversations v
-                          ON v.account_id=s.account_id AND v.conversation_id=s.conversation_id
-                          WHERE s.account_id=? AND v.title LIKE ? ESCAPE '\\') OR c.contact_id IN (
-                          SELECT n.contact_id FROM contact_names n WHERE n.account_id=?
-                          AND n.value LIKE ? ESCAPE '\\'))""")
-        params.extend([pattern, pattern, pattern, account_id, pattern, account_id, pattern])
+        # These integer rowids come from this account's database snapshot, never
+        # from query text. Integer literals avoid SQLite's parameter-count limit
+        # when a common name matches thousands of people.
+        ids = ','.join(str(int(rowid)) for rowid in (matching_rowids or []))
+        clauses.append(f"c.rowid IN ({ids})" if ids else "0")
     if role and role != "all":
         clauses.append("c.role=?")
         params.append(role)
@@ -83,17 +78,27 @@ def _source_gaps(conn, account_id, contact_id):
 def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
     if role not in ("all", *ROLES) or not 1 <= page_size <= 20 or page < 1:
         raise ContactError("invalid_contact_query", 422)
-    where, params = _filters(account_id, q, role)
-    base_where, base_params = _filters(account_id, q)
+    q = q.strip()
+    catalog = load_catalog(conn, account_id)
+    matching_rowids, presentations = (None, None)
+    if q:
+        matching_rowids, presentations = match_contact_names(conn, account_id, q, catalog)
+    where, params = _filters(account_id, q, role, matching_rowids=matching_rowids)
+    base_where, base_params = _filters(account_id, q, matching_rowids=matching_rowids)
     total = conn.execute(f"SELECT COUNT(*) FROM contacts c WHERE {where}", params).fetchone()[0]
     counts = {name: 0 for name in ROLES}
     for row in conn.execute(f"SELECT c.role,COUNT(*) FROM contacts c WHERE {base_where} GROUP BY c.role", base_params):
         counts[row[0]] = row[1]
+    # Preserve each matching person's latest authored/related message, while
+    # avoiding full-account window sorts for a narrow search.
+    message_scope = """AND (sender_id IN (SELECT contact_id FROM eligible) OR conversation_id IN (
+        SELECT s.conversation_id FROM members s JOIN eligible c
+        ON c.account_id=s.account_id AND c.contact_id=s.contact_id))""" if q.strip() else ""
     rows = conn.execute(f"""WITH eligible AS (SELECT c.* FROM contacts c WHERE {where}),
         latest AS (SELECT conversation_id,sender_id,sent_at,message_id,
             ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY julianday(sent_at) DESC,message_id DESC) AS conversation_position,
             ROW_NUMBER() OVER (PARTITION BY sender_id ORDER BY julianday(sent_at) DESC,message_id DESC) AS sender_position
-            FROM messages WHERE account_id=?),
+            FROM messages WHERE account_id=? {message_scope}),
         related AS (
             SELECT c.contact_id,m.sent_at,m.message_id FROM eligible c JOIN latest m
                 ON m.sender_id=c.contact_id AND m.sender_position=1
@@ -109,7 +114,6 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
             COALESCE(NULLIF(trim(c.remark),''),NULLIF(trim(c.nickname),''),'') COLLATE NOCASE,c.contact_id
         LIMIT ? OFFSET ?""", [*params, account_id, page_size, (page - 1) * page_size]).fetchall()
     items = []
-    catalog = load_catalog(conn, account_id)
     for row in rows:
         presentation = resolve_name(row, catalog[row['contact_id']])
         sources = [dict(source) for source in conn.execute("""SELECT v.conversation_id,v.kind,v.title,v.provenance,v.title_state,
@@ -127,7 +131,7 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
                       "last_message_at": row["last_message_at"], "last_business_at": None,
                       "profile_status": ("pending" if row["last_message_at"] else "no_data") if row["role"] == "merchant" else None,
                       "profile_updated_at": None, "source_gaps": _source_gaps(conn, account_id, row["contact_id"])})
-    quality = identity_quality(conn, account_id, catalog)
+    quality = identity_quality(conn, account_id, catalog, presentations)
     return {"items": items, "total": total, "page": page, "page_size": page_size,
             "role_counts": {"all": sum(counts.values()), **counts}, "identity_quality": quality,
             "metadata_status": metadata_status(conn, account_id)}

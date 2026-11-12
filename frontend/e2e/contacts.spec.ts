@@ -412,3 +412,16 @@ test("top metadata refresh is a durable operation and does not synchronize messa
   await expect(dialog.getByText(`其他归档 ${counts.contacts_retained} 人`,{exact:true})).toBeVisible();
   await expect(dialog.getByText(/目标会话/)).toHaveCount(0);
 });
+
+test("contact search is limited to names and remarks", async ({page}) => {
+  await page.getByRole("tab",{name:/全部联系人/}).click();
+  const search=page.getByRole("searchbox");
+  await expect(search).toHaveAttribute("placeholder","搜索姓名或备注");
+  await search.fill("业务群");
+  await expect(page.locator("tbody tr[data-contact]")).toHaveCount(0);
+  await search.fill("merchant-a");
+  await expect(page.locator("tbody tr[data-contact]")).toHaveCount(0);
+  await search.fill("  商家甲  ");
+  await expect(page.getByRole("button",{name:"查看 商家甲",exact:true})).toBeVisible();
+  await expect(page.locator("tbody tr[data-contact]")).toHaveCount(1);
+});

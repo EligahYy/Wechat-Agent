@@ -179,3 +179,23 @@ def test_candidate_recency_uses_instants_not_timezone_text(db):
         kind='group',title=None,name_evidence=[name]) for name in (older,newer)]
     archive_metadata(db,'acct-1',[],rooms)
     assert list_contacts(db,'acct-1')['items'][0]['display_name'] == '较新名称'
+
+
+def test_search_uses_displayed_name_but_not_hidden_scoped_or_historical_aliases(db):
+    archive_page(db, make_page([make_message(sender_id='person-a')]))
+    archive_metadata(db,'acct-1',[],[room_with_name('旧群名片')])
+    archive_metadata(db,'acct-1',[],[room_with_name('当前姓名')])
+    assert list_contacts(db,'acct-1',q='当前姓名')['total']==1
+    assert list_contacts(db,'acct-1',q='旧群名片')['total']==0
+    archive_metadata(db,'acct-1',[person('新备注','真实姓名')],[room_with_name('未显示群名片')])
+    assert list_contacts(db,'acct-1',q='真实姓名')['total']==1
+    assert list_contacts(db,'acct-1',q='新备注')['total']==1
+    assert list_contacts(db,'acct-1',q='未显示群名片')['total']==0
+
+
+def test_search_does_not_use_an_unreadable_old_remark_hidden_by_a_current_name(db):
+    archive_metadata(db,'acct-1',[person('旧备注','旧昵称')],[])
+    archive_metadata(db,'acct-1',[person(None,'当前姓名',remark_state='unreadable',nickname_state='known')],[])
+    assert list_contacts(db,'acct-1')['items'][0]['display_name']=='当前姓名'
+    assert list_contacts(db,'acct-1',q='当前姓名')['total']==1
+    assert list_contacts(db,'acct-1',q='旧备注')['total']==0
