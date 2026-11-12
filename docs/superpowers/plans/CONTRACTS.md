@@ -114,3 +114,5 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 
 - refresh_contacts仅允许账号scope，返回202持久化操作；后台显式刷新来源后归档联系人／群／名称元数据，不调用messages或模型。counts增加metadata_people／metadata_groups／names_scoped／names_missing；停止和幂等沿用现有操作约束，提交前检查取消代次。settings.source以last_metadata_*区分，不将元数据时间冒充last_sync_at。
 - 源端用联系人／会话SQLite data_version核验外部写入，变化使旧代次失效。应用首次正常health绑定代次，跨metadata到messages不重置；显式刷新成功才绑定新代次。群title_state入库，known／empty可替换，unreadable／unknown保留最后值；来源信息返回title_state供界面提示。
+
+- 刷新计数：metadata_people是本次来源资料条数；contacts_total／contacts_current／contacts_retained为元数据归档后同一快照的有效非本人归档人物、其中本次联系人资料收录、其余归档，total=current+retained。快照未形成或旧记录未保存时三键缺省，不补0、不以raw来源条数相减。角色unknown与姓名缺失是独立维度；operations.check仅输出存在的非负整数快照。普通消息同步中这些数仍表示其元数据阶段，非之后消息导入完成时的实时人数。

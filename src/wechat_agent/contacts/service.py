@@ -48,14 +48,13 @@ def _filters(account_id, q, role=None):
         literal = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         pattern = "%" + literal + "%"
         clauses.append("""(c.remark LIKE ? ESCAPE '\\' OR c.nickname LIKE ? ESCAPE '\\'
-                          OR c.contact_id LIKE ? ESCAPE '\\' OR EXISTS (
-                          SELECT 1 FROM members s JOIN conversations v
+                          OR c.contact_id LIKE ? ESCAPE '\\' OR c.contact_id IN (
+                          SELECT s.contact_id FROM members s JOIN conversations v
                           ON v.account_id=s.account_id AND v.conversation_id=s.conversation_id
-                          WHERE s.account_id=c.account_id AND s.contact_id=c.contact_id
-                          AND v.title LIKE ? ESCAPE '\\') OR EXISTS (
-                          SELECT 1 FROM contact_names n WHERE n.account_id=c.account_id
-                          AND n.contact_id=c.contact_id AND n.value LIKE ? ESCAPE '\\'))""")
-        params.extend([pattern] * 5)
+                          WHERE s.account_id=? AND v.title LIKE ? ESCAPE '\\') OR c.contact_id IN (
+                          SELECT n.contact_id FROM contact_names n WHERE n.account_id=?
+                          AND n.value LIKE ? ESCAPE '\\'))""")
+        params.extend([pattern, pattern, pattern, account_id, pattern, account_id, pattern])
     if role and role != "all":
         clauses.append("c.role=?")
         params.append(role)

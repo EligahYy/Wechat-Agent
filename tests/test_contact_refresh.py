@@ -107,3 +107,42 @@ def test_refresh_intent_is_fast_and_settings_do_not_claim_messages_synced(client
         result = asyncio.run(run_next(conn,Services(source=MetadataSource())))
     assert result.state == 'succeeded'
     assert client.get('/api/settings').json()['source']['state'] == 'last_metadata_succeeded'
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("include_invalid",[False,True])
+async def test_refresh_distinguishes_source_rows_from_archived_people_and_roles(db,include_invalid):
+    from wechat_agent.source.contracts import ContactKey, ConversationRecord
+    from wechat_agent.source.repository import archive_metadata
+    def person(identifier, name=None, *, account='acct-1'):
+        return ContactRecord(key=ContactKey(account_id=account,contact_id=identifier),remark=name,nickname=None,is_self=identifier==account)
+    archive_metadata(db,'acct-1',[person('acct-1'),person('merchant-a','旧名'),person('historical','历史名称'),person('invalid\nidentifier','异常')],[])
+    archive_metadata(db,'another-account',[person('other','其他账号',account='another-account')],[])
+    source=MetadataSource()
+    source.people=[person('acct-1'),person('merchant-a','本次名称'),person('current-no-name')]
+    if include_invalid:
+        source.people.append(person('invalid\nnew','隔离记录'))
+    source.rooms=[ConversationRecord(account_id='acct-1',conversation_id='observed-only',kind='private',title=None,member_ids=['acct-1','observed-only'])]
+    intent(db)
+    result=await run_next(db,Services(source=source))
+    listing=list_contacts(db,'acct-1')
+    counts=result.counts
+    assert counts['metadata_people']==2+include_invalid
+    assert counts['contacts_current']==2
+    assert counts['contacts_retained']==2
+    assert counts['contacts_total']==listing['total']==listing['role_counts']['all']==4
+    assert counts['contacts_total']==counts['contacts_current']+counts['contacts_retained']
+    assert sum(listing['role_counts'][role] for role in ('unknown','merchant','provider','platform'))==4
+    assert counts['names_missing']==2 and listing['role_counts']['unknown']==4
+
+
+@pytest.mark.asyncio
+async def test_unfinished_metadata_read_does_not_invent_an_archive_snapshot(db):
+    seed_case(db)
+    class Unavailable(MetadataSource):
+        async def refresh_metadata(self):
+            from wechat_agent.source.adapter import SourceError
+            raise SourceError('source_unreachable')
+    intent(db)
+    result=await run_next(db,Services(source=Unavailable()))
+    assert result.state=='failed'
+    assert all(key not in result.counts for key in ('contacts_total','contacts_current','contacts_retained'))

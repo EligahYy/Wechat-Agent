@@ -53,6 +53,10 @@ def check_operation(client, account_id, *, wait_seconds=30, operation_id=None, l
         "counts": {key: operation["counts"].get(key, 0) for key in initial_counts()},
         "source_gaps": [gap for item in operation["items"] if item["phase"] == "source" for gap in item["gaps"]],
     }
+    for key in ('contacts_total', 'contacts_current', 'contacts_retained'):
+        value = operation['counts'].get(key)
+        if type(value) is int and value >= 0:
+            report['counts'][key] = value
     try:
         response = client.get("/api/contacts", params={"account_id": account_id, "page_size": 1})
         response.raise_for_status()

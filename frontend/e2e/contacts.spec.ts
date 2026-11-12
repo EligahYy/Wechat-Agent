@@ -403,6 +403,12 @@ test("top metadata refresh is a durable operation and does not synchronize messa
   const history = await (await request.get("/api/operations?account_id=acct-1")).json();
   expect(history.items[0].counts.pages_processed).toBe(0);
   expect(history.items[0].counts.analysis_required).toBe(0);
-  await expect(dialog.getByText(`联系人资料 ${history.items[0].counts.metadata_people}`, {exact:true})).toBeVisible();
+  await expect(dialog.getByText(`来源资料 ${history.items[0].counts.metadata_people} 条`, {exact:true})).toBeVisible();
+  const counts=history.items[0].counts;
+  expect(counts.contacts_total).toBe(counts.contacts_current+counts.contacts_retained);
+  const listing=await (await request.get('/api/contacts?account_id=acct-1')).json();
+  expect(counts.contacts_total).toBe(listing.role_counts.all);
+  await expect(dialog.getByText(`刷新后归档 ${counts.contacts_total} 人`,{exact:true})).toBeVisible();
+  await expect(dialog.getByText(`其他归档 ${counts.contacts_retained} 人`,{exact:true})).toBeVisible();
   await expect(dialog.getByText(/目标会话/)).toHaveCount(0);
 });

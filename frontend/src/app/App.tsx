@@ -1,3 +1,4 @@
+import { metadataSummary } from "./operationPresentation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard,
@@ -301,7 +302,7 @@ export function App() {
                     <div>
                       <strong>{operationTitle(job)}</strong>
                       {job && (
-                        job.action === "refresh_contacts" ? <p>已读取 {job.counts.metadata_people || 0} 位联系人 · 尚无名称 {job.counts.names_missing || 0} 位</p> : <p>
+                        job.action === "refresh_contacts" ? <p>{metadataSummary(job)}</p> : <p>
                           已归档 {job.counts.inserted || 0} 条新增 ·{" "}
                           {job.counts.unchanged || 0} 条不变 ·{" "}
                           {job.counts.completed_conversations || 0} 个会话完成

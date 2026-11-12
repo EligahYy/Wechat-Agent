@@ -59,6 +59,9 @@ def _counts(result):
         counts[name] = getattr(result, name)
     for name in ('metadata_people', 'metadata_groups', 'names_scoped', 'names_missing'):
         counts[name] = getattr(result, name)
+    for name in ('contacts_total', 'contacts_current', 'contacts_retained'):
+        if (value := getattr(result, name)) is not None:
+            counts[name] = value
     counts["conversations_total"] = result.total_conversations
     for name in ("completed", "failed", "incomplete"):
         attr = "successful_conversations" if name == "completed" else name + "_conversations"

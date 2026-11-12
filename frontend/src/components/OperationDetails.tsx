@@ -1,3 +1,4 @@
+import { metadataTotals } from "../app/operationPresentation";
 import type { Operation } from "../api/types";
 import { operationTitle } from "../app/useOperations";
 
@@ -44,6 +45,7 @@ const gapLabels: Record<string, string> = {
 export function OperationDetails({ operation }: { operation: Operation }) {
   const metadataOnly = operation.action === "refresh_contacts";
   const counts = operation.counts;
+  const archive = metadataTotals(counts);
   const total = counts.conversations_total || 0;
   const completed = counts.completed_conversations || 0;
   const unfinished = Math.max(
@@ -62,10 +64,10 @@ export function OperationDetails({ operation }: { operation: Operation }) {
     <section className="operation-detail">
       <h3>{operationTitle(operation)}</h3>
       {metadataOnly ? <div className="operation-facts">
-        <span className="info-chip">联系人资料 {counts.metadata_people || 0}</span>
+        <span className="info-chip">来源资料 {counts.metadata_people || 0} 条</span>
         <span className="info-chip">群资料 {counts.metadata_groups || 0}</span>
         <span className="info-chip">群内／会话名称 {counts.names_scoped || 0}</span>
-        <span className="info-chip">尚无名称 {counts.names_missing || 0}</span>
+        <span className="info-chip">归档姓名缺失 {counts.names_missing || 0} 人</span>
       </div> : <><div className="operation-facts">
         <span className="info-chip">新增 {counts.inserted || 0}</span>
         <span className="info-chip">修订 {counts.revised || 0}</span>
@@ -76,6 +78,15 @@ export function OperationDetails({ operation }: { operation: Operation }) {
         <span>已完成 {completed}</span>
         <span>未完成 {unfinished}</span>
       </div></>}
+      {metadataOnly && archive && <div className="operation-facts">
+        <span>刷新后归档 {archive.total} 人</span>
+        <span>本次来源收录 {archive.current} 人</span>
+        <span>其他归档 {archive.retained} 人</span>
+      </div>}
+      {metadataOnly && <p className="muted">
+        {archive ? "归档人数＝本次来源收录＋其他归档。其他归档为本次联系人资料未包含的沟通或历史人物，不代表当前好友关系。" : "此记录未保存归档人数拆分，来源读取量不代表归档总数。"}
+        待识别表示身份尚未确认，与姓名是否缺失无关。
+      </p>}
       <p className="muted">
         来源阶段：
         {operation.source_state === "succeeded"

@@ -61,8 +61,15 @@ it("does not interpret history_complete false alone as failed sync", () => {
 it("reports metadata refresh separately from chat synchronization", () => {
   render(<OperationDetails operation={{...operation, action: "refresh_contacts", state: "succeeded", source_state: "succeeded", error_code: null, items: [], counts: {metadata_people: 12, metadata_groups: 3, names_scoped: 2, names_missing: 1}}} />);
   expect(screen.getByText("联系人资料已刷新")).toBeVisible();
-  expect(screen.getByText("联系人资料 12")).toBeVisible();
+  expect(screen.getByText("来源资料 12 条")).toBeVisible();
   expect(screen.getByText("群资料 3")).toBeVisible();
   expect(screen.getByText("群内／会话名称 2")).toBeVisible();
   expect(screen.queryByText(/目标会话|新增 0/)).not.toBeInTheDocument();
+});
+it("explains the persisted archive partition rather than subtracting source rows", () => {
+  render(<OperationDetails operation={{...operation,action:"refresh_contacts",state:"succeeded",source_state:"succeeded",items:[],counts:{metadata_people:12,contacts_total:14,contacts_current:11,contacts_retained:3,names_missing:1}}} />);
+  expect(screen.getByText("刷新后归档 14 人")).toBeVisible();
+  expect(screen.getByText("本次来源收录 11 人")).toBeVisible();
+  expect(screen.getByText("其他归档 3 人")).toBeVisible();
+  expect(screen.getByText(/待识别.*身份/)).toBeVisible();
 });

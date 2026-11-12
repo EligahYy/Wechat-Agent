@@ -39,6 +39,9 @@ class SyncResult(BaseModel):
     metadata_groups: int = 0
     names_scoped: int = 0
     names_missing: int = 0
+    contacts_total: int | None = None
+    contacts_current: int | None = None
+    contacts_retained: int | None = None
 
 
 @asynccontextmanager
@@ -103,7 +106,14 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
         if any(r.membership_state == 'unreadable' for r in rooms):
             result.gaps.append('source_group_members_unreadable')
         from ..contacts.names import identity_quality
-        quality = identity_quality(conn, scope.account_id)
+        with transaction(conn):
+            quality = identity_quality(conn, scope.account_id)
+            total, current = conn.execute('''SELECT COUNT(*),COALESCE(SUM(metadata_current),0)
+                FROM contacts WHERE account_id=? AND is_self=0 AND identity_state='active' ''',
+                (scope.account_id,)).fetchone()
+            result.contacts_total = total
+            result.contacts_current = current
+            result.contacts_retained = total-current
         result.metadata_people = sum(not person.is_self for person in people)
         result.metadata_groups = sum(room.kind == 'group' for room in rooms)
         result.names_scoped = quality['names_scoped']

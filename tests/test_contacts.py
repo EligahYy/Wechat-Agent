@@ -326,3 +326,28 @@ def test_list_counts_and_rows_share_one_read_snapshot_during_role_change(contact
     result = response.json()
     assert result["total"] == result["role_counts"]["merchant"] == len(result["items"]) == 6
     assert fetch(contacts_client, role="merchant").json()["total"] == 5
+
+
+def test_search_work_stays_bounded_for_thousands_of_contacts_and_shared_groups(db):
+    from wechat_agent.contacts.service import list_contacts
+    with db:
+        db.execute("INSERT INTO accounts(account_id) VALUES('scale-account')")
+        db.executemany("INSERT INTO contacts(account_id,contact_id,nickname) VALUES('scale-account',?,?)",
+            [(f'person-{i}',f'货主{i}') for i in range(2420)])
+        db.executemany("INSERT INTO conversations(account_id,conversation_id,kind,title) VALUES('scale-account',?,'group',?)",
+            [(f'room-{g}',f'TEMU业务{g}' if g%2 else f'普通群{g}') for g in range(80)])
+        db.executemany("INSERT INTO members(account_id,conversation_id,contact_id) VALUES('scale-account',?,?)",
+            [(f'room-{g}',f'person-{i}') for i in range(2420) for g in range(80) if (i+g)%8==0])
+    for query,expected in [('Temu',1210),('货主2419',1),('no-matching-name',0)]:
+        steps=[0]
+        def budget():
+            steps[0]+=1000
+            return steps[0]>8_000_000
+        db.set_progress_handler(budget,1000)
+        try:
+            result=list_contacts(db,'scale-account',q=query)
+        finally:
+            db.set_progress_handler(None,0)
+        assert result['total']==expected
+        assert result['role_counts']['all']==expected
+        assert len(result['items'])==min(20,expected)
