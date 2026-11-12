@@ -39,10 +39,10 @@
 
 **Files:** Create patches/wx-cli/{manifest.json,*.patch,README.md}、scripts/install-wx-cli.sh；在.local固定上游源码开发并导出patch。
 
-- [ ] Rust失败回放覆盖URL／XML不替换真实fallback，匹配可信前缀才剥离，缺身份保留正文与空归属。
-- [ ] 来源名称读取区分known／empty／unreadable并正确统计行错误；只读结构化群成员HTTP及元数据能力／刷新状态。
-- [ ] resolver随成功数据库刷新替换；显式元数据刷新能够刷新缓存、返回真实成功／失败代次。
-- [ ] Rust相关测试及完整可执行测试、补丁可从干净固定commit应用；安装器校验基线／patch，不覆盖原工具，运行合成数据HTTP验证后提交R2。
+- [x] Rust失败回放覆盖URL／XML不替换真实fallback，匹配可信前缀才剥离，缺身份保留正文与空归属。
+- [x] 来源名称读取区分known／empty／unreadable并正确统计行错误；只读结构化群成员HTTP及元数据能力／刷新状态。
+- [x] resolver随成功数据库刷新替换；显式元数据刷新能够刷新缓存、返回真实成功／失败代次。
+- [x] Rust相关测试及完整可执行测试、补丁可从干净固定commit应用；安装器校验基线／patch，不覆盖原工具，运行合成数据HTTP验证后提交R2。
 
 ### Task 3: R3 名称候选及刷新状态归档
 

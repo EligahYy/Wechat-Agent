@@ -1,0 +1,8 @@
+{
+  "upstream": "https://github.com/pandorafuture/wx-cli.git",
+  "base_commit": "7bed9e767a55d86ac2b9142a49ca078f95623c8b",
+  "version": "0.7.4+wechat-agent.1",
+  "contract": "wechat-agent-source-v1",
+  "patch": "identity-names-v1.patch",
+  "patch_sha256": "60690e5f13aa037b656cf7a45590c50206cf2d0ee6efa54fe54aaa2e7b9f56f8"
+}

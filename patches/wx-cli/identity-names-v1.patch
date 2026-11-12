@@ -1,0 +1,1321 @@
+diff --git a/crates/wx-cli/src/cmd/export_task.rs b/crates/wx-cli/src/cmd/export_task.rs
+index 8d074ab..b84e28a 100644
+--- a/crates/wx-cli/src/cmd/export_task.rs
++++ b/crates/wx-cli/src/cmd/export_task.rs
+@@ -1353,6 +1353,9 @@ mod tests {
+ 
+         let msgs = vec![
+             EnrichedMessage {
++                sender_issue: None,
++                sender_fallback: None,
++                sender_candidate: None,
+                 message: Message {
+                     sort_seq: 0,
+                     server_id: 1,
+@@ -1371,6 +1374,9 @@ mod tests {
+                 snippet: String::new(),
+             },
+             EnrichedMessage {
++                sender_issue: None,
++                sender_fallback: None,
++                sender_candidate: None,
+                 message: Message {
+                     sort_seq: 1,
+                     server_id: 2,
+@@ -1387,6 +1393,9 @@ mod tests {
+                 snippet: String::new(),
+             },
+             EnrichedMessage {
++                sender_issue: None,
++                sender_fallback: None,
++                sender_candidate: None,
+                 message: Message {
+                     sort_seq: 2,
+                     server_id: 3,
+diff --git a/crates/wx-cli/src/cmd/serve/bridge.rs b/crates/wx-cli/src/cmd/serve/bridge.rs
+index 9de9fda..55b0f19 100644
+--- a/crates/wx-cli/src/cmd/serve/bridge.rs
++++ b/crates/wx-cli/src/cmd/serve/bridge.rs
+@@ -158,7 +158,7 @@ async fn handle_session_event(
+ 
+     // DB query in blocking context; returns None on DB lock failure
+     let db = Arc::clone(&state.db);
+-    let resolver = Arc::clone(&state.resolver);
++    let resolver = state.identity.resolver();
+     let visibility = Arc::clone(&state.visibility);
+     let self_wxid = state.self_wxid.clone();
+     let username = ev.username.clone();
+@@ -205,7 +205,7 @@ async fn handle_session_event(
+     let (last_sort_seq, messages) = apply_update(&mut bridge_state.cursors, &username, update);
+ 
+     // Session event (always sent)
+-    let mut enriched = enrich_session_event(ev, &state.self_wxid, &state.resolver);
++    let mut enriched = enrich_session_event(ev, &state.self_wxid, &state.identity.resolver());
+     // Phase 2: redact hidden sender in session summary
+     project_session_sender(&mut enriched, &state.visibility);
+     let session_payload = SessionPayload {
+@@ -220,7 +220,7 @@ async fn handle_session_event(
+     if !messages.is_empty() {
+         let payload = MessagePayload {
+             talker: username.clone(),
+-            talker_display_name: state.resolver.display_with_id(&username),
++            talker_display_name: state.identity.resolver().display_with_id(&username),
+             messages,
+             anchor_sort_seq: last_sort_seq,
+         };
+@@ -279,6 +279,9 @@ mod tests {
+ 
+     fn make_msg(sort_seq: i64) -> EnrichedMessage {
+         EnrichedMessage {
++            sender_issue: None,
++            sender_fallback: None,
++            sender_candidate: None,
+             message: wx_db::Message {
+                 sort_seq,
+                 server_id: 0,
+diff --git a/crates/wx-cli/src/cmd/serve/error.rs b/crates/wx-cli/src/cmd/serve/error.rs
+index be649ae..e6e6a19 100644
+--- a/crates/wx-cli/src/cmd/serve/error.rs
++++ b/crates/wx-cli/src/cmd/serve/error.rs
+@@ -4,6 +4,7 @@ use serde_json::json;
+ 
+ pub enum ServeError {
+     Db(String),
++    Conflict(String),
+     Internal(String),
+     InvalidParam(String),
+     NotFound(String),
+@@ -14,6 +15,7 @@ pub enum ServeError {
+ impl IntoResponse for ServeError {
+     fn into_response(self) -> Response {
+         let (status, message) = match self {
++            ServeError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+             ServeError::Db(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+             ServeError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+             ServeError::InvalidParam(msg) => (StatusCode::BAD_REQUEST, msg),
+diff --git a/crates/wx-cli/src/cmd/serve/event.rs b/crates/wx-cli/src/cmd/serve/event.rs
+index 7a6da26..ea7ec83 100644
+--- a/crates/wx-cli/src/cmd/serve/event.rs
++++ b/crates/wx-cli/src/cmd/serve/event.rs
+@@ -93,6 +93,9 @@ mod tests {
+             talker: "wxid_friend".to_string(),
+             talker_display_name: "wxid_friend".to_string(),
+             messages: vec![EnrichedMessage {
++                sender_issue: None,
++                sender_fallback: None,
++                sender_candidate: None,
+                 message: wx_db::Message {
+                     sort_seq: 1,
+                     server_id: 2,
+diff --git a/crates/wx-cli/src/cmd/serve/handlers.rs b/crates/wx-cli/src/cmd/serve/handlers.rs
+index 5016ef7..98bc45b 100644
+--- a/crates/wx-cli/src/cmd/serve/handlers.rs
++++ b/crates/wx-cli/src/cmd/serve/handlers.rs
+@@ -13,6 +13,7 @@ use serde_json::json;
+ use tokio_stream::wrappers::BroadcastStream;
+ use tokio_stream::StreamExt;
+ 
++#[cfg(test)]
+ use crate::cmd::server::types::{RuntimeAccountState, ServerHealthPayload};
+ use crate::output::{JsonEnvelope, PagingMeta, StatsMeta};
+ use crate::schema::{
+@@ -44,15 +45,14 @@ fn parse_order(s: &str) -> wx_db::SortOrder {
+ pub async fn handler_health(
+     State(state): State<Arc<AppState>>,
+ ) -> Result<impl IntoResponse, ServeError> {
+-    Ok(Json(ServerHealthPayload {
+-        ready: state.ready.load(Ordering::Acquire),
+-        worker_id: state.worker_id.clone(),
+-        cli_version: state.cli_version.clone(),
+-        current_account: RuntimeAccountState {
+-            wxid: state.current_account.wxid.clone(),
+-            name: state.current_account.name.clone(),
+-        },
+-    }))
++    let metadata = state.identity.snapshot();
++    Ok(Json(json!({
++        "ready": state.ready.load(Ordering::Acquire) && metadata.refresh_state == "ready",
++        "worker_id": state.worker_id,
++        "cli_version": state.cli_version,
++        "current_account": {"wxid":state.current_account.wxid,"name":state.current_account.name},
++        "metadata": metadata,
++    })))
+ }
+ 
+ #[cfg(test)]
+@@ -207,7 +207,7 @@ pub async fn handler_sessions(
+     Query(params): Query<SessionParams>,
+ ) -> Result<impl IntoResponse, ServeError> {
+     let db = Arc::clone(&state.db);
+-    let resolver = Arc::clone(&state.resolver);
++    let resolver = state.identity.resolver();
+     let visibility = Arc::clone(&state.visibility);
+     let self_wxid = state.self_wxid.clone();
+     let limit = wx_db::effective_limit(params.limit);
+@@ -360,7 +360,7 @@ pub async fn handler_messages(
+     }
+ 
+     let db = Arc::clone(&state.db);
+-    let resolver = Arc::clone(&state.resolver);
++    let resolver = state.identity.resolver();
+     let visibility = Arc::clone(&state.visibility);
+     let self_wxid = state.self_wxid.clone();
+     let limit = wx_db::effective_limit(params.limit);
+@@ -504,6 +504,7 @@ impl TimelineMessage {
+             sender_display_name,
+             direction,
+             snippet,
++            ..
+         } = message;
+         Self {
+             sort_seq: message.sort_seq,
+@@ -571,7 +572,7 @@ pub async fn handler_timeline(
+ ) -> Result<impl IntoResponse, ServeError> {
+     let (since, until) = timeline_bounds(&params)?;
+     let db = Arc::clone(&state.db);
+-    let resolver = Arc::clone(&state.resolver);
++    let resolver = state.identity.resolver();
+     let visibility = Arc::clone(&state.visibility);
+     let self_wxid = state.self_wxid.clone();
+     let limit = wx_db::effective_limit(params.limit);
+@@ -696,7 +697,7 @@ pub async fn handler_search(
+     let q = params
+         .q
+         .ok_or_else(|| ServeError::InvalidParam("missing required parameter: q".into()))?;
+-    let resolver = Arc::clone(&state.resolver);
++    let resolver = state.identity.resolver();
+     let self_wxid = state.self_wxid.clone();
+     let limit = wx_db::effective_limit(params.limit);
+     let offset = params.offset;
+diff --git a/crates/wx-cli/src/cmd/serve/identity.rs b/crates/wx-cli/src/cmd/serve/identity.rs
+new file mode 100644
+index 0000000..9bdabb7
+--- /dev/null
++++ b/crates/wx-cli/src/cmd/serve/identity.rs
+@@ -0,0 +1,387 @@
++//! Versioned read-only identity metadata and explicit cache refresh.
++
++use super::{error::ServeError, state::AppState};
++use crate::output::JsonEnvelope;
++use axum::{
++    extract::{Query, State},
++    http::StatusCode,
++    response::IntoResponse,
++    Json,
++};
++use serde::{Deserialize, Serialize};
++use std::sync::{Arc, RwLock};
++use wx_context::ContactResolver;
++
++#[derive(Clone, Serialize)]
++pub struct IdentitySnapshot {
++    pub contract: &'static str,
++    pub patch_id: &'static str,
++    pub mode: &'static str,
++    pub generation: u64,
++    pub resolver_generation: u64,
++    pub refreshed_at: String,
++    pub refresh_state: &'static str,
++    #[serde(skip)]
++    resolver: Arc<ContactResolver>,
++}
++
++pub struct IdentityRuntime(RwLock<IdentitySnapshot>);
++
++impl IdentityRuntime {
++    pub fn new(resolver: ContactResolver, mode: &'static str) -> Self {
++        Self(RwLock::new(IdentitySnapshot {
++            contract: "wechat-agent-source-v1",
++            patch_id: "wechat-agent.1",
++            mode,
++            generation: 0,
++            resolver_generation: 0,
++            refreshed_at: chrono::Utc::now().to_rfc3339(),
++            refresh_state: "ready",
++            resolver: Arc::new(resolver),
++        }))
++    }
++    pub fn snapshot(&self) -> IdentitySnapshot {
++        self.0.read().unwrap().clone()
++    }
++    pub fn resolver(&self) -> Arc<ContactResolver> {
++        self.snapshot().resolver
++    }
++    pub fn refreshing(&self) {
++        self.0.write().unwrap().refresh_state = "running";
++    }
++    pub fn failed(&self) {
++        self.0.write().unwrap().refresh_state = "failed";
++    }
++    pub fn publish(&self, resolver: ContactResolver) {
++        let mut value = self.0.write().unwrap();
++        value.generation += 1;
++        value.resolver_generation = value.generation;
++        value.refreshed_at = chrono::Utc::now().to_rfc3339();
++        value.refresh_state = "ready";
++        value.resolver = Arc::new(resolver);
++    }
++}
++
++#[derive(Deserialize)]
++pub struct IdentityParams {
++    #[serde(default = "default_limit")]
++    limit: usize,
++    #[serde(default)]
++    offset: usize,
++    generation: Option<u64>,
++    show_hidden: Option<String>,
++}
++fn default_limit() -> usize {
++    200
++}
++
++async fn metadata(
++    state: Arc<AppState>,
++    params: IdentityParams,
++    groups: bool,
++) -> Result<Json<serde_json::Value>, ServeError> {
++    if params.show_hidden.as_deref() != Some("1") {
++        return Err(ServeError::InvalidParam(
++            "full_metadata_scope_required".into(),
++        ));
++    }
++    if params.limit == 0 || params.limit > 500 || params.offset > 200_000 {
++        return Err(ServeError::InvalidParam(
++            "metadata_page_limit_invalid".into(),
++        ));
++    }
++    let result = tokio::task::spawn_blocking(move || {
++        let db = state
++            .db
++            .lock()
++            .map_err(|_| ServeError::Internal("metadata_lock_failed".into()))?;
++        let info = state.identity.snapshot();
++        if info.refresh_state != "ready" {
++            return Err(ServeError::Internal("metadata_refresh_not_ready".into()));
++        }
++        if params
++            .generation
++            .is_some_and(|expected| expected != info.generation)
++        {
++            return Err(ServeError::Conflict("metadata_generation_changed".into()));
++        }
++        let mut output = if groups {
++            let page = db
++                .query_identity_groups(params.limit, params.offset)
++                .map_err(|_| ServeError::Db("group_metadata_read_failed".into()))?;
++            serde_json::to_value(JsonEnvelope::from_query_result(
++                page,
++                params.limit,
++                params.offset,
++                |row| row,
++            ))
++        } else {
++            let page = db
++                .query_identity_contacts(params.limit, params.offset)
++                .map_err(|_| ServeError::Db("contact_metadata_read_failed".into()))?;
++            serde_json::to_value(JsonEnvelope::from_query_result(
++                page,
++                params.limit,
++                params.offset,
++                |row| row,
++            ))
++        }
++        .map_err(|_| ServeError::Internal("metadata_encode_failed".into()))?;
++        let total = output["paging"]["total"].as_u64().unwrap_or(0);
++        output["paging"]["has_more"] =
++            serde_json::json!((params.offset + params.limit) < total as usize);
++        output["metadata"] = serde_json::to_value(info)
++            .map_err(|_| ServeError::Internal("metadata_encode_failed".into()))?;
++        Ok(output)
++    })
++    .await
++    .map_err(|_| ServeError::Internal("metadata_task_failed".into()))??;
++    Ok(Json(result))
++}
++
++pub async fn contacts(
++    State(state): State<Arc<AppState>>,
++    Query(params): Query<IdentityParams>,
++) -> Result<impl IntoResponse, ServeError> {
++    metadata(state, params, false).await
++}
++pub async fn groups(
++    State(state): State<Arc<AppState>>,
++    Query(params): Query<IdentityParams>,
++) -> Result<impl IntoResponse, ServeError> {
++    metadata(state, params, true).await
++}
++pub async fn refresh(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ServeError> {
++    let generation = state.identity.snapshot().generation;
++    state
++        .refresh_tx
++        .send(super::refresh::RefreshTrigger::Refresh)
++        .await
++        .map_err(|_| ServeError::Internal("metadata_refresh_unavailable".into()))?;
++    Ok((
++        StatusCode::ACCEPTED,
++        Json(serde_json::json!({"generation":generation, "refresh_state":"queued"})),
++    ))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use wx_context::ContactResolver;
++
++    #[test]
++    fn failed_refresh_preserves_generation_and_reports_failure() {
++        let runtime = IdentityRuntime::new(ContactResolver::empty(), "decrypted_cache");
++        runtime.refreshing();
++        assert_eq!(runtime.snapshot().refresh_state, "running");
++        runtime.failed();
++        let info = runtime.snapshot();
++        assert_eq!(info.generation, 0);
++        assert_eq!(info.resolver_generation, 0);
++        assert_eq!(info.refresh_state, "failed");
++    }
++
++    #[test]
++    fn published_resolver_and_generation_change_together() {
++        let runtime = IdentityRuntime::new(ContactResolver::empty(), "sqlcipher");
++        runtime.refreshing();
++        runtime.publish(ContactResolver::empty());
++        let info = runtime.snapshot();
++        assert_eq!(info.generation, 1);
++        assert_eq!(info.resolver_generation, 1);
++        assert_eq!(info.refresh_state, "ready");
++        let output = serde_json::to_value(info).unwrap();
++        assert!(output.get("resolver").is_none());
++        assert_eq!(output["contract"], "wechat-agent-source-v1");
++    }
++}
++#[cfg(test)]
++mod http_tests {
++    use super::*;
++    use axum::{
++        body::{to_bytes, Body},
++        http::Request,
++    };
++    use lru::LruCache;
++    use std::{
++        num::NonZeroUsize,
++        path::PathBuf,
++        sync::{atomic::AtomicBool, Mutex},
++    };
++    use tokio::sync::{broadcast, mpsc};
++    use tokio_util::sync::CancellationToken;
++    use tower::ServiceExt;
++    use wx_context::{ContactResolver, VisibilityIndex};
++
++    fn fixture() -> (
++        Arc<AppState>,
++        tempfile::TempDir,
++        mpsc::Receiver<super::super::refresh::RefreshTrigger>,
++    ) {
++        let dir = tempfile::tempdir().unwrap();
++        for child in ["contact", "session", "message"] {
++            std::fs::create_dir_all(dir.path().join(child)).unwrap();
++        }
++        let contact = rusqlite::Connection::open(dir.path().join("contact/contact.db")).unwrap();
++        wx_db::test_ddl::create_test_contact_table(&contact);
++        contact.execute_batch("CREATE TABLE chat_room(username TEXT,ext_buffer BLOB); INSERT INTO contact(username,remark,nick_name) VALUES('person','', '真实昵称');").unwrap();
++        let blob = wx_db::encode_room_data_for_test(&[("person", Some("群名片"))]);
++        contact
++            .execute("INSERT INTO chat_room VALUES('room@chatroom',?1)", [blob])
++            .unwrap();
++        let session = rusqlite::Connection::open(dir.path().join("session/session.db")).unwrap();
++        wx_db::test_ddl::create_test_session_table(&session);
++        let db = wx_db::WechatDb::open(dir.path()).unwrap();
++        let resolver = ContactResolver::build(&db).unwrap();
++        let (tx, _) = broadcast::channel(8);
++        let (refresh_tx, refresh_rx) = mpsc::channel(8);
++        let state = Arc::new(AppState {
++            db: Arc::new(Mutex::new(db)),
++            self_wxid: "self".into(),
++            current_account: super::super::state::CurrentAccount {
++                wxid: "self".into(),
++                name: "Self".into(),
++            },
++            worker_id: "synthetic-worker".into(),
++            cli_version: "0.7.4+wechat-agent.1".into(),
++            identity: Arc::new(IdentityRuntime::new(resolver, "decrypted_cache")),
++            visibility: Arc::new(VisibilityIndex::empty()),
++            broadcast_tx: tx,
++            auth_token: Some("test-token".into()),
++            ready: AtomicBool::new(true),
++            refresh_tx,
++            shutdown: CancellationToken::new(),
++            fts_conn: None,
++            attach_dir: PathBuf::new(),
++            media_db_dir: PathBuf::new(),
++            file_dir: PathBuf::new(),
++            video_dir: PathBuf::new(),
++            hardlink_db_path: PathBuf::new(),
++            hardlink_db_conn: Arc::new(Mutex::new(None)),
++            raw_key: None,
++            dat_decrypt: wx_media::DatDecryptOptions::default(),
++            voice_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(8).unwrap()))),
++            image_xor_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(8).unwrap()))),
++            name2id_cache: Arc::new(Mutex::new(None)),
++            media_db_paths: Arc::new(Mutex::new(None)),
++        });
++        (state, dir, refresh_rx)
++    }
++
++    async fn get(state: Arc<AppState>, path: &str) -> (u16, serde_json::Value) {
++        let request = Request::builder()
++            .uri(path)
++            .header("authorization", "Bearer test-token")
++            .body(Body::empty())
++            .unwrap();
++        let response = super::super::routes::build_router(state)
++            .oneshot(request)
++            .await
++            .unwrap();
++        let status = response.status().as_u16();
++        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
++        (status, serde_json::from_slice(&bytes).unwrap())
++    }
++
++    #[tokio::test]
++    async fn identity_routes_publish_structured_names_and_require_auth() {
++        let (state, _dir, _rx) = fixture();
++        let (code, contacts) = get(
++            state.clone(),
++            "/api/v1/identity/contacts?limit=200&offset=0&show_hidden=1",
++        )
++        .await;
++        assert_eq!(code, 200);
++        assert_eq!(contacts["items"][0]["nickname"]["value"], "真实昵称");
++        assert_eq!(contacts["items"][0]["remark"]["state"], "empty");
++        let (_, groups) = get(
++            state.clone(),
++            "/api/v1/identity/groups?limit=200&offset=0&show_hidden=1",
++        )
++        .await;
++        assert_eq!(groups["items"][0]["members"][0]["display_name"], "群名片");
++        let (code, _) = get(
++            state.clone(),
++            "/api/v1/identity/contacts?generation=99&show_hidden=1",
++        )
++        .await;
++        assert_eq!(code, 409);
++        let response = super::super::routes::build_router(state)
++            .oneshot(
++                Request::builder()
++                    .uri("/api/v1/identity/groups")
++                    .body(Body::empty())
++                    .unwrap(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(response.status().as_u16(), 401);
++    }
++
++    #[test]
++    fn corroborated_person_prefix_conflict_is_explicitly_unattributed() {
++        let (state, _dir, _rx) = fixture();
++        let message = wx_db::Message {
++            sort_seq: 1,
++            server_id: 1,
++            msg_type: 1,
++            sub_type: 0,
++            sender: "other-name2id-person".into(),
++            talker: "room@chatroom".into(),
++            create_time: 1,
++            content: wx_db::MessageContent::Text("person:\nhello".into()),
++            status: 0,
++        };
++        let enriched = crate::schema::enrich_message(message, "self", &state.identity.resolver());
++        assert!(enriched.message.sender.is_empty());
++        let wire = serde_json::to_value(enriched).unwrap();
++        assert_eq!(wire["sender_issue"], "sender_prefix_conflict");
++        assert_eq!(wire["content"]["Text"], "person:\nhello");
++    }
++
++    #[test]
++    fn conflicted_identity_does_not_bypass_existing_sender_visibility() {
++        let (state, _dir, _rx) = fixture();
++        let resolver = state.identity.resolver();
++        let message = wx_db::Message {
++            sort_seq: 1,
++            server_id: 1,
++            msg_type: 1,
++            sub_type: 0,
++            sender: "other-name2id-person".into(),
++            talker: "room@chatroom".into(),
++            create_time: 1,
++            content: wx_db::MessageContent::Text("person:\nhello".into()),
++            status: 0,
++        };
++        let visibility = VisibilityIndex::build(&["person".into()], &[], &resolver);
++        let enriched = crate::schema::enrich_message(message, "self", &resolver);
++        assert!(
++            crate::schema::project_message_item(enriched, "room@chatroom", &visibility).is_none()
++        );
++    }
++
++    #[tokio::test]
++    async fn fresh_resolver_and_health_have_the_same_generation() {
++        let (state, dir, _rx) = fixture();
++        let before = state.identity.resolver();
++        assert_eq!(before.display_name("person"), "真实昵称");
++        let conn = rusqlite::Connection::open(dir.path().join("contact/contact.db")).unwrap();
++        conn.execute("UPDATE contact SET nick_name='新昵称'", [])
++            .unwrap();
++        {
++            let db = state.db.lock().unwrap();
++            state.identity.publish(ContactResolver::build(&db).unwrap());
++        }
++        assert_eq!(before.display_name("person"), "真实昵称");
++        assert_eq!(state.identity.resolver().display_name("person"), "新昵称");
++        let (_, health) = get(state.clone(), "/api/v1/health").await;
++        assert_eq!(health["metadata"]["generation"], 1);
++        assert_eq!(health["metadata"]["resolver_generation"], 1);
++        assert_eq!(health["metadata"]["patch_id"], "wechat-agent.1");
++        state.identity.failed();
++        let (_, health) = get(state, "/api/v1/health").await;
++        assert_eq!(health["metadata"]["refresh_state"], "failed");
++        assert_eq!(health["ready"], false);
++    }
++}
+diff --git a/crates/wx-cli/src/cmd/serve/mod.rs b/crates/wx-cli/src/cmd/serve/mod.rs
+index 542d5cb..94cb11e 100644
+--- a/crates/wx-cli/src/cmd/serve/mod.rs
++++ b/crates/wx-cli/src/cmd/serve/mod.rs
+@@ -3,6 +3,7 @@ mod bridge;
+ mod error;
+ mod event;
+ mod handlers;
++mod identity;
+ mod media;
+ pub(crate) mod refresh;
+ mod routes;
+@@ -264,7 +265,14 @@ pub async fn cmd_serve(
+         current_account,
+         worker_id: worker_id.clone(),
+         cli_version: version::cli_version_string(),
+-        resolver: Arc::new(resolver),
++        identity: Arc::new(identity::IdentityRuntime::new(
++            resolver,
++            if direct_mode {
++                "sqlcipher"
++            } else {
++                "decrypted_cache"
++            },
++        )),
+         visibility: Arc::new(visibility),
+         broadcast_tx,
+         auth_token: token.clone(),
+@@ -409,6 +417,7 @@ pub async fn cmd_serve(
+             cache_arc.clone(),
+             shutdown_bg.clone(),
+         )
++        .with_identity(Arc::clone(&bg_state.identity))
+         .with_fts(bg_state.fts_conn.clone(), fts_path_for_refresh)
+         .with_caches(
+             Some(Arc::clone(&bg_state.name2id_cache)),
+diff --git a/crates/wx-cli/src/cmd/serve/refresh.rs b/crates/wx-cli/src/cmd/serve/refresh.rs
+index 92aab45..bd69e19 100644
+--- a/crates/wx-cli/src/cmd/serve/refresh.rs
++++ b/crates/wx-cli/src/cmd/serve/refresh.rs
+@@ -28,6 +28,7 @@ pub enum RefreshTrigger {
+ /// Failed refreshes are logged but do NOT advance the epoch, so bridge waiters
+ /// will not proceed with stale data.
+ pub struct RefreshTask {
++    identity: Option<Arc<super::identity::IdentityRuntime>>,
+     trigger_rx: mpsc::Receiver<RefreshTrigger>,
+     epoch_tx: watch::Sender<u64>,
+     db: Arc<std::sync::Mutex<WechatDb>>,
+@@ -54,6 +55,7 @@ impl RefreshTask {
+         shutdown: CancellationToken,
+     ) -> Self {
+         RefreshTask {
++            identity: None,
+             trigger_rx,
+             epoch_tx,
+             db,
+@@ -67,6 +69,11 @@ impl RefreshTask {
+         }
+     }
+ 
++    pub fn with_identity(mut self, identity: Arc<super::identity::IdentityRuntime>) -> Self {
++        self.identity = Some(identity);
++        self
++    }
++
+     /// Set the independent FTS connection and path for refresh reopening.
+     pub fn with_fts(
+         mut self,
+@@ -117,6 +124,9 @@ impl RefreshTask {
+                 }
+             }
+ 
++            if let Some(identity) = &self.identity {
++                identity.refreshing();
++            }
+             // Run refresh in spawn_blocking.
+             let db = Arc::clone(&self.db);
+             let cache = self.cache.clone();
+@@ -280,7 +290,7 @@ impl RefreshTask {
+             })
+             .await;
+ 
+-            let ok = match success {
++            let mut ok = match success {
+                 Ok(v) => v,
+                 Err(e) => {
+                     eprintln!("warn: refresh task panicked: {e}");
+@@ -288,6 +298,23 @@ impl RefreshTask {
+                 }
+             };
+ 
++            if let Some(identity) = &self.identity {
++                if ok {
++                    let rebuilt = self
++                        .db
++                        .lock()
++                        .ok()
++                        .and_then(|db| wx_context::ContactResolver::build(&db).ok());
++                    if let Some(resolver) = rebuilt {
++                        identity.publish(resolver);
++                    } else {
++                        ok = false;
++                        identity.failed();
++                    }
++                } else {
++                    identity.failed();
++                }
++            }
+             // Only advance epoch on successful refresh
+             if ok {
+                 epoch += 1;
+@@ -330,6 +357,28 @@ fn is_message_shard_path(rel_path: &str) -> bool {
+ mod tests {
+     use super::*;
+ 
++    #[tokio::test]
++    async fn successful_refresh_updates_the_shared_resolver_generation() {
++        let (tx, mut epoch, shutdown, mut task) = make_test_task();
++        task.cache = None;
++        let identity = Arc::new(super::super::identity::IdentityRuntime::new(
++            wx_context::ContactResolver::empty(),
++            "sqlcipher",
++        ));
++        let task = task.with_identity(Arc::clone(&identity));
++        let handle = tokio::spawn(task.run());
++        tx.send(RefreshTrigger::Refresh).await.unwrap();
++        tokio::time::timeout(std::time::Duration::from_secs(3), epoch.changed())
++            .await
++            .unwrap()
++            .unwrap();
++        assert_eq!(identity.snapshot().generation, 1);
++        assert_eq!(identity.snapshot().resolver_generation, 1);
++        assert_eq!(identity.snapshot().refresh_state, "ready");
++        shutdown.cancel();
++        handle.await.unwrap();
++    }
++
+     /// Helper: create a RefreshTask that will fail on decrypt (no real cache/db).
+     /// Used to test channel behavior without needing real WeChat infrastructure.
+     fn make_test_task() -> (
+diff --git a/crates/wx-cli/src/cmd/serve/routes.rs b/crates/wx-cli/src/cmd/serve/routes.rs
+index f01ae99..09ecfca 100644
+--- a/crates/wx-cli/src/cmd/serve/routes.rs
++++ b/crates/wx-cli/src/cmd/serve/routes.rs
+@@ -1,7 +1,7 @@
+ use std::sync::Arc;
+ 
+ use axum::middleware;
+-use axum::routing::get;
++use axum::routing::{get, post};
+ use axum::Router;
+ use tower_http::cors::CorsLayer;
+ 
+@@ -11,6 +11,9 @@ use super::state::AppState;
+ 
+ pub fn build_router(state: Arc<AppState>) -> Router {
+     Router::new()
++        .route("/api/v1/identity/contacts", get(super::identity::contacts))
++        .route("/api/v1/identity/groups", get(super::identity::groups))
++        .route("/api/v1/identity/refresh", post(super::identity::refresh))
+         .route("/api/v1/health", get(handlers::handler_health))
+         .route("/api/v1/sessions", get(handlers::handler_sessions))
+         .route("/api/v1/contacts", get(handlers::handler_contacts))
+diff --git a/crates/wx-cli/src/cmd/serve/state.rs b/crates/wx-cli/src/cmd/serve/state.rs
+index 09fbdd3..0f9c81b 100644
+--- a/crates/wx-cli/src/cmd/serve/state.rs
++++ b/crates/wx-cli/src/cmd/serve/state.rs
+@@ -7,7 +7,7 @@ use lru::LruCache;
+ use rusqlite::Connection;
+ use tokio::sync::{broadcast, mpsc};
+ use tokio_util::sync::CancellationToken;
+-use wx_context::{ContactResolver, VisibilityIndex};
++use wx_context::VisibilityIndex;
+ use wx_db::WechatDb;
+ use wx_media::DatDecryptOptions;
+ 
+@@ -37,8 +37,8 @@ pub struct AppState {
+     pub worker_id: String,
+     /// Shared CLI version string used by health/status surfaces.
+     pub cli_version: String,
+-    /// Contact name resolver (read-only after construction).
+-    pub resolver: Arc<ContactResolver>,
++    /// Versioned resolver replaced after a successful metadata refresh.
++    pub identity: Arc<super::identity::IdentityRuntime>,
+     /// Compiled talker-level visibility rules for this worker.
+     pub visibility: Arc<VisibilityIndex>,
+     /// Broadcast channel for SSE events.
+diff --git a/crates/wx-cli/src/schema.rs b/crates/wx-cli/src/schema.rs
+index 412c93b..04d4514 100644
+--- a/crates/wx-cli/src/schema.rs
++++ b/crates/wx-cli/src/schema.rs
+@@ -4,6 +4,12 @@ use wx_db::{extract_quote_fromusr, is_group_chat, FtsHit, Message, NativeFtsHit,
+ 
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ pub struct EnrichedMessage {
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub sender_issue: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub sender_fallback: Option<String>,
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub sender_candidate: Option<String>,
+     #[serde(flatten)]
+     pub message: Message,
+     pub sender_display_name: String,
+@@ -41,14 +47,38 @@ pub struct SearchHit {
+ }
+ 
+ pub fn enrich_message(
+-    msg: Message,
++    mut msg: Message,
+     self_wxid: &str,
+     resolver: &ContactResolver,
+ ) -> EnrichedMessage {
++    let candidate = if is_group_chat(&msg.talker) {
++        let text = match &msg.content {
++            wx_db::MessageContent::Text(text) => Some(text.as_str()),
++            wx_db::MessageContent::Quote { raw_xml, .. } => Some(raw_xml.as_str()),
++            _ => None,
++        };
++        text.and_then(|text| text.split_once(":\n"))
++            .map(|(prefix, _)| prefix)
++            .filter(|prefix| {
++                *prefix != msg.sender && resolver.contains(prefix) && !prefix.ends_with("@chatroom")
++            })
++            .map(str::to_string)
++    } else {
++        None
++    };
++    let (sender_issue, sender_fallback) = if candidate.is_some() {
++        let fallback = std::mem::take(&mut msg.sender);
++        (Some("sender_prefix_conflict".to_string()), Some(fallback))
++    } else {
++        (None, None)
++    };
+     let direction = Direction::detect(&msg.sender, self_wxid);
+     let sender_display_name = resolver.display_with_id(&msg.sender);
+     let snippet = format_content(&msg);
+     EnrichedMessage {
++        sender_issue,
++        sender_fallback,
++        sender_candidate: candidate,
+         message: msg,
+         sender_display_name,
+         direction,
+@@ -188,7 +218,16 @@ pub fn project_message_item(
+     talker: &str,
+     visibility: &VisibilityIndex,
+ ) -> Option<EnrichedMessage> {
+-    if visibility.is_hidden_sender_in_group(talker, &msg.message.sender) {
++    if visibility.is_hidden_sender_in_group(talker, &msg.message.sender)
++        || msg
++            .sender_fallback
++            .as_deref()
++            .is_some_and(|id| visibility.is_hidden_sender_in_group(talker, id))
++        || msg
++            .sender_candidate
++            .as_deref()
++            .is_some_and(|id| visibility.is_hidden_sender_in_group(talker, id))
++    {
+         return None;
+     }
+ 
+@@ -554,6 +593,9 @@ mod tests {
+         let msg = make_message(sender, talker, content);
+         let snippet = format_content(&msg);
+         EnrichedMessage {
++            sender_issue: None,
++            sender_fallback: None,
++            sender_candidate: None,
+             message: msg,
+             sender_display_name: sender.to_string(),
+             direction: Direction::Incoming,
+diff --git a/crates/wx-cli/src/version.rs b/crates/wx-cli/src/version.rs
+index ef4644b..c9a32fc 100644
+--- a/crates/wx-cli/src/version.rs
++++ b/crates/wx-cli/src/version.rs
+@@ -8,7 +8,7 @@ pub(crate) fn cli_version_long() -> &'static str {
+             let sha = option_env!("VERGEN_GIT_SHA").unwrap_or("unknown");
+             let sha_short = if sha.len() >= 7 { &sha[..7] } else { sha };
+             let date = option_env!("VERGEN_BUILD_DATE").unwrap_or("unknown");
+-            format!("{version} ({sha_short} {date})")
++            format!("{version}+wechat-agent.1 ({sha_short} {date})")
+         })
+         .as_str()
+ }
+diff --git a/crates/wx-db/src/decode.rs b/crates/wx-db/src/decode.rs
+index af3f448..45af417 100644
+--- a/crates/wx-db/src/decode.rs
++++ b/crates/wx-db/src/decode.rs
+@@ -227,7 +227,8 @@ pub fn decode_message_for_test(
+ /// Parse group-sender info from decoded text.
+ ///
+ /// In group chats, the decoded text often starts with a `"sender:\n"` prefix.
+-/// This function splits on `":\n"` to extract the sender and the remaining content.
++/// Only a prefix equal to the database sender is removed. Unverified content
++/// cannot replace attribution; without Name2Id, keep the complete content.
+ ///
+ /// Returns `(sender, content)` tuple. If `is_group` is false or no `":\n"` separator
+ /// is found, returns `(fallback_sender, decoded_text)` unchanged.
+@@ -236,15 +237,16 @@ pub(crate) fn parse_group_sender(
+     decoded_text: String,
+     fallback_sender: String,
+ ) -> (String, String) {
+-    if is_group {
+-        if let Some((sender_prefix, rest)) = decoded_text.split_once(":\n") {
+-            (sender_prefix.to_string(), rest.to_string())
+-        } else {
+-            (fallback_sender, decoded_text)
++    // Name2Id is database attribution. A colon/newline inside ordinary content
++    // is not identity evidence. Only strip a prefix corroborated by that ID.
++    if is_group && !fallback_sender.is_empty() && !fallback_sender.ends_with("@chatroom") {
++        if let Some((prefix, rest)) = decoded_text.split_once(":\n") {
++            if prefix == fallback_sender {
++                return (fallback_sender, rest.to_string());
++            }
+         }
+-    } else {
+-        (fallback_sender, decoded_text)
+     }
++    (fallback_sender, decoded_text)
+ }
+ 
+ /// Parse message content into a typed MessageContent enum variant.
+@@ -300,6 +302,34 @@ pub(crate) fn parse_content(
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn group_body_prefix_never_overrides_name2id_sender() {
++        for text in ["https:\nexample.com", "<msg><appmsg>:\nbody", ":\nbody"] {
++            let (sender, content) =
++                parse_group_sender(true, text.to_string(), "legacy.alias".to_string());
++            assert_eq!(sender, "legacy.alias");
++            assert_eq!(content, text);
++        }
++    }
++
++    #[test]
++    fn group_without_name2id_keeps_unattributed_full_body() {
++        let text = "wxid_possible:\nhello";
++        let (sender, content) = parse_group_sender(true, text.into(), String::new());
++        assert!(sender.is_empty());
++        assert_eq!(content, text);
++    }
++
++    #[test]
++    fn matching_trusted_old_and_enterprise_prefixes_are_removed() {
++        for sender in ["legacy.alias", "12345@openim"] {
++            let (actual, content) =
++                parse_group_sender(true, format!("{sender}:\nhello"), sender.into());
++            assert_eq!(actual, sender);
++            assert_eq!(content, "hello");
++        }
++    }
++
+     #[test]
+     fn non_group_returns_fallback_unchanged() {
+         let (sender, content) =
+@@ -313,7 +343,7 @@ mod tests {
+         let (sender, content) = parse_group_sender(
+             true,
+             "wxid_abc:\nHello group".to_string(),
+-            "fallback".to_string(),
++            "wxid_abc".to_string(),
+         );
+         assert_eq!(sender, "wxid_abc");
+         assert_eq!(content, "Hello group");
+@@ -333,7 +363,7 @@ mod tests {
+     #[test]
+     fn group_empty_content_after_separator() {
+         let (sender, content) =
+-            parse_group_sender(true, "wxid_abc:\n".to_string(), "fallback".to_string());
++            parse_group_sender(true, "wxid_abc:\n".to_string(), "wxid_abc".to_string());
+         assert_eq!(sender, "wxid_abc");
+         assert_eq!(content, "");
+     }
+@@ -342,8 +372,8 @@ mod tests {
+     fn group_only_colon_before_newline() {
+         let (sender, content) =
+             parse_group_sender(true, ":\nsome content".to_string(), "fallback".to_string());
+-        assert_eq!(sender, "");
+-        assert_eq!(content, "some content");
++        assert_eq!(sender, "fallback");
++        assert_eq!(content, ":\nsome content");
+     }
+ 
+     #[test]
+diff --git a/crates/wx-db/src/identity.rs b/crates/wx-db/src/identity.rs
+new file mode 100644
+index 0000000..4fb0530
+--- /dev/null
++++ b/crates/wx-db/src/identity.rs
+@@ -0,0 +1,244 @@
++//! Structured source identities. Empty fields and unreadable fields stay distinct.
++
++use crate::{ChatRoomMember, DbError, QueryResult, QueryStats, WechatDb};
++use prost::Message;
++use rusqlite::{types::ValueRef, Connection};
++use serde::Serialize;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
++#[serde(rename_all = "snake_case")]
++pub enum NameState {
++    Known,
++    Empty,
++    Unreadable,
++}
++
++#[derive(Debug, Clone, Serialize)]
++pub struct IdentityName {
++    pub value: Option<String>,
++    pub state: NameState,
++}
++
++#[derive(Debug, Clone, Serialize)]
++pub struct IdentityContact {
++    pub user_name: String,
++    pub remark: IdentityName,
++    pub nickname: IdentityName,
++    pub relationship: &'static str,
++}
++
++#[derive(Debug, Clone, Serialize)]
++pub struct IdentityGroup {
++    pub username: String,
++    pub members_state: NameState,
++    pub members: Vec<ChatRoomMember>,
++}
++
++fn read_name(value: ValueRef<'_>) -> IdentityName {
++    match value {
++        ValueRef::Null => IdentityName {
++            value: None,
++            state: NameState::Empty,
++        },
++        ValueRef::Text(bytes) => match std::str::from_utf8(bytes) {
++            Ok(text) if text.trim().is_empty() => IdentityName {
++                value: None,
++                state: NameState::Empty,
++            },
++            Ok(text) => IdentityName {
++                value: Some(text.to_string()),
++                state: NameState::Known,
++            },
++            Err(_) => IdentityName {
++                value: None,
++                state: NameState::Unreadable,
++            },
++        },
++        _ => IdentityName {
++            value: None,
++            state: NameState::Unreadable,
++        },
++    }
++}
++
++fn read_contacts(
++    conn: &Connection,
++    limit: usize,
++    offset: usize,
++) -> Result<QueryResult<IdentityContact>, DbError> {
++    let total_rows: i64 = conn.query_row("SELECT COUNT(*) FROM contact", [], |row| row.get(0))?;
++    let mut stmt = conn.prepare(
++        "SELECT username,remark,nick_name FROM contact ORDER BY username LIMIT ?1 OFFSET ?2",
++    )?;
++    let rows = stmt.query_map([limit as i64, offset as i64], |row| {
++        Ok(IdentityContact {
++            user_name: row.get(0)?,
++            remark: read_name(row.get_ref(1)?),
++            nickname: read_name(row.get_ref(2)?),
++            // No verified friend-status column exists in the pinned contract.
++            relationship: "unknown",
++        })
++    })?;
++    let mut items = Vec::new();
++    let mut skipped = 0;
++    for row in rows {
++        match row {
++            Ok(value) => items.push(value),
++            Err(_) => skipped += 1,
++        }
++    }
++    Ok(QueryResult {
++        items,
++        stats: QueryStats {
++            total_rows: total_rows as usize,
++            filtered_count: None,
++            skipped,
++        },
++    })
++}
++
++fn read_groups(
++    conn: &Connection,
++    limit: usize,
++    offset: usize,
++) -> Result<QueryResult<IdentityGroup>, DbError> {
++    let total_rows: i64 = conn.query_row("SELECT COUNT(*) FROM chat_room", [], |row| row.get(0))?;
++    let mut stmt = conn.prepare(
++        "SELECT username,ext_buffer FROM chat_room ORDER BY username LIMIT ?1 OFFSET ?2",
++    )?;
++    let rows = stmt.query_map([limit as i64, offset as i64], |row| {
++        let username: String = row.get(0)?;
++        let (members_state, members) = match row.get_ref(1)? {
++            ValueRef::Null => (NameState::Empty, Vec::new()),
++            ValueRef::Blob(bytes) if bytes.is_empty() => (NameState::Empty, Vec::new()),
++            ValueRef::Blob(bytes) => match crate::decode::RoomDataProto::decode(bytes) {
++                Ok(proto) => (
++                    NameState::Known,
++                    proto
++                        .users
++                        .into_iter()
++                        .map(|user| ChatRoomMember {
++                            user_name: user.user_name,
++                            display_name: user.display_name.filter(|name| !name.trim().is_empty()),
++                        })
++                        .collect(),
++                ),
++                Err(_) => (NameState::Unreadable, Vec::new()),
++            },
++            _ => (NameState::Unreadable, Vec::new()),
++        };
++        Ok(IdentityGroup {
++            username,
++            members_state,
++            members,
++        })
++    })?;
++    let mut items = Vec::new();
++    let mut skipped = 0;
++    for row in rows {
++        match row {
++            Ok(value) => items.push(value),
++            Err(_) => skipped += 1,
++        }
++    }
++    Ok(QueryResult {
++        items,
++        stats: QueryStats {
++            total_rows: total_rows as usize,
++            filtered_count: None,
++            skipped,
++        },
++    })
++}
++
++impl WechatDb {
++    pub fn query_identity_contacts(
++        &self,
++        limit: usize,
++        offset: usize,
++    ) -> Result<QueryResult<IdentityContact>, DbError> {
++        read_contacts(&self.contact_conn, crate::effective_limit(limit), offset)
++    }
++    pub fn query_identity_groups(
++        &self,
++        limit: usize,
++        offset: usize,
++    ) -> Result<QueryResult<IdentityGroup>, DbError> {
++        read_groups(&self.contact_conn, crate::effective_limit(limit), offset)
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use rusqlite::{params, Connection};
++
++    #[test]
++    fn identity_names_distinguish_null_empty_bad_types_and_utf8() {
++        let conn = Connection::open_in_memory().unwrap();
++        conn.execute_batch("CREATE TABLE contact(username TEXT, remark, nick_name);")
++            .unwrap();
++        conn.execute("INSERT INTO contact VALUES('a',NULL,'')", [])
++            .unwrap();
++        conn.execute(
++            "INSERT INTO contact VALUES('b',?1,?2)",
++            params![vec![0xff_u8], "小林🧑‍💻"],
++        )
++        .unwrap();
++        conn.execute("INSERT INTO contact VALUES('c',CAST(x'ff' AS TEXT),42)", [])
++            .unwrap();
++        let page = read_contacts(&conn, 20, 0).unwrap();
++        assert_eq!(page.items[0].remark.state, NameState::Empty);
++        assert_eq!(page.items[0].nickname.value, None);
++        assert_eq!(page.items[1].remark.state, NameState::Unreadable);
++        assert_eq!(page.items[1].nickname.value.as_deref(), Some("小林🧑‍💻"));
++        assert_eq!(page.items[2].remark.state, NameState::Unreadable);
++        assert_eq!(page.items[2].nickname.state, NameState::Unreadable);
++    }
++
++    #[test]
++    fn unreadable_person_identifier_counts_as_skipped() {
++        let conn = Connection::open_in_memory().unwrap();
++        conn.execute_batch("CREATE TABLE contact(username,remark,nick_name); INSERT INTO contact VALUES(NULL,'x','y'),('valid','','hello');").unwrap();
++        let page = read_contacts(&conn, 20, 0).unwrap();
++        assert_eq!(page.stats.skipped, 1);
++        assert_eq!(page.items.len(), 1);
++        assert_eq!(page.stats.total_rows, 2);
++    }
++
++    #[test]
++    fn group_decode_error_does_not_become_a_valid_empty_roster() {
++        let conn = Connection::open_in_memory().unwrap();
++        conn.execute_batch("CREATE TABLE chat_room(username TEXT,ext_buffer BLOB);")
++            .unwrap();
++        conn.execute(
++            "INSERT INTO chat_room VALUES('room@chatroom',?1)",
++            params![vec![0xff_u8]],
++        )
++        .unwrap();
++        let page = read_groups(&conn, 20, 0).unwrap();
++        assert_eq!(page.items[0].members_state, NameState::Unreadable);
++        assert!(page.items[0].members.is_empty());
++    }
++
++    #[test]
++    fn group_names_keep_room_scope_and_member_ids() {
++        let conn = Connection::open_in_memory().unwrap();
++        conn.execute_batch("CREATE TABLE chat_room(username TEXT,ext_buffer BLOB);")
++            .unwrap();
++        let members = vec![("old.alias", Some("群内名称"))];
++        let blob = crate::encode_room_data_for_test(&members);
++        conn.execute(
++            "INSERT INTO chat_room VALUES('room@chatroom',?1)",
++            params![blob],
++        )
++        .unwrap();
++        let page = read_groups(&conn, 20, 0).unwrap();
++        assert_eq!(page.items[0].members_state, NameState::Known);
++        assert_eq!(page.items[0].members[0].user_name, "old.alias");
++        assert_eq!(
++            page.items[0].members[0].display_name.as_deref(),
++            Some("群内名称")
++        );
++    }
++}
+diff --git a/crates/wx-db/src/lib.rs b/crates/wx-db/src/lib.rs
+index 068afa5..87256f3 100644
+--- a/crates/wx-db/src/lib.rs
++++ b/crates/wx-db/src/lib.rs
+@@ -30,6 +30,7 @@ mod contacts;
+ mod decode;
+ mod error;
+ mod fts;
++pub mod identity;
+ mod messages;
+ mod model;
+ pub mod native_fts;
+diff --git a/crates/wx-db/tests/messages-routing.rs b/crates/wx-db/tests/messages-routing.rs
+index 6778a6a..03baeea 100644
+--- a/crates/wx-db/tests/messages-routing.rs
++++ b/crates/wx-db/tests/messages-routing.rs
+@@ -445,19 +445,19 @@ fn messages_routing_group_sender_from_content() {
+ 
+     assert_eq!(result.items.len(), 2);
+ 
+-    // sort_seq=500: sender extracted from "wxid_sender_a:\nhello from group"
++    // sort_seq=500: keep Name2Id; do not trust a conflicting prefix from "wxid_sender_a:\nhello from group"
+     let msg500 = result.items.iter().find(|m| m.sort_seq == 500).unwrap();
+-    assert_eq!(msg500.sender, "wxid_sender_a");
++    assert_eq!(msg500.sender, "wxid_charlie");
+     match &msg500.content {
+-        MessageContent::Text(s) => assert_eq!(s, "hello from group"),
++        MessageContent::Text(s) => assert_eq!(s, "wxid_sender_a:\nhello from group"),
+         other => panic!("expected Text, got: {:?}", other),
+     }
+ 
+-    // sort_seq=600: zstd compressed, sender from "wxid_sender_b:\ncompressed group message"
++    // sort_seq=600: decompression preserves a conflicting prefix from "wxid_sender_b:\ncompressed group message"
+     let msg600 = result.items.iter().find(|m| m.sort_seq == 600).unwrap();
+-    assert_eq!(msg600.sender, "wxid_sender_b");
++    assert_eq!(msg600.sender, "wxid_charlie");
+     match &msg600.content {
+-        MessageContent::Text(s) => assert_eq!(s, "compressed group message"),
++        MessageContent::Text(s) => assert_eq!(s, "wxid_sender_b:\ncompressed group message"),
+         other => panic!("expected Text, got: {:?}", other),
+     }
+     assert_eq!(
+@@ -663,7 +663,7 @@ fn messages_routing_zstd_magic_bytes_detection_no_ct() {
+ 
+     let msg600 = result.items.iter().find(|m| m.sort_seq == 600).unwrap();
+     match &msg600.content {
+-        MessageContent::Text(s) => assert_eq!(s, "compressed group message"),
++        MessageContent::Text(s) => assert_eq!(s, "wxid_sender_b:\ncompressed group message"),
+         other => panic!("expected Text, got: {:?}", other),
+     }
+     assert_eq!(
+diff --git a/crates/wx-db/tests/snapshots/snapshot_parsing__snapshot_group_quote_chatusr.snap b/crates/wx-db/tests/snapshots/snapshot_parsing__snapshot_group_quote_chatusr.snap
+index 3120517..ce83aea 100644
+--- a/crates/wx-db/tests/snapshots/snapshot_parsing__snapshot_group_quote_chatusr.snap
++++ b/crates/wx-db/tests/snapshots/snapshot_parsing__snapshot_group_quote_chatusr.snap
+@@ -1,12 +1,13 @@
+ ---
+ source: crates/wx-db/tests/snapshot-parsing.rs
++assertion_line: 179
+ expression: result.messages
+ ---
+ - sort_seq: 700
+   server_id: 900007
+   msg_type: 49
+   sub_type: 57
+-  sender: wxid_test_quoter
++  sender: ""
+   talker: group_test@chatroom
+   create_time: 1700000700
+   content:
+@@ -15,7 +16,7 @@ expression: result.messages
+       refer_sender: 隐藏用户
+       refer_content: 这是被引用的原始消息
+       refer_type: 1
+-      raw_xml: "<?xml version=\"1.0\"?>\n<msg>\n\t<appmsg appid=\"\" sdkver=\"0\">\n\t\t<title>同意这个观点</title>\n\t\t<type>57</type>\n\t\t<appattach>\n\t\t\t<cdnthumbaeskey />\n\t\t\t<aeskey></aeskey>\n\t\t</appattach>\n\t\t<refermsg>\n\t\t\t<type>1</type>\n\t\t\t<svrid>2041776388084106207</svrid>\n\t\t\t<fromusr>group_test@chatroom</fromusr>\n\t\t\t<chatusr>wxid_test_hidden</chatusr>\n\t\t\t<displayname>隐藏用户</displayname>\n\t\t\t<content>这是被引用的原始消息</content>\n\t\t\t<msgsource>&lt;msgsource&gt;&lt;sequence_id&gt;854104363&lt;/sequence_id&gt;&lt;/msgsource&gt;</msgsource>\n\t\t\t<createtime>1700000600</createtime>\n\t\t</refermsg>\n\t</appmsg>\n\t<fromusername>wxid_test_quoter</fromusername>\n\t<scene>0</scene>\n\t<appinfo>\n\t\t<version>1</version>\n\t\t<appname />\n\t</appinfo>\n\t<commenturl />\n</msg>"
++      raw_xml: "wxid_test_quoter:\n<?xml version=\"1.0\"?>\n<msg>\n\t<appmsg appid=\"\" sdkver=\"0\">\n\t\t<title>同意这个观点</title>\n\t\t<type>57</type>\n\t\t<appattach>\n\t\t\t<cdnthumbaeskey />\n\t\t\t<aeskey></aeskey>\n\t\t</appattach>\n\t\t<refermsg>\n\t\t\t<type>1</type>\n\t\t\t<svrid>2041776388084106207</svrid>\n\t\t\t<fromusr>group_test@chatroom</fromusr>\n\t\t\t<chatusr>wxid_test_hidden</chatusr>\n\t\t\t<displayname>隐藏用户</displayname>\n\t\t\t<content>这是被引用的原始消息</content>\n\t\t\t<msgsource>&lt;msgsource&gt;&lt;sequence_id&gt;854104363&lt;/sequence_id&gt;&lt;/msgsource&gt;</msgsource>\n\t\t\t<createtime>1700000600</createtime>\n\t\t</refermsg>\n\t</appmsg>\n\t<fromusername>wxid_test_quoter</fromusername>\n\t<scene>0</scene>\n\t<appinfo>\n\t\t<version>1</version>\n\t\t<appname />\n\t</appinfo>\n\t<commenturl />\n</msg>"
+   status: 0
+ - sort_seq: 701
+   server_id: 900008
+diff --git a/crates/wx-db/tests/snapshots/snapshot_parsing__snapshot_group_sender_parsing.snap b/crates/wx-db/tests/snapshots/snapshot_parsing__snapshot_group_sender_parsing.snap
+index 633142e..465752d 100644
+--- a/crates/wx-db/tests/snapshots/snapshot_parsing__snapshot_group_sender_parsing.snap
++++ b/crates/wx-db/tests/snapshots/snapshot_parsing__snapshot_group_sender_parsing.snap
+@@ -1,15 +1,15 @@
+ ---
+ source: crates/wx-db/tests/snapshot-parsing.rs
+-assertion_line: 169
++assertion_line: 171
+ expression: result.messages
+ ---
+ - sort_seq: 600
+   server_id: 900006
+   msg_type: 1
+   sub_type: 0
+-  sender: wxid_test_bob
++  sender: wxid_test_alice
+   talker: group_test@chatroom
+   create_time: 1700000600
+   content:
+-    Text: Hello from the group chat
++    Text: "wxid_test_bob:\nHello from the group chat"
+   status: 0
