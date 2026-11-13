@@ -56,7 +56,9 @@ def inspect(content,format):
         if not rows:_error('import_empty')
         if len(columns)>100 or any(not isinstance(key,str) or not key or len(key)>256 for key in columns):
             _error('import_columns_invalid')
-    except (ValueError,csv.Error,StopIteration):
+        # JSON escapes are decoded only here; validate unused fields and keys too.
+        json.dumps(rows,ensure_ascii=False,allow_nan=False).encode('utf-8')
+    except (ValueError,UnicodeError,csv.Error,StopIteration,RecursionError):
         _error('import_content_invalid')
     return columns,rows
 
@@ -66,7 +68,9 @@ def _timestamp(value):
     try:
         result=datetime.fromisoformat(value.replace('Z','+00:00'))
         if result.utcoffset() is None:raise ValueError()
-        return result
+        return result.astimezone(timezone.utc)
+    except OverflowError:
+        raise ValueError('time_invalid') from None
     except ValueError:
         raise ValueError('time_timezone_required') from None
 
@@ -104,12 +108,12 @@ def _record(conn,row,number,account,namespace,mapping):
     if not isinstance(attachments,list) or len(attachments)>32 or any(not isinstance(a,str) or not a or len(a)>512 for a in attachments):
         raise ValueError('attachment_references_invalid')
     references=sorted({_identity(namespace,identifier,a,'import-att:') for a in attachments})
-    signature=[room,sender,stamp.astimezone(timezone.utc).isoformat(),kind,values['body'],references]
-    revision=hashlib.sha256(json.dumps(signature,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
     existing_room=conn.execute('SELECT kind FROM conversations WHERE account_id=? AND conversation_id=?',(account,room)).fetchone()
     room_kind=values.get('conversation_kind') or (existing_room[0] if existing_room else 'group' if room.endswith('@chatroom') else 'private')
     if room_kind not in ('private','group') or (existing_room and existing_room[0]!=room_kind):
         raise ValueError('conversation_kind_conflict')
+    signature=[room,room_kind,sender,stamp.isoformat(),kind,values['body'],references]
+    revision=hashlib.sha256(json.dumps(signature,ensure_ascii=False,separators=(',',':')).encode()).hexdigest()
     record=MessageRecord(account_id=account,conversation_id=room,message_id=identifier,sender_id=sender,
         sent_at=stamp,kind=kind,body=values['body'],attachment_ids=references,source_revision=revision,
         raw={'origin':'manual_import','namespace':namespace,'external_message_id':external,'row':number,'fields':row})
@@ -130,18 +134,23 @@ def preview(conn,account,namespace,format,content,mapping):
     result={'columns':columns,'sample_rows':samples,'total_rows':len(rows),'preview_id':None,'issues':[],
             'mapping_defaults':{key:key if key in columns else '' for key in (*REQUIRED,*OPTIONAL)}}
     if mapping is None:return result
-    records=[];issues=[];seen={};duplicates=0;existing=0
+    records=[];issues=[];seen={};room_kinds={};duplicates=0;existing=0
     for number,row in enumerate(rows,1):
         try:
             item=_record(conn,row,number,account,namespace,mapping)
+            room=item['record']['conversation_id']
+            if room in room_kinds and room_kinds[room]!=item['conversation_kind']:
+                raise ValueError('conversation_kind_conflict')
             identifier=item['record']['message_id'];revision=item['record']['source_revision']
             if identifier in seen:
-                if seen[identifier]!=revision:raise ValueError('duplicate_identity_conflict')
+                if seen[identifier]['record']['source_revision']!=revision:raise ValueError('duplicate_identity_conflict')
+                seen[identifier]['rows'].append(number)
                 duplicates+=1;continue
             status=_classification(conn,item)
             if status=='conflict':raise ValueError('message_identity_conflict')
             existing+=status=='unchanged'
-            seen[identifier]=revision
+            room_kinds[room]=item['conversation_kind']
+            item['rows']=[number];seen[identifier]=item
             item['status']=status;records.append(item)
         except (ValueError,ValidationError) as error:
             code=str(error) if type(error) is ValueError else 'message_contract_invalid'
@@ -170,18 +179,24 @@ def commit(conn,account,identifier):
         if saved['state']=='committed':return {**json.loads(saved['result_json']),'already_committed':True}
         if saved['expires_at']<time.time():_error('import_preview_expired',409)
         payload=json.loads(saved['payload_json']);issues=list(payload['issues'])
-        counts={'inserted':0,'unchanged':payload['duplicates'],'rejected':payload['rejected'],'total':payload['total']}
+        counts={'inserted':0,'unchanged':0,'rejected':payload['rejected'],'total':payload['total']}
         for item in payload['records']:
+            rows=item.get('rows',[item['row']])
+            room=conn.execute('SELECT kind FROM conversations WHERE account_id=? AND conversation_id=?',
+                (account,item['record']['conversation_id'])).fetchone()
+            issue='conversation_kind_conflict' if room and room[0]!=item['conversation_kind'] else None
             status=_classification(conn,item)
-            if status=='unchanged':counts['unchanged']+=1;continue
-            if status=='conflict':
-                counts['rejected']+=1
-                if len(issues)<100:issues.append({'row':item['row'],'code':'message_identity_conflict'})
+            if status=='conflict' and issue is None:issue='message_identity_conflict'
+            if issue:
+                counts['rejected']+=len(rows)
+                issues.extend({'row':number,'code':issue} for number in rows[:100-len(issues)])
                 continue
+            if status=='unchanged':counts['unchanged']+=len(rows);continue
             record=MessageRecord.model_validate(item['record'])
             page=SourcePage(account_id=account,conversation_id=record.conversation_id,conversation_kind=item['conversation_kind'],records=[record],next_cursor=None,complete=False)
             delta=_archive_page_locked(conn,page,preserve_cursor=True,imports_only=True)
             counts['inserted']+=delta.inserted
+            counts['unchanged']+=len(rows)-1
         result={'status':'committed','preview_id':identifier,'counts':counts,'issues':issues,'already_committed':False}
         conn.execute("UPDATE import_previews SET state='committed',payload_json='{}',result_json=? WHERE account_id=? AND preview_id=?",
                      (json.dumps(result,ensure_ascii=False),account,identifier))

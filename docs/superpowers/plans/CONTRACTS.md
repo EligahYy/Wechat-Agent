@@ -57,6 +57,20 @@ M1 创建 `tests/conftest.py` 的 `db`（临时 SQLite）、`client`（隔离 Fa
 
 商家甲是 merchant-a 的合成显示名。M1 Task 5 创建 `tests/webserver.py`，仅这个隔离测试服务注册 `/api/__test__/reset`，按 case 重置测试数据库；生产 app 不注册该路由。前端 E2E 使用同源 `/api`，测试端口18001／18002、workers=1，默认 `beforeEach` 复位 source-overlap；后续阶段加对应 case，不把合成数据塞入生产包。
 
+## M1任务6：原文、导入与附件访问（schema6）
+
+- GET `/api/contacts/{id}/messages?account_id=...&q=...&conversation_id=...&page_size=50&cursor=...`；只读，接受当前账号active非本人联系人，不限制商家角色。范围为其 authored messages 与已有成员关系所关联的会话，保留共享群中的其他说话人；不推导好友关系或私人对话收件人。越界账号／联系人／来源404，未知配置仍显式报错。
+- 返回`{items,total,sources,has_more,next_cursor}`；items含message_id、conversation_id、source_title／source_kind、sender、sent_at、kind、body、revision、reply_to、origin、attachments。sender含contact_id、display_name、role、is_self；本人显示我方，异常／隔离作者显示归属待核实且不返回伪人物ID。attachments仅返回id、state、mime、reason、downloadable，无磁盘路径或raw。origin为archive／import，导入来源保留在原始记录中。
+- 按`julianday(sent_at),message_id`升序keyset分页，最多50条。游标绑定账号、联系人、查询、来源和页大小，同时绑定账号消息修订与相关来源集合；归档变化返回409/message_cursor_stale，范围错配或损坏游标422。前端保留现有行并显式重新加载，不拼接不同快照。当前策略对账号内不相关消息变化也可能要求重载，优先保证不混页。
+- q为最长256字的字面正文查询；现有FTS5为trigram，至少3字且含字母／数字时安全引用为phrase，其余用转义参数化LIKE。“海运”等1—2字中文、百分号等不作为查询操作符。所有结果继续限定账号与联系人相关范围。
+- POST `/api/imports`仅接受`Content-Type: application/json`（允许charset参数），其他类型在读请求体前415。请求体有流式上限，内容最多2MiB UTF-8／5000行／100列；JSON必须为对象数组，拒绝无效解码Unicode、NaN／Infinity／指数溢出及过深嵌套。CSV列名需唯一，行宽不符记为逐行问题。
+- 预览body为`{mode:'preview',account_id,format:'csv'|'json',namespace,content,mapping?}`。不传mapping只返回列、3行样本及mapping_defaults，不生成确认令牌；mapping为目标字段到来源列名。必需conversation_id、sender_id、sent_at、message_id、body，可选account_id、kind、conversation_kind、attachment_ids。namespace为1—128字可打印标识；ID最长512，正文128KiB，时间需带时区且可正常归一UTC。普通消息发送人必须为结构合法的稳定编号，仅system／revoke可无人物归属。
+- 映射预览返回preview_id、counts（valid／rejected／new／unchanged／total）、前100个逐行issues、issues_truncated及最多20条sample_messages。检查原始和映射账号，不接受文件内伪造他人账号。预览只写import_previews，不写原文／人物／角色／实时游标。同一新会话的类型必须一致，冲突行跳过。
+- schema006仅新增账号限定的import_previews；令牌随机、有效1小时，每账号最多8份待提交预览。确认body为`{mode:'commit',account_id,preview_id}`；返回status、counts（inserted／unchanged／rejected／total）、issues及already_committed。重复确认同一令牌返回已保存结果；未找到404，过期409。提交重新检查现有消息和会话类型，冲突逐行跳过，其余有效行可提交；每个重复行按最终结果计数，不把冲突重复行误报不变。
+- 导入消息ID为import命名空间下的namespace＋conversation_id＋外部message_id摘要，与实时wx-cli身份隔离。相同身份和规范化内容不增行，相同正文不同ID保留；同身份不同内容拒绝，不能修订既有原文。原始字段、批次和行号保留在raw。整个提交及结果保存同一事务，数据库错误整批回滚；成功后清空预览内容副本。角色、人工值与sync_cursors不被导入改变。
+- 附件引用只生成消息范围内的不透明稳定ID，state=unfetched，不打开导入的路径／URL，不下载或解析。GET `/api/attachments/{id}?account_id=...`只接受库内ID；账号不符404，未获取／不可用／本机缺失409。仅original／thumbnail且实际文件位于data_dir/attachments才可流式读取，目录及文件描述符逐层O_NOFOLLOW，拒绝符号链接、越界及非普通文件；响应nosniff、no-store和attachment disposition。下载／解析仍属M3。
+- 客户详情新增资料概览／沟通原文，无侧栏；我方紫色加粗，其他身份仅标签上色。设置是唯一导入入口。SelectField复用form-control样式；capabilities.raw_browser=True，organize／scheduler仍False。前端搜索防抖并取消过期请求，导入后刷新工作台；隐藏列表测量为0时保留有效高度。
+
 ## M2 创建：档案、模型与发布
 
 - `profiles/contracts.py`：`Fact(value: str | None, state: known | uncertain | not_mentioned, sources: list[SourceRef], event_time: datetime | None, batch_ref: str | None)`；`SourceRef(message_id: str, revision: int, attachment_id: str | None, locator: str | None)`，查询时始终加账号和快照权限。
@@ -93,7 +107,7 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 ## M1任务5的设置与页面接线
 
 - `Settings.frontend_dir: Path | None=None`；`Settings.load()`选择仓库当前目录下`frontend/dist`。存在index.html时，在API路由之后挂载静态目录；目录外文件和运行数据库不被暴露，生产不注册测试复位路由。没有build时仅API可用，不生成临时演示页面。wheel独立前端打包留M5。
-- GET `/api/settings`可不带账号，返回服务端选定的`account_id`；空档案且未绑定时为None，多账号未绑定仍409。响应为`{account_id,preferences,version,timezone,source,model,capabilities}`。timezone固定Asia/Shanghai；capabilities中organize／scheduler／raw_browser在本任务均False。
+- GET `/api/settings`可不带账号，返回服务端选定的`account_id`；空档案且未绑定时为None，多账号未绑定仍409。响应为`{account_id,preferences,version,timezone,source,model,capabilities}`。timezone固定Asia/Shanghai；capabilities中organize／scheduler在本任务均False；raw_browser由任务6启用（见下文）。
 - `preferences={daily_time:'08:30',daily_enabled:false,appearance:'system',reduce_motion:false}`；daily_time为24小时规范时间，9:05归一09:05，无效422。PATCH接收`{account_id,expected_version,preferences:<部分字段>}`；复用settings表的preferences行，初始version=0，原子合并并递增，旧版本409不覆盖。严格校验布尔及字段白名单，不保存API密钥。
 - `source={state,last_sync_at}`取最近持久化source项，未检查为not_checked；其余为last_sync_queued／running／succeeded／failed／stopped。它表示上次同步，不等于当前在线健康。`model={state:'configured'|'unconfigured'|'invalid',model_id}`仅表示本机配置存在／有效，不回传密钥、地址或凭据引用，也不推断真实模型能力。
 - 前端request仅访问同源`/api/`，ApiError保留409 details以处理身份部分成功。Vite默认代理8000，WECHAT_API_URL可覆盖；正式页面与API同源。测试复位接口仅tests.webserver注册，临时合成库逐用例清空、workers=1，不使用真实资料。

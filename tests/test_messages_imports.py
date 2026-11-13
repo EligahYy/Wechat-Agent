@@ -74,6 +74,59 @@ def preview(client, rows=None, **updates):
 def commit(client,identifier):
     return client.post('/api/imports',json={'mode':'commit','account_id':'acct-1','preview_id':identifier})
 
+def test_import_requires_json_content_type_before_creating_previews(populated):
+    response=populated.post('/api/imports',content=json.dumps(payload()),
+        headers={'Content-Type':'text/plain','Origin':'https://untrusted.example'})
+    assert response.status_code==415
+    with closing(open_db(populated.app.state.database_path)) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM import_previews').fetchone()[0]==0
+
+@pytest.mark.parametrize('field,value', [('body','\ud800'),('unused','\ud800'),('unused',float('inf'))])
+def test_import_rejects_invalid_decoded_json_before_inspection_or_storage(populated,field,value):
+    rows=json.loads(payload()['content']);rows[0][field]=value
+    content=json.dumps(rows,ensure_ascii=True).replace('Infinity','1e999')
+    for mapping in (None,FIELDS):
+        request=payload();request.update(content=content,mapping=mapping)
+        assert populated.post('/api/imports',json=request).status_code==422
+    with closing(open_db(populated.app.state.database_path)) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM import_previews').fetchone()[0]==0
+
+def test_import_detects_mixed_conversation_types_in_preview(populated):
+    row={**json.loads(payload()['content'])[0],'conversation_id':'new-room','conversation_kind':'group'}
+    request=payload([row,{**row,'message_id':'other','conversation_kind':'private'}])
+    request['mapping']={**FIELDS,'conversation_kind':'conversation_kind'}
+    ready=populated.post('/api/imports',json=request).json()
+    assert ready['counts']=={'valid':1,'rejected':1,'new':1,'unchanged':0,'total':2}
+    assert ready['issues']==[{'row':2,'code':'conversation_kind_conflict'}]
+    assert commit(populated,ready['preview_id']).json()['counts']['inserted']==1
+
+def test_import_rechecks_room_type_at_commit_and_keeps_unrelated_rows(populated):
+    row={**json.loads(payload()['content'])[0],'conversation_id':'racing-room','conversation_kind':'group'}
+    mapping={**FIELDS,'conversation_kind':'conversation_kind'}
+    ready=populated.post('/api/imports',json={**payload([row,{**row,'conversation_id':'safe-room'}]),'mapping':mapping}).json()
+    winner=populated.post('/api/imports',json={**payload([{**row,'message_id':'winner','conversation_kind':'private'}]),'mapping':mapping}).json()
+    assert commit(populated,winner['preview_id']).status_code==200
+    result=commit(populated,ready['preview_id'])
+    assert result.status_code==200
+    assert result.json()['counts']=={'inserted':1,'unchanged':0,'rejected':1,'total':2}
+    assert result.json()['issues']==[{'row':1,'code':'conversation_kind_conflict'}]
+
+def test_import_applies_commit_conflict_to_all_duplicate_rows(populated):
+    row=json.loads(payload()['content'])[0]
+    ready=preview(populated,[row,row]).json()
+    winner=preview(populated,[{**row,'body':'另外一个预览先提交'}]).json()
+    assert commit(populated,winner['preview_id']).status_code==200
+    result=commit(populated,ready['preview_id']).json()
+    assert result['counts']=={'inserted':0,'unchanged':0,'rejected':2,'total':2}
+    assert result['issues']==[{'row':1,'code':'message_identity_conflict'},{'row':2,'code':'message_identity_conflict'}]
+
+def test_import_reports_utc_overflow_as_one_bad_row(populated):
+    row=json.loads(payload()['content'])[0]
+    ready=preview(populated,[{**row,'sent_at':'9999-12-31T23:59:59-01:00'}, {**row,'message_id':'valid'}]).json()
+    assert ready['counts']['valid']==1 and ready['counts']['rejected']==1
+    assert ready['issues']==[{'row':1,'code':'time_invalid'}]
+    assert commit(populated,ready['preview_id']).json()['counts']['inserted']==1
+
 def test_import_preview_then_commit_is_idempotent_and_preserves_sync_state(populated):
     with closing(open_db(populated.app.state.database_path)) as conn:
         cursors=[tuple(row) for row in conn.execute('SELECT * FROM sync_cursors ORDER BY conversation_id')]

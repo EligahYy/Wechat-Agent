@@ -53,6 +53,7 @@ export const messageFor = (error: unknown) =>
         import_empty: "文件内没有可导入的记录",
         import_rows_required: "JSON文件需要使用记录数组格式",
         import_request_invalid: "导入信息无效，请重新选择文件并核对字段",
+        import_content_type_required: "导入请求格式无效，请刷新页面后重试",
         attachment_not_available: "附件尚未获取或本机文件缺失",
         attachment_not_found: "附件引用不存在",
         settings_version_conflict: "设置已被修改，请刷新后重试",

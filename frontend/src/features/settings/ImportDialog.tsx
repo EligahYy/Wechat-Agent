@@ -16,7 +16,7 @@ const issueNames:Record<string,string>={
   time_invalid:"消息时间无效",time_timezone_required:"时间需要包含时区",body_invalid:"正文格式无效或过长",
   account_scope_mismatch:"该行工作账号与当前账号不同",message_identity_conflict:"相同消息标识已有不同原文，已保留原记录",
   duplicate_identity_conflict:"文件内相同消息标识内容冲突",row_not_object:"该行格式不完整",
-  conversation_kind_conflict:"会话类型与已有来源冲突",attachment_references_invalid:"附件引用需为JSON字符串数组",
+  conversation_kind_conflict:"同一会话的类型不一致",attachment_references_invalid:"附件引用需为JSON字符串数组",
 };
 export function ImportDialog({accountId,onClose,onImported}:{accountId:string;onClose:()=>void;onImported:()=>void}) {
   const [namespace,setNamespace]=useState("");const [content,setContent]=useState("");const [format,setFormat]=useState<"csv"|"json">("csv");

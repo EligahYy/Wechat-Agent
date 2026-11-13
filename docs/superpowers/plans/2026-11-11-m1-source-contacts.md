@@ -148,7 +148,7 @@ it("shows the platform identity", () => {
 - [x] **Step 4 — 绿灯：** API 测试检验设置持久化；`npm run test:unit -- --run`、`npm run build`、`npm run test:e2e -- contacts.spec.ts` 通过。E2E 覆盖 20/8 分页、跨页选择、切页签清空、身份修改及列表不闪、复制真实名称；Vite 开发代理 `/api` 到 127.0.0.1:8000。
 - [x] **Step 5 — 提交检查点：** 获准时提交前端源代码／锁文件及路由，忽略 node_modules／dist，消息 `feat: build desktop workspace with shared controls`。
 
-- [ ] **Mac验收（2026-11-12更新）：** 用户已打开正式页面，拉取137f246后仍反馈大量缺名及微信搜索不到的联系人；名称准确性尚未闭合，深浅色／时间等全套交互未收到逐项验收。先处理[独立审查及修复方案](../../verification/2026-11-12-contact-names-review.md)，再按指南复验；不能把页面可访问视为整项通过。
+- [ ] **Mac验收（2026-11-12更新）：** 用户已打开正式页面，拉取137f246后仍反馈大量缺名及微信搜索不到的联系人；名称准确性尚未闭合，深浅色／时间等全套交互未收到逐项验收。后续R1—R4已修复，用户在e8430cc后确认最近计数／姓名搜索和性能反馈无问题。完整真实名称准确性、身份重启保留及深浅色／时间等交互仍未逐项验收，不能把这次反馈扩展为全部通过。
 
 ### Task 6: 原文浏览与唯一导入入口
 
@@ -156,7 +156,7 @@ it("shows the platform identity", () => {
 
 **Interfaces:** GET `/api/contacts/{id}/messages` 带 account_id；POST `/api/imports` 用 mode=preview／commit 和映射配置，同一归档层写入；附件 GET 只接受库内 ID，不接受磁盘路径。
 
-- [ ] **Step 1 — 写失败测试：** 重复导入同一稳定源标识不增行，同文本两个 ID 均保留；没有发送人／会话／时间映射的行返回逐行问题且不盲写；原文跨账号请求 404；附件参数 `../../...` 无法读取。
+- [x] **Step 1 — 写失败测试：** 重复导入同一稳定源标识不增行，同文本两个 ID 均保留；没有发送人／会话／时间映射的行返回逐行问题且不盲写；原文跨账号请求 404；附件参数 `../../...` 无法读取。
 
 ```python
 def test_attachment_api_does_not_accept_paths(client):
@@ -165,14 +165,16 @@ def test_attachment_api_does_not_accept_paths(client):
     assert response.status_code in {404, 422}
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_messages_imports.py -q`，预期路由／导入缺失。
-- [ ] **Step 3 — 实现：** CSV／JSON 先预览及列映射，确认后提交。导入命名空间需稳定，可定位到来源批次／行；不能覆盖实时原文或按昵称合并人。时间线按实际时间、说话人和会话显示；非商家也可看原文，附件未获取显示真实状态。原文 FTS 对中文1–2字短查询用参数化 LIKE 回退，测试“海运”能查到，不假设 unicode61 分词自动支持中文子串。
-- [ ] **Step 4 — 绿灯：** 上述测试及 `npm run test:e2e -- imports.spec.ts` 通过；至少覆盖一个私信／群跨源客户、搜索清空、原文只读及乱码输入报错。导入入口只出现在设置。
-- [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: browse source messages and import mapped records`。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_messages_imports.py -q`，预期路由／导入缺失。
+- [x] **Step 3 — 实现：** CSV／JSON 先预览及列映射，确认后提交。导入命名空间需稳定，可定位到来源批次／行；不能覆盖实时原文或按昵称合并人。时间线按实际时间、说话人和会话显示；非商家也可看原文，附件未获取显示真实状态。原文 FTS 对中文1–2字短查询用参数化 LIKE 回退，测试“海运”能查到，不假设 unicode61 分词自动支持中文子串。
+- [x] **Step 4 — 绿灯：** 上述测试及 `npm run test:e2e -- imports.spec.ts` 通过；至少覆盖一个私信／群跨源客户、搜索清空、原文只读及乱码输入报错。导入入口只出现在设置。
+- [x] **Step 5 — 提交检查点：** 获准时消息 `feat: browse source messages and import mapped records`。
 
 ## 退出条件
 
-- [ ] 同步幂等、修订可追溯、断点不跳页；同人一条联系人，同名不合并。
+- [x] 同步幂等、修订可追溯、断点不跳页；同人一条联系人，同名不合并。
 - [ ] Mac 实际小范围同步、备注／群名可定位，身份操作能重启保留。
-- [ ] 两页 UI 使用真实后端，搜索分页、共享控件及原文／导入可运行。
-- [ ] `python -m pytest -q`、前端 unit／build／本阶段 E2E 通过；未连接或未实现不显示假成功。
+- [x] 两页 UI 使用真实后端，搜索分页、共享控件及原文／导入可运行。
+- [x] `python -m pytest -q`、前端 unit／build／本阶段 E2E 通过；未连接或未实现不显示假成功。
+
+任务6云端交付：schema6；Python308、前端25单元／19浏览器、Node24.14.1构建及解包wheel生产HTTP通过。独立审查5项问题均补失败回归后修复。原文／导入／附件访问的Mac验证仍待回传，附件下载自来源及解析属M3。具体边界见[M1报告](../../verification/m1-report.md#task6)。

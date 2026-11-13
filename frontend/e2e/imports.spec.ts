@@ -16,7 +16,7 @@ test('read-only timeline preserves speakers, searches Chinese and filters source
   await detail.getByLabel('消息来源').selectOption('dm-a');
   await expect(detail.locator('[data-message]')).toHaveCount(2);
 });
-test('settings is the only import entry, explicit preview and commit are idempotent',async ({page}) => {
+test('settings is the only import entry, explicit preview and commit are idempotent',async ({page},testInfo) => {
   await expect(page.getByRole('button',{name:'导入消息',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'设置',exact:true}).click();
   await page.getByRole('button',{name:'导入消息',exact:true}).click();
@@ -27,6 +27,7 @@ test('settings is the only import entry, explicit preview and commit are idempot
   await dialog.getByRole('button',{name:'预览导入',exact:true}).click();
   await expect(dialog.getByText('有效 1 条',{exact:true})).toBeVisible();
   await expect(dialog.getByText('浏览器导入海运报价',{exact:true})).toBeVisible();
+  await page.screenshot({path:testInfo.outputPath('mapped-import-preview.png')});
   await dialog.getByRole('button',{name:'确认导入有效记录',exact:true}).click();
   await expect(dialog.getByText('新增 1 条 · 重复 0 条 · 跳过 0 条',{exact:true})).toBeVisible();
   await dialog.getByRole('button',{name:'完成',exact:true}).click();
@@ -34,6 +35,12 @@ test('settings is the only import entry, explicit preview and commit are idempot
   await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();
   await page.getByRole('dialog').getByRole('tab',{name:'沟通原文',exact:true}).click();
   await expect(page.getByText('浏览器导入海运报价',{exact:true})).toBeVisible();
+  await expect.poll(()=>page.getByRole('tab',{name:'沟通原文',exact:true}).evaluate(button=>{
+    const target=button.getBoundingClientRect();
+    const indicator=button.querySelector('.segment-indicator')!.getBoundingClientRect();
+    return Math.max(Math.abs(target.x-indicator.x),Math.abs(target.y-indicator.y));
+  })).toBeLessThan(1);
+  await page.screenshot({path:testInfo.outputPath('original-message-timeline.png')});
   await page.getByRole('button',{name:'关闭弹窗',exact:true}).click();
   await page.getByRole('button',{name:'设置',exact:true}).click();
   await page.getByRole('button',{name:'导入消息',exact:true}).click();

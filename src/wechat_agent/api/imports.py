@@ -59,13 +59,17 @@ def _execute(request,body):
 
 @router.post('/api/imports')
 async def import_messages(request:Request):
+    if request.headers.get('content-type','').split(';',1)[0].strip().lower()!='application/json':
+        raise OperationError('import_content_type_required',415)
     payload=bytearray()
     async for chunk in request.stream():
         payload.extend(chunk)
         if len(payload)>service.MAX_CONTENT*3+65536:
             raise OperationError('import_too_large',413)
     try:
-        body=REQUEST.validate_python(json.loads(bytes(payload)))
-    except (ValueError,UnicodeError,ValidationError):
+        decoded=json.loads(bytes(payload),parse_constant=service._reject_constant)
+        json.dumps(decoded,ensure_ascii=False,allow_nan=False).encode('utf-8')
+        body=REQUEST.validate_python(decoded)
+    except (ValueError,UnicodeError,ValidationError,RecursionError):
         raise OperationError('import_request_invalid',422) from None
     return await run_in_threadpool(_execute,request,body)
