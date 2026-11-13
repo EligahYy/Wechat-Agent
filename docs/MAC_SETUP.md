@@ -1,6 +1,6 @@
 # Mac 更新与验证
 
-更新：2026-11-13（北京时间）。云端负责开发，Mac只更新、运行和验证。你已安装项目补丁版wx-cli，本次只执行下面1—4步；**无需重装Rust、wx-cli或Python依赖**。首次安装单列在文末，旧阶段命令见[历史归档](verification/mac-setup-history.md)。
+更新：2026-11-13（北京时间）。云端负责开发，Mac只更新、运行和验证。你已安装项目补丁版wx-cli，本次只执行下面1—4步；**无需重装Rust或wx-cli；本次Python锁文件已更新，需按第2步安装依赖**。首次安装单列在文末，旧阶段命令见[历史归档](verification/mac-setup-history.md)。
 
 <a id="update-repository"></a>
 ## 1. 停止应用并更新代码
@@ -49,13 +49,15 @@ export GIT_SSH_COMMAND='ssh -o HostName=ssh.github.com -p 443 -o ConnectTimeout=
   set -e
   .venv/bin/python --version
   node --version
+  .venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
+  .venv/bin/python -m pip install --no-deps --no-build-isolation -e .
   .venv/bin/python -m pytest -q
   npm --prefix frontend ci --engine-strict
   npm --prefix frontend run build
 )
 ```
 
-通过标准：Python3.12.x、Node24.14.1或更高24.x，后端测试和前端构建均成功。此次云端基线为329项Python测试，后续数量以[状态页](STATUS.md)对应版本为准。本次依赖锁未变，无需重建.venv；Mac不需要运行浏览器开发测试。
+通过标准：Python3.12.x、Node24.14.1或更高24.x，后端测试和前端构建均成功。此前输入快照基线为329项Python测试；模型网关核心的最新数量见状态页，后续数量以[状态页](STATUS.md)对应版本为准。本次新增JSON Schema校验与Keychain依赖，安装锁文件即可，无需重建.venv；Mac不需要运行浏览器开发测试。
 
 <a id="start-app"></a>
 ## 3. 启动正式应用
@@ -73,7 +75,7 @@ export GIT_SSH_COMMAND='ssh -o HostName=ssh.github.com -p 443 -o ConnectTimeout=
 curl -fsS http://127.0.0.1:8766/api/health
 ```
 
-通过标准：`{"status":"ok","schema_version":7}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
+通过标准：`{"status":"ok","schema_version":8}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
 
 若出现来源配置错误，核对既有`.local/config/source.json`的base_url与expected_account_id，沿用token_env，不把凭据贴到聊天。原文浏览和手动导入使用已归档数据，不需要再次全量同步。
 

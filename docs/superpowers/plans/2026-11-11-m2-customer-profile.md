@@ -77,6 +77,8 @@ def test_context_keeps_actual_speakers(db, snapshot):
 
 ### Task 3: 统一模型网关
 
+**实施分段（2026-11-13）：** 3A先交付调用契约、持久请求上限、审计、协议响应校验与凭据存储底座；3B接配置版本及显式连接检查API；3C接设置界面与实机步骤。只有三段及任务所列门槛均通过才标Task3 complete，不因核心用例通过提前完成整项。008迁移保存analysis_units/model_calls；真实配置/API/UI未接入前不注册运行时模型，不触发付费请求。
+
 **Files:** Create `model/gateway.py`, `model/deepseek.py`, `model/credentials.py`, `api/model.py`, `tests/fakes/model.py`, `tests/test_model_gateway.py`；Modify `model/contracts.py`, `services.py`, `api/settings.py`, `api/app.py`, `tests/conftest.py`, `pyproject.toml`, `requirements-dev.lock`, `frontend/src/features/settings/SettingsPage.tsx`。
 
 **Interfaces:** Creates ModelConfig／ModelRequest／ModelResponse 与 `ModelGateway.generate`；适配器构造注入 `httpx.AsyncClient`。凭据 `CredentialStore.get(ref: str) -> str`／`set(ref: str, value: str) -> None`，Mac 使用 keyring 的 Keychain 后端，测试用内存替身；前端只看到配置状态。POST `/api/model/check` 由明确的连接测试操作触发，保存配置不隐式调用付费模型。

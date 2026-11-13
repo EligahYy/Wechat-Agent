@@ -6,8 +6,8 @@ import sqlite3
 from ..identities import is_person_identifier
 
 
-SCHEMA_VERSION = 7
-_MIGRATIONS = ((1, "001_archive.sql"), (2, "002_source_sync.sql"), (3, "003_operations.sql"), (4, "004_identity_integrity.sql"), (5, "005_contact_names.sql"), (6, "006_import_previews.sql"), (7, "007_context_snapshots.sql"))
+SCHEMA_VERSION = 8
+_MIGRATIONS = ((1, "001_archive.sql"), (2, "002_source_sync.sql"), (3, "003_operations.sql"), (4, "004_identity_integrity.sql"), (5, "005_contact_names.sql"), (6, "006_import_previews.sql"), (7, "007_context_snapshots.sql"), (8, "008_model_calls.sql"))
 
 
 def open_db(path: Path) -> sqlite3.Connection:
