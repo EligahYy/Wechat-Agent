@@ -55,7 +55,7 @@ export GIT_SSH_COMMAND='ssh -o HostName=ssh.github.com -p 443 -o ConnectTimeout=
 )
 ```
 
-通过标准：Python3.12.x、Node24.14.1或更高24.x，后端测试和前端构建均成功。此次云端基线为308项Python测试，后续数量以[状态页](STATUS.md)对应版本为准。本次依赖锁未变，无需重建.venv；Mac不需要运行浏览器开发测试。
+通过标准：Python3.12.x、Node24.14.1或更高24.x，后端测试和前端构建均成功。此次云端基线为329项Python测试，后续数量以[状态页](STATUS.md)对应版本为准。本次依赖锁未变，无需重建.venv；Mac不需要运行浏览器开发测试。
 
 <a id="start-app"></a>
 ## 3. 启动正式应用
@@ -73,7 +73,7 @@ export GIT_SSH_COMMAND='ssh -o HostName=ssh.github.com -p 443 -o ConnectTimeout=
 curl -fsS http://127.0.0.1:8766/api/health
 ```
 
-通过标准：`{"status":"ok","schema_version":6}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
+通过标准：`{"status":"ok","schema_version":7}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
 
 若出现来源配置错误，核对既有`.local/config/source.json`的base_url与expected_account_id，沿用token_env，不把凭据贴到聊天。原文浏览和手动导入使用已归档数据，不需要再次全量同步。
 

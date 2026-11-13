@@ -57,11 +57,11 @@ def test_known_fact_requires_evidence():
 
 ### Task 2: 输入快照与完整语境
 
-**Files:** Create `context/{__init__,contracts,builder,reader}.py`, `tests/test_context_snapshot.py`；Modify `tests/conftest.py`, `tests/fixtures/source-overlap.json`。
+**Files:** Create `context/{__init__,contracts,builder,reader}.py`, `storage/migrations/007_context_snapshots.sql`, `tests/test_context_snapshot.py`；Modify `tests/conftest.py`, `tests/fixtures/source-overlap.json`。
 
 **Interfaces:** `build_snapshot(conn, key, cutoff) -> ContextSnapshot`；`ContextReader(conn, snapshot)` 的 `messages() -> list[dict]` 与 `resolve(ref: SourceRef) -> dict` 只能读取快照授权材料；创建 snapshot 夹具。
 
-- [ ] **Step 1 — 写失败测试：** snapshot 从一个商家私信和群聊建立，断言保留该商家、我方、服务商的连续往来，目标稳定 ID 不变；每条材料保留实际发送者，不把另一商家的话重标成目标商家。归属是否变成错误事实由 Task 4／7 的归纳验收覆盖。
+- [x] **Step 1 — 写失败测试：** snapshot 从一个商家私信和群聊建立，断言保留该商家、我方、服务商的连续往来，目标稳定 ID 不变；每条材料保留实际发送者，不把另一商家的话重标成目标商家。归属是否变成错误事实由 Task 4／7 的归纳验收覆盖。
 
 ```python
 def test_context_keeps_actual_speakers(db, snapshot):
@@ -70,10 +70,10 @@ def test_context_keeps_actual_speakers(db, snapshot):
     assert {"merchant-a", "provider-p", "self-1"} <= speakers
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_context_snapshot.py -q`，预期 builder／reader 不存在。
-- [ ] **Step 3 — 实现：** 冻结 message_revision ID 清单、参与人角色、人工版本、模型／策略／模板版本、截止时间及缺口。小历史首次扫描所有相关群材料，用回复／提及／订单及连续片段保留关联线索；归属不明作为上下文及 gap，不提前删短回复。后续 M3 扩展分段，不更换契约。
-- [ ] **Step 4 — 绿灯：** 加测非商家拒绝、账号隔离、同时间消息稳定排序、跨段引用闭包、之后追加消息不改变已保存快照、源姓名缺失不让模型造姓名。所有 pytest 通过。
-- [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: build reproducible customer context snapshots`。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_context_snapshot.py -q`，预期 builder／reader 不存在。
+- [x] **Step 3 — 实现：** 冻结 message_revision ID 清单、参与人角色、人工版本、模型／策略／模板版本、截止时间及缺口。小历史首次扫描所有相关群材料，用回复／提及／订单及连续片段保留关联线索；归属不明作为上下文及 gap，不提前删短回复。后续 M3 扩展分段，不更换契约。
+- [x] **Step 4 — 绿灯：** 加测非商家拒绝、账号隔离、同时间消息稳定排序、跨段引用闭包、之后追加消息不改变已保存快照、源姓名缺失不让模型造姓名。所有 pytest 通过。
+- [x] **Step 5 — 提交检查点：** 获准时消息 `feat: build reproducible customer context snapshots`。
 
 ### Task 3: 统一模型网关
 

@@ -144,3 +144,5 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 
 
 M2 Task1已交付profiles/contracts.py和analysis/contracts.py，analysis_result_schema()返回新的JSON Schema，profile-v1.md包含在wheel中。Fact未知值不填内容，明确值需来源；引用范围与语义真实性由Task2／4核对，不以结构校验代替发布门槛。Task1不改schema6；Task2从007开始按实际消费者增加快照结构，后续任务分别增加调用／档案／人工结构，不改已交付001—006。M2界面以资料、证据、次级按需检索为三层，旧全量原文页签由Task6替换。
+
+M2 Task2：schema007增加snapshots(account_id,snapshot_id,contact_id,manifest_json,payload_json)。build_snapshot在事务中冻结完整当前材料，截止与排序使用精确UTC datetime而非舍入的SQLite时间值；versions可显式传入四键template／strategy／output_schema／model_config。当前未配置模型标unconfigured、尚无人工编辑故manual_version=0，后续Task3／5必须接入真实值。ContextReader以保存的账号／联系人／清单校验调用方快照，resolve仅允许快照内消息版本／附件，不支持尚未解析locator。返回材料副本、角色、会话信息不包含磁盘路径或原始源HTTP。追加与修订不改已保存快照；源完整性／附件／引用缺口显式保留。HTTP权限由后续API消费者独立验证。

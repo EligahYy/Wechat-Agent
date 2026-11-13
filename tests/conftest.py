@@ -32,3 +32,12 @@ def case():
             raise ValueError("invalid_fixture_name")
         return json.loads((Path(__file__).parent / "fixtures" / f"{name}.json").read_text())
     return load
+
+@pytest.fixture
+def snapshot(db):
+    from datetime import datetime,timezone
+    from tests.factories import seed_case
+    from wechat_agent.context.builder import build_snapshot
+    from wechat_agent.source.contracts import ContactKey
+    seed_case(db)
+    return build_snapshot(db,ContactKey(account_id='acct-1',contact_id='merchant-a'),datetime(2027,1,1,tzinfo=timezone.utc))
