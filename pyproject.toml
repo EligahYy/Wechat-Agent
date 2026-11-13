@@ -17,6 +17,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "wechat_agent.storage" = ["migrations/*.sql"]
+"wechat_agent.model" = ["prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

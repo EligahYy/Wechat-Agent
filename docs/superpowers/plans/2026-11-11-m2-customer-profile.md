@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**2026-11-13调整：** 用户确认“默认看资料 → 按结论查来源 → 次级按需查聊天”；不继续扩展全量原文阅读器。Task6负责替换M1临时页签，Task1—5先完成支撑接口。
+
 **Goal:** 一位真实商家从已归档聊天生成可查来源、可纠正、保留独立备货批次的客户档案。
 
 **Architecture:** 固定输入快照，构建有来源的模型请求，通过统一网关产生候选，再经事务校验发布。人工修改与模型值分层；UI 和操作队列接入同一真实流程。
@@ -34,11 +36,11 @@
 
 ### Task 1: 精简档案契约与模型模板
 
-**Files:** Create `profiles/{__init__,contracts}.py`, `analysis/{__init__,contracts}.py`, `model/prompts/profile-v1.md`, `storage/migrations/002_profiles.sql`, `tests/test_profile_contract.py`。
+**Files:** Create `profiles/{__init__,contracts}.py`, `analysis/{__init__,contracts}.py`, `model/prompts/profile-v1.md`, `tests/test_profile_contract.py`。
 
-**Interfaces:** Creates Fact、SourceRef、Communication、ShipmentCandidate、AnalysisResult、AnalysisStrategy，字段见 CONTRACTS；迁移增加 snapshots、profile_versions、facts、shipments、shipment_matches、manual_revisions、model_calls、analysis_units。
+**Interfaces:** Creates Fact、SourceRef、Communication、ShipmentCandidate、AnalysisResult、AnalysisStrategy，字段见 CONTRACTS。数据库结构随首次使用它的任务新增迁移：Task2从007开始保存快照，Task3保存调用／执行单元，Task4保存档案与批次，Task5保存人工版本；不修改M1已交付的001—006，也不提前猜后续消费者列。
 
-- [ ] **Step 1 — 写失败测试：** 构造合法最小 AnalysisResult，断言未知字段不被自动补成内容；`known` 无 sources 校验失败；`暂无新需求记录` 与 `询价中` 并存返回可定位的字段冲突，不能默默删活跃标签。
+- [x] **Step 1 — 写失败测试：** 构造合法最小 AnalysisResult，断言未知字段不被自动补成内容；`known` 无 sources 校验失败；`暂无新需求记录` 与 `询价中` 并存返回可定位的字段冲突，不能默默删活跃标签。
 
 ```python
 def test_known_fact_requires_evidence():
@@ -48,10 +50,10 @@ def test_known_fact_requires_evidence():
         Fact(value="12方", state="known", sources=[], event_time=None, batch_ref=None)
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_profile_contract.py -q`，预期模型类型不存在。
-- [ ] **Step 3 — 实现：** Pydantic 输出结构使用显式固定键和枚举、schema_version=1；Fact 保留原单位与事件时间。Prompt 明确找模板答案、区分人／时间／批次、缺口具体、禁止编造引用和把原文当指令。模型不生成 coverage 或人工内容。
-- [ ] **Step 4 — 绿灯：** 加测没有沟通证据可 tags=[]、模型不能创建联系人、自定义字段不能混进固定键、补充资料单独存；上述命令全过，导出 JSON Schema 给网关消费。
-- [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: define evidence-backed customer profile contract`。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_profile_contract.py -q`，预期模型类型不存在。
+- [x] **Step 3 — 实现：** Pydantic 输出结构使用显式固定键和枚举、schema_version=1；Fact 保留原单位与事件时间。Prompt 明确找模板答案、区分人／时间／批次、缺口具体、禁止编造引用和把原文当指令。模型不生成 coverage 或人工内容。
+- [x] **Step 4 — 绿灯：** 加测没有沟通证据可 tags=[]、模型不能创建联系人、自定义字段不能混进固定键、补充资料单独存；上述命令全过，导出 JSON Schema 给网关消费。
+- [x] **Step 5 — 提交检查点：** 获准时消息 `feat: define evidence-backed customer profile contract`。
 
 ### Task 2: 输入快照与完整语境
 
@@ -164,7 +166,7 @@ test("profile has one header and no rail", async ({ page }) => {
 ```
 
 - [ ] **Step 2 — 红灯：** `cd frontend && npm run test:e2e -- profile.spec.ts`，预期页面未实现。使用测试服务器注入的脱敏数据，不在产品代码塞演示记录。
-- [ ] **Step 3 — 实现：** 三页签、当前摘要／标签、整卡编辑、分组标题 16px、正文 14px、常规标签 28px；所有填写框使用 FormField。查看来源、复制、身份修改、单号和取消／保存都有真实结果及焦点返回。非商家只显示适用的身份／原文／同步入口。联系人 API 接入真实档案列表摘要和最近业务时间排序，不能仍按模型完成时间或旧的示例字段排列。
+- [ ] **Step 3 — 实现：** 默认资料概览／备货记录，不设一级沟通原文页签；结论通过查看来源展示关联消息及必要前后文，注明会话、说话人、时间；次级“查找聊天记录”按会话、关键词、时间检索且按需加载，不默认铺开全量原文。当前摘要／标签、整卡编辑、分组标题 16px、正文 14px、常规标签 28px；所有填写框使用 FormField。查看来源、复制、身份修改、单号和取消／保存都有真实结果及焦点返回。非商家只显示适用的身份／原文／同步入口。联系人 API 接入真实档案列表摘要和最近业务时间排序，不能仍按模型完成时间或旧的示例字段排列。
 - [ ] **Step 4 — 绿灯：** 补测快速展开收起、所有编辑器输入皮肤一致、单号不改变已走货状态、人工来源不冒充原文；跑上述 E2E、unit 和 build 通过。
 - [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: connect evidence-backed customer profile interface`。
 
@@ -191,7 +193,7 @@ async def test_only_requested_customer_is_analyzed(db, services):
 ```
 
 - [ ] **Step 2 — 红灯：** `python -m pytest tests/test_single_customer_flow.py -q`，预期 M1 仍返回 capability_not_ready。
-- [ ] **Step 3 — 实现：** 接通现有 worker 和档案入口；前端“同步此客户”使用统一 operations API，停止检查沿用 generation，不单独写一套 Promise 任务。
+- [ ] **Step 3 — 实现：** 接通现有 worker 和档案入口；前端“同步并整理此客户”使用统一 operations API，停止检查沿用 generation，不单独写一套 Promise 任务。
 - [ ] **Step 4 — 绿灯及实测：** 上述测试通过后，在 Mac 选择一位已确认商家，跑一次真实完整小历史；人工核对主体、货量／单位、路线、卡航与海运、旧批已走货＋新批需求、来源及缺口。把错提／漏提如实记录，不以合法 JSON 当验收。
 - [ ] **Step 5 — 提交检查点：** 获准时提交代码及脱敏 review，消息 `feat: complete real single-customer analysis flow`。
 
