@@ -1,4 +1,17 @@
-import { test,expect } from '@playwright/test';
+import { test,expect,type Locator } from '@playwright/test';
+async function settleAnimations(locator:Locator) {
+  await locator.evaluate(async node=>{
+    for(let attempt=0;attempt<12;attempt++){
+      await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+      const animations=node.getAnimations({subtree:true}).filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity);
+      if(!animations.length)return;
+      // ResizeObserver may retarget a transition while data arrives; its old
+      // finished promise rejects on cancellation, then the replacement settles.
+      await Promise.allSettled(animations.map(animation=>animation.finished));
+    }
+    throw Error('Dialog animation did not settle');
+  });
+}
 test.beforeEach(async({page,request})=>{await request.post('/api/__test__/reset');await page.goto('/');});
 test('customer sees scoped progress and result without closing or scrolling up',async({page},info)=>{
   let finished=false;
@@ -35,7 +48,7 @@ test('dialog grows through intermediate heights and search results enter smoothl
   await request.post('/api/imports',{data:{mode:'commit',account_id:'acct-1',preview_id:preview.preview_id}});
   await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();
   const dialog=page.getByRole('dialog');
-  await dialog.evaluate(async node=>{await Promise.all(node.getAnimations({subtree:true}).filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished));});
+  await settleAnimations(dialog);
   const initial=(await dialog.boundingBox())!.height;
   await dialog.evaluate(node=>{const samples:number[]=[];(window as any).__heights=samples;const start=performance.now();
     const sample=()=>{samples.push(node.getBoundingClientRect().height);if(performance.now()-start<1100)requestAnimationFrame(sample);else (window as any).__heightDone=true;};requestAnimationFrame(sample);});
@@ -86,12 +99,12 @@ test('an open source menu follows the dialog while search changes its height',as
   const dialog=page.getByRole('dialog');
   await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
   await expect(dialog.locator('[data-message]')).toHaveCount(4);
-  await dialog.locator('.dialog-body').evaluate(async node=>{await Promise.all(node.getAnimations().map(animation=>animation.finished));});
+  await settleAnimations(dialog.locator('.dialog-body'));
   await page.route('**/api/contacts/*/messages?**',async route=>{await new Promise(resolve=>setTimeout(resolve,400));await route.continue();});
   await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).fill('未出现过的内容');
   await dialog.getByRole('combobox',{name:'消息来源'}).click();
   await expect(dialog.getByText('没有匹配的原文')).toBeVisible();
-  await dialog.locator('.dialog-body').evaluate(async node=>{await Promise.all(node.getAnimations().map(animation=>animation.finished));});
+  await settleAnimations(dialog.locator('.dialog-body'));
   await expect.poll(async()=>{
     const trigger=await dialog.getByRole('combobox',{name:'消息来源'}).boundingBox();
     const menu=await dialog.getByRole('listbox',{name:'消息来源'}).boundingBox();

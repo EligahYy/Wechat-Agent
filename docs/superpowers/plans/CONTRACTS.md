@@ -137,7 +137,7 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 ## 2026-11-13：原文体验与操作口径修订
 
 - 时间线SQL在计数、正文搜索及keyset分页前统一排除system／revoke，不删库内消息或修订；页面明确“不含系统通知”。旧system人物呈现契约保留为归档层行为，不再作为列表可见内容。
-- SelectField改为受控`value:string`和`onValueChange(value)`，自定义combobox／listbox；原生popover顶层显示避免dialog-body裁切，不支持时退回固定定位。Escape被菜单消费，关闭菜单不关闭客户弹窗；退出节点aria-hidden且禁用指针交互。
+- SelectField改为受控`value:string`和`onValueChange(value)`，自定义combobox／listbox；原生popover顶层显示避免dialog-body裁切，不支持时退回固定定位。Escape被菜单消费，关闭菜单不关闭客户弹窗；退出节点aria-hidden且禁用指针交互。菜单展开时跟随输入框几何位置，滚动不再一律关闭，锚点被裁出可见区域时收起；帧回调及可见性观察在退出时回收。
 - Dialog增加status区域，固定在头部之后；按dialog-content自然高度与视口上限计算body高度，再做CSS过渡。ResizeObserver断开回收；视口变化重测，减少动态效果仍生效。
 - 两个商家操作均POST action=sync_and_organize，全局scope无contact_id、客户页显式携带contact_id；仍由服务端核对账号和商家身份。非商家只有来源阶段，不规划其他商家分析。M1未实现模型，source成功后capability_not_ready仍如实呈现；没有更改模型能力声明。
 - useOperations错误携带目标ContactKey，客户详情仅展示范围匹配的job及错误；共用现有轮询／停止，不另建第二个worker或任务。主页移除独立刷新按钮，refresh_contacts接口及旧记录仍兼容。

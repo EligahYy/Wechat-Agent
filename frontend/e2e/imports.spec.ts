@@ -65,6 +65,11 @@ test('mapping errors and invalid UTF8 are explained before commit',async ({page}
   await expect(dialog.getByRole('alert')).toContainText('UTF-8');
   await dialog.getByLabel('选择CSV或JSON文件').setInputFiles({name:'mapping.csv',mimeType:'text/csv',buffer:Buffer.from('room,who,time,id,text\ngroup-1,merchant-a,2026-11-12T12:00:00+08:00,1,映射海运\n')});
   await dialog.getByRole('combobox',{name:'会话标识',exact:true}).click();
+  await dialog.locator('.dialog-body').evaluate(async node=>{
+    node.scrollTop+=2;
+    await new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve())));
+  });
+  await expect(dialog.getByRole('listbox',{name:'会话标识',exact:true})).toBeVisible();
   await dialog.getByRole('option',{name:'room',exact:true}).click();
   await dialog.getByRole('combobox',{name:'发送人标识',exact:true}).click();
   await dialog.getByRole('option',{name:'who',exact:true}).click();

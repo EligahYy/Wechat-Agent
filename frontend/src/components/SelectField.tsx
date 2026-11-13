@@ -39,9 +39,12 @@ export function SelectField({label,options,id,value,onValueChange,disabled=false
     const resize=()=>setOpen(false);
     window.addEventListener('resize',resize);
     const dismiss=(event:PointerEvent)=>{if(!root.current?.contains(event.target as Node))setOpen(false);};
-    const scroll=(event:Event)=>{if(!panel.current?.contains(event.target as Node))setOpen(false);};
-    document.addEventListener('pointerdown',dismiss,true);document.addEventListener('scroll',scroll,true);
-    return()=>{cancelAnimationFrame(frame);window.removeEventListener('resize',resize);document.removeEventListener('pointerdown',dismiss,true);document.removeEventListener('scroll',scroll,true);};
+    const visibility=typeof IntersectionObserver==='undefined'?null:new IntersectionObserver(entries=>{
+      if(entries.some(entry=>!entry.isIntersecting))setOpen(false);
+    });
+    if(trigger.current)visibility?.observe(trigger.current);
+    document.addEventListener('pointerdown',dismiss,true);
+    return()=>{cancelAnimationFrame(frame);visibility?.disconnect();window.removeEventListener('resize',resize);document.removeEventListener('pointerdown',dismiss,true);};
   },[open,options.length]);
   useEffect(()=>{if(open)panel.current?.querySelector('[data-highlight="true"]')?.scrollIntoView({block:'nearest'});},[open,highlight]);
   useEffect(()=>{if(disabled)setOpen(false);},[disabled]);

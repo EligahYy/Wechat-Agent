@@ -19,13 +19,13 @@ git status --short
   set -e
   git switch main
   git pull --ff-only origin main
-  git merge-base --is-ancestor e6bbd76 HEAD
+  git merge-base --is-ancestor 983152c HEAD
   test -f src/wechat_agent/api/messages.py
   git log -1 --oneline
 )
 ```
 
-通过标准：pull成功，包含Task6基础提交e6bbd76，原文接口文件存在。以本次交付的最新main为准，该祖先检查只排除仍在运行旧阶段代码的情况。**pull失败就先处理连接，后续旧版测试成功不算完成更新。**
+通过标准：pull成功，包含客户详情修复提交983152c，原文接口文件存在。以本次交付的最新main为准，该祖先检查只排除仍在运行旧阶段代码的情况。**pull失败就先处理连接，后续旧版测试成功不算完成更新。**
 
 SSH连接失败时，可临时指定22端口再重跑上框：
 
