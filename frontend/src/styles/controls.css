@@ -408,3 +408,7 @@ input[type="checkbox"] {
 .dialog-content {display:flow-root;}
 .dialog-body {flex:0 1 auto;transition:height 280ms var(--ease);}
 .dialog-status {max-height:min(30dvh,240px);overflow:auto;}
+.customer-sync-status progress {appearance:none;background:var(--line);border-radius:999px;overflow:hidden;}
+.customer-sync-status progress::-webkit-progress-bar {background:var(--line);border-radius:999px;}
+.customer-sync-status progress::-webkit-progress-value {background:var(--accent);border-radius:999px;transition:width 200ms var(--ease);}
+.customer-sync-status progress::-moz-progress-bar {background:var(--accent);border-radius:999px;}

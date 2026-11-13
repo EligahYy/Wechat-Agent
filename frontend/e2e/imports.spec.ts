@@ -15,6 +15,11 @@ test('read-only timeline preserves speakers, searches Chinese and filters source
   await expect(detail.locator('[data-message]')).toHaveCount(4);
   await detail.getByRole('combobox',{name:'消息来源'}).click();
   await expect(detail.getByRole('listbox',{name:'消息来源'})).toBeInViewport();
+  await expect.poll(async()=>{
+    const trigger=await detail.getByRole('combobox',{name:'消息来源'}).boundingBox();
+    const menu=await detail.getByRole('listbox',{name:'消息来源'}).boundingBox();
+    return Math.abs(menu!.y-(trigger!.y+trigger!.height+6));
+  }).toBeLessThan(2);
   await page.screenshot({path:info.outputPath('source-menu.png')});
   await detail.getByRole('option',{name:'商家甲',exact:true}).click();
   await expect(detail.locator('[data-message]')).toHaveCount(2);

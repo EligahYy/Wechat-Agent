@@ -27,17 +27,21 @@ export function SelectField({label,options,id,value,onValueChange,disabled=false
       const desired=Math.min(288,options.length*40+12);
       const upward=below<desired&&above>below;
       const height=Math.min(desired,Math.max(80,upward?above:below));
-      setPlacement({top:upward?Math.max(8,box.top-height-6):box.bottom+6,
-        left:Math.max(8,Math.min(box.left,window.innerWidth-width-8)),width,maxHeight:height});
+      const next={top:upward?Math.max(8,box.top-height-6):box.bottom+6,
+        left:Math.max(8,Math.min(box.left,window.innerWidth-width-8)),width,maxHeight:height};
+      setPlacement(previous=>Object.keys(next).every(key=>Math.abs(previous[key as keyof typeof next]-next[key as keyof typeof next])<.5)?previous:next);
     };
     position();
+    let frame:number;
+    const follow=()=>{position();frame=requestAnimationFrame(follow);};
+    frame=requestAnimationFrame(follow);
     if(panel.current?.showPopover&&!panel.current.matches(':popover-open'))panel.current.showPopover();
     const resize=()=>setOpen(false);
     window.addEventListener('resize',resize);
     const dismiss=(event:PointerEvent)=>{if(!root.current?.contains(event.target as Node))setOpen(false);};
     const scroll=(event:Event)=>{if(!panel.current?.contains(event.target as Node))setOpen(false);};
     document.addEventListener('pointerdown',dismiss,true);document.addEventListener('scroll',scroll,true);
-    return()=>{window.removeEventListener('resize',resize);document.removeEventListener('pointerdown',dismiss,true);document.removeEventListener('scroll',scroll,true);};
+    return()=>{cancelAnimationFrame(frame);window.removeEventListener('resize',resize);document.removeEventListener('pointerdown',dismiss,true);document.removeEventListener('scroll',scroll,true);};
   },[open,options.length]);
   useEffect(()=>{if(open)panel.current?.querySelector('[data-highlight="true"]')?.scrollIntoView({block:'nearest'});},[open,highlight]);
   useEffect(()=>{if(disabled)setOpen(false);},[disabled]);

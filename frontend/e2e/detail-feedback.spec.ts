@@ -81,3 +81,20 @@ test('submission errors are shown in this customer and retry can complete the so
   await expect(status.getByText('原文已同步，档案整理尚未接入',{exact:true})).toBeVisible();
   await expect(status.getByRole('alert')).toHaveCount(0);
 });
+test('an open source menu follows the dialog while search changes its height',async({page})=>{
+  await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();
+  const dialog=page.getByRole('dialog');
+  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
+  await expect(dialog.locator('[data-message]')).toHaveCount(4);
+  await dialog.locator('.dialog-body').evaluate(async node=>{await Promise.all(node.getAnimations().map(animation=>animation.finished));});
+  await page.route('**/api/contacts/*/messages?**',async route=>{await new Promise(resolve=>setTimeout(resolve,400));await route.continue();});
+  await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).fill('未出现过的内容');
+  await dialog.getByRole('combobox',{name:'消息来源'}).click();
+  await expect(dialog.getByText('没有匹配的原文')).toBeVisible();
+  await dialog.locator('.dialog-body').evaluate(async node=>{await Promise.all(node.getAnimations().map(animation=>animation.finished));});
+  await expect.poll(async()=>{
+    const trigger=await dialog.getByRole('combobox',{name:'消息来源'}).boundingBox();
+    const menu=await dialog.getByRole('listbox',{name:'消息来源'}).boundingBox();
+    return Math.abs(menu!.y-(trigger!.y+trigger!.height+6));
+  }).toBeLessThan(2);
+});
