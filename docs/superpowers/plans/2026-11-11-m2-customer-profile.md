@@ -79,6 +79,8 @@ def test_context_keeps_actual_speakers(db, snapshot):
 
 **实施分段（2026-11-13）：** 3A先交付调用契约、持久请求上限、审计、协议响应校验与凭据存储底座；3B接配置版本及显式连接检查API；3C接设置界面与实机步骤。只有三段及任务所列门槛均通过才标Task3 complete，不因核心用例通过提前完成整项。008迁移保存analysis_units/model_calls；真实配置/API/UI未接入前不注册运行时模型，不触发付费请求。
 
+**本轮合并改造（2026-11-13用户确认）：** 本任务同时执行[业务活跃联系人扩展计划](2026-11-13-m2-task3-business-contacts.md)，依据[范围设计](../specs/2026-11-13-business-contacts-design.md)。工作台业务活跃范围／设置全量管理、90天直接互动及群需求、人工单个／批量加入移出、人工移出永不自动恢复，与原3A/B/C和按钮附近身份菜单同一轮交付。原任务复选框保持未完成；扩展五项及既有门槛均通过后才关闭Task3。群需求分类是独立用途，不得放宽Task4/7商家档案发布限制。
+
 **Files:** Create `model/gateway.py`, `model/deepseek.py`, `model/credentials.py`, `api/model.py`, `tests/fakes/model.py`, `tests/test_model_gateway.py`；Modify `model/contracts.py`, `services.py`, `api/settings.py`, `api/app.py`, `tests/conftest.py`, `pyproject.toml`, `requirements-dev.lock`, `frontend/src/features/settings/SettingsPage.tsx`。
 
 **Interfaces:** Creates ModelConfig／ModelRequest／ModelResponse 与 `ModelGateway.generate`；适配器构造注入 `httpx.AsyncClient`。凭据 `CredentialStore.get(ref: str) -> str`／`set(ref: str, value: str) -> None`，Mac 使用 keyring 的 Keychain 后端，测试用内存替身；前端只看到配置状态。POST `/api/model/check` 由明确的连接测试操作触发，保存配置不隐式调用付费模型。
