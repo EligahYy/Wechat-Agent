@@ -336,7 +336,7 @@ test("customer sync belongs to header and incomplete history discloses reasons",
   await expect(
     customer
       .locator(".dialog-header")
-      .getByRole("button", { name: "同步此客户", exact: true }),
+      .getByRole("button", { name: "同步并整理此客户", exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("customer-header.png") });
   await customer.getByRole("button", { name: "关闭弹窗" }).click();
@@ -391,26 +391,18 @@ test("customer sync belongs to header and incomplete history discloses reasons",
   await expect(history.getByText(/发送人标识异常/)).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("source-gaps.png") });
 });
-test("top metadata refresh is a durable operation and does not synchronize messages", async ({ page, request }) => {
-  const sent: string[] = [];
-  page.on("request", req => { if (req.method() === "POST" && req.url().endsWith("/api/operations")) sent.push(req.postDataJSON().action); });
-  await page.getByRole("button", {name:"刷新联系人",exact:true}).click();
-  await expect(page.getByText("联系人资料已刷新",{exact:true})).toBeVisible();
-  expect(sent).toEqual(["refresh_contacts"]);
-  await page.getByRole("button", {name:"整理记录",exact:true}).click();
-  const dialog = page.getByRole("dialog",{name:"整理记录"});
-  await dialog.getByRole("button", {name:/联系人资料已刷新/}).click();
-  const history = await (await request.get("/api/operations?account_id=acct-1")).json();
-  expect(history.items[0].counts.pages_processed).toBe(0);
-  expect(history.items[0].counts.analysis_required).toBe(0);
-  await expect(dialog.getByText(`来源资料 ${history.items[0].counts.metadata_people} 条`, {exact:true})).toBeVisible();
+test("unified sync refreshes metadata and reads messages without a second refresh button",async({page,request})=>{
+  await expect(page.getByRole('button',{name:'刷新联系人',exact:true})).toHaveCount(0);
+  const sent:string[]=[];
+  page.on('request',request=>{if(request.method()==='POST'&&request.url().endsWith('/api/operations'))sent.push(request.postDataJSON().action);});
+  await page.getByRole('button',{name:'同步并整理',exact:true}).click();
+  await expect(page.getByText('原文已同步，档案整理尚未接入',{exact:true})).toBeVisible();
+  expect(sent).toEqual(['sync_and_organize']);
+  const history=await(await request.get('/api/operations?account_id=acct-1')).json();
   const counts=history.items[0].counts;
-  expect(counts.contacts_total).toBe(counts.contacts_current+counts.contacts_retained);
-  const listing=await (await request.get('/api/contacts?account_id=acct-1')).json();
-  expect(counts.contacts_total).toBe(listing.role_counts.all);
-  await expect(dialog.getByText(`刷新后归档 ${counts.contacts_total} 人`,{exact:true})).toBeVisible();
-  await expect(dialog.getByText(`其他归档 ${counts.contacts_retained} 人`,{exact:true})).toBeVisible();
-  await expect(dialog.getByText(/目标会话/)).toHaveCount(0);
+  expect(counts.metadata_people).toBeGreaterThan(0);
+  expect(counts.pages_processed).toBeGreaterThan(0);
+  expect(counts.analysis_completed).toBe(0);
 });
 
 test("contact search is limited to names and remarks", async ({page}) => {

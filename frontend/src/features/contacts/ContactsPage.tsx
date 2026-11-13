@@ -1,4 +1,6 @@
 import { MessageTimeline } from "../messages/MessageTimeline";
+import { CustomerSyncStatus } from "../../components/CustomerSyncStatus";
+import { active } from "../../app/useOperations";
 import { nameNotice, sourceLabel, avatarText } from "./presentation";
 import {
   useEffect,
@@ -31,6 +33,8 @@ import type {
   ContactPage,
   Role,
   RoleUpdate,
+  Operation,
+  ContactKey,
 } from "../../api/types";
 const initialCounts = {
   all: 0,
@@ -45,12 +49,24 @@ export function ContactsPage({
   onSync,
   notify,
   banner,
+  operation,
+  syncSubmitting,
+  syncError,
+  syncErrorScope,
+  onStop,
+  onShowOperation,
 }: {
   banner?: ReactNode;
   settings: AppSettings;
   revision: number;
   onSync: (contactId?: string) => Promise<void>;
   notify: (text: string) => void;
+  operation: Operation|null;
+  syncSubmitting:boolean;
+  syncError:string;
+  syncErrorScope:ContactKey|null;
+  onStop:()=>void;
+  onShowOperation:(operation:Operation)=>void;
 }) {
   const [view, setView] = useState<"merchants" | "all">("merchants"),
     [role, setRole] = useState<Role | "all">("all"),
@@ -65,6 +81,8 @@ export function ContactsPage({
     [detail, setDetail] = useState<Contact | null>(null),
     [detailOpen, setDetailOpen] = useState(false);
   const [detailView,setDetailView]=useState<"overview"|"messages">("overview");
+  const detailOperation=detail&&operation?.scope.account_id===detail.key.account_id&&operation.scope.contact_id===detail.key.contact_id?operation:null;
+  const detailError=detail&&syncErrorScope?.account_id===detail.key.account_id&&syncErrorScope.contact_id===detail.key.contact_id?syncError:'';
   const [roleOpen, setRoleOpen] = useState(false),
     [roleTargets, setRoleTargets] = useState<Contact[]>([]),
     [nextRole, setNextRole] = useState<Role>("merchant"),
@@ -671,13 +689,16 @@ export function ContactsPage({
           detail && (
             <button
               className="button secondary"
+              disabled={syncSubmitting||active(operation)}
+              title={active(operation)&&!detailOperation?'其他任务正在进行，请稍后再试':undefined}
               onClick={() => void onSync(detail.key.contact_id)}
             >
-              <RefreshCw size={15} />
-              同步此客户
+              <RefreshCw size={15} className={active(detailOperation)?'spin':undefined}/>
+              {active(detailOperation)?detailOperation?.phase==='source'?'同步中…':'任务进行中…':detail.role==='merchant'?'同步并整理此客户':'同步该联系人消息'}
             </button>
           )
         }
+        status={detail&&(detailOperation||detailError)&&<CustomerSyncStatus operation={detailOperation} error={detailError} submitting={syncSubmitting} onStop={onStop} onDetails={onShowOperation}/>}
         title={
           detail && (
             <span className="detail-heading">

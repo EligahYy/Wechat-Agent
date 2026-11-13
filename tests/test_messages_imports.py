@@ -223,11 +223,17 @@ def test_import_duplicate_rows_and_stale_preview_conflict_do_not_revise_messages
     assert messages(populated,q='already committed').json()['total']==1
 
 
-def test_timeline_keeps_unassigned_system_events_and_hides_invalid_author_identity(populated):
+def test_timeline_hides_system_notifications_but_preserves_archived_events(populated):
     with closing(open_db(populated.app.state.database_path)) as conn:
         archive_page(conn,make_page([make_message(message_id='system-event',sender_id=None,kind='system',body='群系统事件')]))
-    row=next(item for item in messages(populated).json()['items'] if item['message_id']=='system-event')
-    assert row['sender']['contact_id'] is None and row['sender']['display_name']=='系统消息'
+    result=messages(populated,page_size=2).json()
+    assert result['total']==4
+    assert messages(populated,q='群系统事件').json()['total']==0
+    following=messages(populated,page_size=2,cursor=result['next_cursor']).json()
+    assert len(result['items']+following['items'])==4
+    assert all(item['kind']!='system' for item in result['items']+following['items'])
+    with closing(open_db(populated.app.state.database_path)) as conn:
+        assert conn.execute("SELECT body FROM messages WHERE message_id='system-event'").fetchone()[0]=='群系统事件'
     assert messages(populated,q='" OR provider').json()['total']==0
     assert messages(populated,cursor='not-a-cursor').status_code==422
 

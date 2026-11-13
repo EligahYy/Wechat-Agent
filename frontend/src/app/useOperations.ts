@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request, ApiError, messageFor } from "../api/client";
-import type { Operation } from "../api/types";
+import type { ContactKey, Operation } from "../api/types";
 export const active = (job: Operation | null) =>
   !!job && ["queued", "running", "stop_requested"].includes(job.state);
 export const operationTitle = (job: Operation | null) => {
@@ -26,6 +26,7 @@ export function useOperations(account: string | null, onDone: () => void) {
     [submitting, setSubmitting] = useState(false),
     [error, setError] = useState("");
   const lock = useRef(false);
+  const [errorScope,setErrorScope]=useState<ContactKey|null>(null);
   const loadHistory = useCallback(async () => {
     if (!account) return;
     const result = await request<{ items: Operation[] }>(
@@ -45,6 +46,7 @@ export function useOperations(account: string | null, onDone: () => void) {
   useEffect(() => {
     let cancelled = false;
     setJob(null);
+    setError("");setErrorScope(null);
     if (account)
       loadHistory()
         .then((items) => {
@@ -68,6 +70,7 @@ export function useOperations(account: string | null, onDone: () => void) {
         if (controller.signal.aborted) return;
         setJob(next);
         setError("");
+        setErrorScope(null);
         if (!active(next)) {
           onDone();
           return;
@@ -75,6 +78,7 @@ export function useOperations(account: string | null, onDone: () => void) {
       } catch (reason) {
         if (controller.signal.aborted) return;
         setError(messageFor(reason));
+        setErrorScope(job?.scope.contact_id ? {account_id:account,contact_id:job.scope.contact_id}:null);
       }
       timer = setTimeout(() => void poll(), 750);
     };
@@ -89,11 +93,12 @@ export function useOperations(account: string | null, onDone: () => void) {
     lock.current = true;
     setSubmitting(true);
     setError("");
+    setErrorScope(null);
     try {
       const result = await request<Operation>("/api/operations", {
         method: "POST",
         body: JSON.stringify({
-          action: action || (contactId ? "sync" : "sync_and_organize"),
+          action: action || "sync_and_organize",
           scope: {
             account_id: account,
             ...(contactId ? { contact_id: contactId } : {}),
@@ -112,8 +117,9 @@ export function useOperations(account: string | null, onDone: () => void) {
           setJob(await read(reason.details.operation_id));
         } catch {
           setError(messageFor(reason));
+          setErrorScope(contactId?{account_id:account,contact_id:contactId}:null);
         }
-      } else setError(messageFor(reason));
+      } else {setError(messageFor(reason));setErrorScope(contactId?{account_id:account,contact_id:contactId}:null);}
     } finally {
       lock.current = false;
       setSubmitting(false);
@@ -142,10 +148,11 @@ export function useOperations(account: string | null, onDone: () => void) {
       );
     } catch (reason) {
       setError(messageFor(reason));
+      setErrorScope(job.scope.contact_id?{account_id:account,contact_id:job.scope.contact_id}:null);
     } finally {
       lock.current = false;
       setSubmitting(false);
     }
   };
-  return { job, history, submitting, error, start, refreshContacts: () => start(undefined, "refresh_contacts"), stop, read, loadHistory };
+  return { job, history, submitting, error, errorScope, start, stop, read, loadHistory };
 }

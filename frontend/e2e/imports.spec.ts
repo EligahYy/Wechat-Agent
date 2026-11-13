@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 test.beforeEach(async ({request,page}) => {await request.post('/api/__test__/reset');await page.goto('/');});
-test('read-only timeline preserves speakers, searches Chinese and filters sources',async ({page}) => {
+test('read-only timeline preserves speakers, searches Chinese and filters sources',async ({page},info) => {
   await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();
   const detail=page.getByRole('dialog');
   await detail.getByRole('tab',{name:'沟通原文',exact:true}).click();
@@ -13,7 +13,10 @@ test('read-only timeline preserves speakers, searches Chinese and filters source
   await expect(detail.getByText('没有匹配的原文')).toBeVisible();
   await detail.getByRole('button',{name:'清空原文搜索'}).click();
   await expect(detail.locator('[data-message]')).toHaveCount(4);
-  await detail.getByLabel('消息来源').selectOption('dm-a');
+  await detail.getByRole('combobox',{name:'消息来源'}).click();
+  await expect(detail.getByRole('listbox',{name:'消息来源'})).toBeInViewport();
+  await page.screenshot({path:info.outputPath('source-menu.png')});
+  await detail.getByRole('option',{name:'商家甲',exact:true}).click();
   await expect(detail.locator('[data-message]')).toHaveCount(2);
 });
 test('settings is the only import entry, explicit preview and commit are idempotent',async ({page},testInfo) => {
@@ -56,11 +59,16 @@ test('mapping errors and invalid UTF8 are explained before commit',async ({page}
   await dialog.getByLabel('选择CSV或JSON文件').setInputFiles({name:'bad.csv',mimeType:'text/csv',buffer:Buffer.from([0xff,0xfe,0xff])});
   await expect(dialog.getByRole('alert')).toContainText('UTF-8');
   await dialog.getByLabel('选择CSV或JSON文件').setInputFiles({name:'mapping.csv',mimeType:'text/csv',buffer:Buffer.from('room,who,time,id,text\ngroup-1,merchant-a,2026-11-12T12:00:00+08:00,1,映射海运\n')});
-  await dialog.getByLabel('会话标识').selectOption('room');
-  await dialog.getByLabel('发送人标识').selectOption('who');
-  await dialog.getByLabel('消息时间').selectOption('time');
-  await dialog.getByLabel('消息标识').selectOption('id');
-  await dialog.getByLabel('正文').selectOption('text');
+  await dialog.getByRole('combobox',{name:'会话标识',exact:true}).click();
+  await dialog.getByRole('option',{name:'room',exact:true}).click();
+  await dialog.getByRole('combobox',{name:'发送人标识',exact:true}).click();
+  await dialog.getByRole('option',{name:'who',exact:true}).click();
+  await dialog.getByRole('combobox',{name:'消息时间',exact:true}).click();
+  await dialog.getByRole('option',{name:'time',exact:true}).click();
+  await dialog.getByRole('combobox',{name:'消息标识',exact:true}).click();
+  await dialog.getByRole('option',{name:'id',exact:true}).click();
+  await dialog.getByRole('combobox',{name:'正文',exact:true}).click();
+  await dialog.getByRole('option',{name:'text',exact:true}).click();
   await dialog.getByRole('button',{name:'预览导入',exact:true}).click();
   await expect(dialog.getByText('有效 1 条',{exact:true})).toBeVisible();
 });

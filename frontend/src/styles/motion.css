@@ -82,3 +82,11 @@ html[data-reduce-motion="true"] *::after {
   transition-duration: 0.001ms !important;
   scroll-behavior: auto !important;
 }
+
+.timeline-items {transition:opacity 180ms var(--ease);}
+.timeline-items[aria-busy="true"] {opacity:.7;}
+.timeline-result-enter {animation:timeline-result-in 240ms var(--ease);}
+@keyframes timeline-result-in {
+  from {opacity:.72;transform:translateY(5px);}
+  to {opacity:1;transform:translateY(0);}
+}

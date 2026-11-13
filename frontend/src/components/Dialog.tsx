@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useId, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 export function Dialog({
   open,
@@ -7,6 +7,7 @@ export function Dialog({
   children,
   footer,
   headerActions,
+  status,
   wide = false,
 }: {
   open: boolean;
@@ -15,13 +16,16 @@ export function Dialog({
   children: ReactNode;
   footer?: ReactNode;
   headerActions?: ReactNode;
+  status?: ReactNode;
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null),
     previous = useRef<HTMLElement | null>(null);
   const titleId = useId();
   const [closing, setClosing] = useState(false);
-  useEffect(() => {
+  const body=useRef<HTMLDivElement>(null),content=useRef<HTMLDivElement>(null);
+  const [bodyHeight,setBodyHeight]=useState<number>();
+  useLayoutEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
     if (open) {
@@ -46,6 +50,25 @@ export function Dialog({
       return () => clearTimeout(timer);
     }
   }, [open]);
+  useLayoutEffect(()=>{
+    const dialog=ref.current,node=content.current,scroll=body.current;
+    if(!open||!dialog||!node||!scroll)return;
+    const measure=()=>{
+      if(!dialog.open)return;
+      const padding=getComputedStyle(scroll);
+      const chrome=Array.from(dialog.children).filter(child=>child!==scroll)
+        .reduce((height,child)=>height+(child as HTMLElement).offsetHeight,0);
+      const max=parseFloat(getComputedStyle(dialog).maxHeight)||window.innerHeight-48;
+      const natural=node.offsetHeight+parseFloat(padding.paddingTop)+parseFloat(padding.paddingBottom);
+      const next=Math.max(0,Math.min(natural,max-chrome-2));
+      setBodyHeight(previous=>previous!==undefined&&Math.abs(previous-next)<1?previous:next);
+    };
+    measure();window.addEventListener('resize',measure);
+    const observer=typeof ResizeObserver==='undefined'?null:new ResizeObserver(measure);
+    observer?.observe(node);
+    for(const child of dialog.children)if(child!==scroll)observer?.observe(child);
+    return()=>{observer?.disconnect();window.removeEventListener('resize',measure);};
+  },[open,!!status,!!footer]);
   return (
     <dialog
       ref={ref}
@@ -106,7 +129,8 @@ export function Dialog({
           </button>
         </div>
       </header>
-      <div className="dialog-body">{children}</div>
+      {status && <div className="dialog-status">{status}</div>}
+      <div className="dialog-body" ref={body} style={{height:bodyHeight}}><div className="dialog-content" ref={content}>{children}</div></div>
       {footer && <footer className="dialog-footer">{footer}</footer>}
     </dialog>
   );

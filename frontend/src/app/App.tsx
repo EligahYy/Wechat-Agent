@@ -237,12 +237,6 @@ export function App() {
             {page === "workspace" && (
               <div className="header-actions">
                 <button
-                  className="button secondary"
-                  disabled={operations.submitting || active(job) || !settings.account_id}
-                  title="只刷新名称和来源资料"
-                  onClick={() => void operations.refreshContacts()}
-                >刷新联系人</button>
-                <button
                   className="button primary"
                   disabled={
                     operations.submitting ||
@@ -326,6 +320,12 @@ export function App() {
               settings={settings}
               revision={revision}
               onSync={operations.start}
+              operation={job}
+              syncSubmitting={operations.submitting}
+              syncError={operations.error}
+              syncErrorScope={operations.errorScope}
+              onStop={()=>void operations.stop()}
+              onShowOperation={operation=>{setSelectedJob(operation);setRecordsError('');setRecordsOpen(true);}}
               notify={setToast}
             />
           </div>

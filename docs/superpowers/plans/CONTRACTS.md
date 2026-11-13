@@ -132,3 +132,12 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 - 刷新计数：metadata_people是本次来源资料条数；contacts_total／contacts_current／contacts_retained为元数据归档后同一快照的有效非本人归档人物、其中本次联系人资料收录、其余归档，total=current+retained。快照未形成或旧记录未保存时三键缺省，不补0、不以raw来源条数相减。角色unknown与姓名缺失是独立维度；operations.check仅输出存在的非负整数快照。普通消息同步中这些数仍表示其元数据阶段，非之后消息导入完成时的实时人数。
 
 - 最新q范围以用户姓名／备注要求为准：trim后按字面子串、不区分大小写（Unicode casefold）匹配当前known全局备注／昵称及resolve_name实际采用的展示姓名；不匹配contact_id、来源title或未采用历史候选。匹配集合按当前账号、非本人、active人物的数据库整数rowid构造，避免大量匹配超过SQLite参数上限；count／role_counts／分页复用同一集合和读取快照。按作者及成员关联会话缩小消息窗口输入，保留匹配人物的原始最近沟通时间。群内名只作有作用域的显示／检索补位，不提高复制或身份可信度。
+
+
+## 2026-11-13：原文体验与操作口径修订
+
+- 时间线SQL在计数、正文搜索及keyset分页前统一排除system／revoke，不删库内消息或修订；页面明确“不含系统通知”。旧system人物呈现契约保留为归档层行为，不再作为列表可见内容。
+- SelectField改为受控`value:string`和`onValueChange(value)`，自定义combobox／listbox；原生popover顶层显示避免dialog-body裁切，不支持时退回固定定位。Escape被菜单消费，关闭菜单不关闭客户弹窗；退出节点aria-hidden且禁用指针交互。
+- Dialog增加status区域，固定在头部之后；按dialog-content自然高度与视口上限计算body高度，再做CSS过渡。ResizeObserver断开回收；视口变化重测，减少动态效果仍生效。
+- 两个商家操作均POST action=sync_and_organize，全局scope无contact_id、客户页显式携带contact_id；仍由服务端核对账号和商家身份。非商家只有来源阶段，不规划其他商家分析。M1未实现模型，source成功后capability_not_ready仍如实呈现；没有更改模型能力声明。
+- useOperations错误携带目标ContactKey，客户详情仅展示范围匹配的job及错误；共用现有轮询／停止，不另建第二个worker或任务。主页移除独立刷新按钮，refresh_contacts接口及旧记录仍兼容。

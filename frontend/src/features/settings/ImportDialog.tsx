@@ -59,7 +59,7 @@ export function ImportDialog({accountId,onClose,onImported}:{accountId:string;on
       {inspected&&<>
         <FormField label="来源批次标识" value={namespace} disabled={busy} maxLength={128} onChange={event=>{setNamespace(event.target.value);setPreview(null);}}/>
         <p className="field-hint">同一来源重复导入时保留此标识。发送人和消息使用稳定标识，不用姓名代替。</p>
-        <section><h3>列映射</h3><div className="import-mapping">{fields.map(([key,label,required])=><SelectField key={key} label={label} value={mapping[key]||""} disabled={busy} required={required} onChange={event=>{setMapping(previous=>({...previous,[key]:event.target.value}));setPreview(null);}} options={[{value:"",label:required?"请选择对应列":"不导入此字段"},...inspected.columns.map(column=>({value:column,label:column}))]}/>)}</div>
+        <section><h3>列映射</h3><div className="import-mapping">{fields.map(([key,label,required])=><SelectField key={key} label={label} value={mapping[key]||""} disabled={busy} required={required} onValueChange={value=>{setMapping(previous=>({...previous,[key]:value}));setPreview(null);}} options={[{value:"",label:required?"请选择对应列":"不导入此字段"},...inspected.columns.map(column=>({value:column,label:column}))]}/>)}</div>
           <p className="field-hint">时间格式例如2026-11-12T08:30:00+08:00。会话类型为private／group；附件仅保留引用，文件获取稍后处理。</p>
         </section>
         {preview?.counts&&<section className="import-preview"><h3>导入预览</h3><div className="operation-facts"><span className="info-chip">有效 {preview.counts.valid} 条</span><span className="info-chip">跳过 {preview.counts.rejected} 条</span><span className="info-chip">已存在／重复 {preview.counts.unchanged} 条</span></div>

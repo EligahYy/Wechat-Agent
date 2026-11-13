@@ -52,7 +52,7 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
     revision=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM message_revisions WHERE account_id=?',(account_id,)).fetchone()[0]
     marker=hashlib.sha256(json.dumps([revision,[source['conversation_id'] for source in sources]],ensure_ascii=False).encode()).hexdigest()
     last=_cursor(cursor,scope,marker) if cursor else None
-    clauses=['''m.account_id=? AND (m.sender_id=? OR m.conversation_id IN (
+    clauses=['''m.account_id=? AND m.kind NOT IN ('system','revoke') AND (m.sender_id=? OR m.conversation_id IN (
         SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?))''']
     params=[account_id,contact_id,account_id,contact_id]
     if conversation_id is not None:
