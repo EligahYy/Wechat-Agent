@@ -128,6 +128,9 @@ def _complete_source(conn, operation, owner, result):
                         SELECT 1 FROM members s WHERE s.account_id=c.account_id AND s.contact_id=c.contact_id
                         AND s.conversation_id=m.conversation_id))) ORDER BY c.contact_id""",
                 (operation.scope.account_id, operation.scope.contact_id, operation.scope.contact_id)).fetchall()
+        from ..contacts.scope import decisions
+        included=decisions(conn,operation.scope.account_id)
+        targets=[target for target in targets if included[target['contact_id']].included]
         counts = _counts(result)
         counts["analysis_required"] = len(targets)
         conn.execute("""UPDATE operation_items SET state='succeeded',error_code=NULL,gaps_json='[]',counts_json=?
@@ -169,6 +172,28 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
                 CancellationToken(operation_id=operation.id, generation=operation.generation),
                 **options.model_dump(), metadata_only=operation.action == 'refresh_contacts',
                 on_progress=lambda value, target: _save_progress(conn, operation, owner, value, target))
+        from ..contacts.activity import refresh_activity
+        with transaction(conn):refresh_activity(conn,operation.scope.account_id)
+        if not result.stopped and operation.action == 'sync_and_organize' and services.discovery_factory is not None:
+            from ..contacts.scope import decisions
+            from ..discovery.context import build_discovery_snapshot
+            from ..discovery.repository import publish_discovery
+            from datetime import datetime,timezone
+            from ..source.contracts import ContactKey
+            strategy=services.discovery_factory(conn)
+            for contact,decision in decisions(conn,operation.scope.account_id).items():
+                if not _owned(conn,operation,owner):break
+                if not decision.provisional:continue
+                if operation.scope.contact_id is not None and contact!=operation.scope.contact_id:continue
+                snapshot=build_discovery_snapshot(conn,ContactKey(account_id=operation.scope.account_id,contact_id=contact),datetime.now(timezone.utc),versions={'model_config':strategy.gateway.config.version})
+                try:
+                    token=CancellationToken(operation_id=operation.id,generation=operation.generation)
+                    classification=await strategy.classify(snapshot,token)
+                    publish_discovery(conn,snapshot,classification,token)
+                except asyncio.CancelledError:raise
+                except Exception:
+                    # Failed/unconfigured/oversized windows remain provisional.
+                    logging.getLogger(__name__).warning('discovery_pending')
         _save_progress(conn, operation, owner, result, None)
         if result.stopped:
             _stop(conn, operation, owner)

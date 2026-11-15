@@ -82,6 +82,10 @@ def create_operation(conn, action, scope, idempotency_key, *, options=None):
                     raise OperationError("self_contact_not_target")
                 if person[1] != "active":
                     raise OperationError("contact_identity_quarantined")
+            if scope.contact_id is not None and action == 'sync_and_organize':
+                from ..contacts.scope import decisions
+                if not decisions(conn,scope.account_id,contact_ids={scope.contact_id})[scope.contact_id].included:
+                    raise OperationError('contact_scope_excluded',409)
             operation_id = str(uuid4())
             stamp = now()
             conn.execute("""INSERT INTO operations(account_id,id,contact_id,action,idempotency_key,remaining,

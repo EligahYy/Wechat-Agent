@@ -14,7 +14,7 @@ def test_schema_is_repeatable_and_isolated(tmp_path):
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert 0 < conn.execute("PRAGMA busy_timeout").fetchone()[0] <= 5000
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 8
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 10
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"accounts", "contacts", "conversations", "members", "messages", "message_revisions",
                 "attachments", "sync_cursors", "sync_attempts", "operations", "operation_items", "settings"} <= tables

@@ -161,13 +161,15 @@ small {
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 40px;
+  width: 44px;
+  min-width: 44px;
   height: 44px;
   border-radius: 13px;
   background: var(--ink);
   color: var(--surface);
-  font-size: 24px;
-  font-weight: 500;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
 }
 .sidebar nav {
   display: grid;
@@ -316,7 +318,7 @@ small {
   width: 15%;
 }
 .contact-table .action-column {
-  width: 155px;
+  width: 240px;
 }
 .contact-table .date-column {
   width: 150px;
@@ -382,6 +384,7 @@ small {
   color: var(--muted);
 }
 .cell-actions {
+  white-space: nowrap;
   display: flex;
   justify-content: flex-end;
   align-items: center;

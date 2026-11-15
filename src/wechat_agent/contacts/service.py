@@ -75,7 +75,10 @@ def _source_gaps(conn, account_id, contact_id):
     return sorted(gaps)
 
 
-def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
+def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, scope="all", membership="all"):
+    from .scope import decisions
+    if scope not in ("all", "business") or membership not in ("all", "included", "excluded"):
+        raise ContactError("invalid_contact_query", 422)
     if role not in ("all", *ROLES) or not 1 <= page_size <= 20 or page < 1:
         raise ContactError("invalid_contact_query", 422)
     q = q.strip()
@@ -85,6 +88,17 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
         matching_rowids, presentations = match_contact_names(conn, account_id, q, catalog)
     where, params = _filters(account_id, q, role, matching_rowids=matching_rowids)
     base_where, base_params = _filters(account_id, q, matching_rowids=matching_rowids)
+    candidate_ids={row[0] for row in conn.execute(f"SELECT c.contact_id FROM contacts c WHERE {base_where}",base_params)}
+    scope_decisions=decisions(conn,account_id,contact_ids=candidate_ids)
+    all_total = conn.execute(f"SELECT COUNT(*) FROM contacts c WHERE {base_where}", base_params).fetchone()[0]
+    business_ids = [row[0] for row in conn.execute(f"SELECT c.rowid,c.contact_id FROM contacts c WHERE {base_where}", base_params)
+                    if scope_decisions[row[1]].included]
+    scope_totals = {"all": all_total, "business": len(business_ids)}
+    if scope == "business" or membership != "all":
+        ids = ','.join(str(int(value)) for value in business_ids)
+        clause = f"c.rowid {'NOT IN' if membership == 'excluded' and scope == 'all' else 'IN'} ({ids})" if ids else ('1' if membership == 'excluded' and scope == 'all' else '0')
+        where += ' AND ' + clause
+        base_where += ' AND ' + clause
     total = conn.execute(f"SELECT COUNT(*) FROM contacts c WHERE {where}", params).fetchone()[0]
     counts = {name: 0 for name in ROLES}
     for row in conn.execute(f"SELECT c.role,COUNT(*) FROM contacts c WHERE {base_where} GROUP BY c.role", base_params):
@@ -105,6 +119,7 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
             UNION ALL
             SELECT c.contact_id,m.sent_at,m.message_id FROM eligible c JOIN members s
                 ON s.account_id=c.account_id AND s.contact_id=c.contact_id
+                JOIN conversations v ON v.account_id=s.account_id AND v.conversation_id=s.conversation_id AND v.kind='private'
                 JOIN latest m ON m.conversation_id=s.conversation_id AND m.conversation_position=1),
         recent AS (SELECT contact_id,sent_at,ROW_NUMBER() OVER (
             PARTITION BY contact_id ORDER BY julianday(sent_at) DESC,message_id DESC) AS position FROM related)
@@ -126,14 +141,14 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20):
             source['title'] = present_source_title(source['title'], source['conversation_id'])
             source['has_messages'] = bool(source['has_messages'])
         items.append({"key": {"account_id": account_id, "contact_id": row["contact_id"]},
-                      **presentation,
+                      **presentation, "business_scope": scope_decisions[row["contact_id"]].model_dump(),
                       "role": row["role"], "role_version": row["role_version"], "sources": sources,
                       "last_message_at": row["last_message_at"], "last_business_at": None,
                       "profile_status": ("pending" if row["last_message_at"] else "no_data") if row["role"] == "merchant" else None,
                       "profile_updated_at": None, "source_gaps": _source_gaps(conn, account_id, row["contact_id"])})
     quality = identity_quality(conn, account_id, catalog, presentations)
     return {"items": items, "total": total, "page": page, "page_size": page_size,
-            "role_counts": {"all": sum(counts.values()), **counts}, "identity_quality": quality,
+            "scope_totals": scope_totals, "role_counts": {"all": sum(counts.values()), **counts}, "identity_quality": quality,
             "metadata_status": metadata_status(conn, account_id)}
 
 

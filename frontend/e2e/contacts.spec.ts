@@ -6,7 +6,7 @@ test.beforeEach(async ({ request, page }) => {
 test("20/8 pagination, cross-page selection, tab reset and preserved rows", async ({
   page,
 }) => {
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   const rows = page.locator("tbody tr[data-contact]");
   await expect(rows).toHaveCount(20);
   const first = rows.first();
@@ -35,7 +35,7 @@ test("identity changes use real API, retain role filter and copy actual name", a
   context,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   await page.getByRole("searchbox").fill("商家甲");
   const row = page.locator("tbody tr[data-contact]").first();
   await expect(row.getByText("商家甲", { exact: true })).toBeVisible();
@@ -44,13 +44,15 @@ test("identity changes use real API, retain role filter and copy actual name", a
     "商家甲",
   );
   await row.getByRole("button", { name: "修改身份" }).click();
-  const dialog = page.getByRole("dialog", { name: "设置身份" });
-  await dialog.getByRole("radio", { name: "平台" }).click();
-  await dialog.getByRole("button", { name: "保存身份" }).click();
+  const dialog = page.getByRole("menu", { name: "修改联系人身份" });
+  const trigger=await row.getByRole('button',{name:'修改身份'}).boundingBox();
+  const menu=await dialog.boundingBox();
+  expect(Math.abs(menu!.x+menu!.width-(trigger!.x+trigger!.width))).toBeLessThan(20);
+  await dialog.getByRole("menuitemradio", { name: "平台",exact:true }).click();
   await expect(row.getByText("平台", { exact: true })).toBeVisible();
   await expect(dialog).not.toBeVisible();
   await page.reload();
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   await page.getByRole("searchbox").fill("商家甲");
   await expect(row.getByText("平台", { exact: true })).toBeVisible();
 });
@@ -87,7 +89,7 @@ test("settings time panel cancels drafts, persists input and themes the entire c
 test("out-of-order searches keep only latest result without blanking the table", async ({
   page,
 }) => {
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   await expect(page.locator("tbody tr[data-contact]")).toHaveCount(20);
   await page.route("**/api/contacts?**", async (route) => {
     if (new URL(route.request().url()).searchParams.get("q") === "商")
@@ -109,7 +111,7 @@ test("partial version conflict keeps only failed contacts selected", async ({
   page,
   request,
 }) => {
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   const rows = page.locator("tbody tr[data-contact]");
   await expect(rows).toHaveCount(20);
   const people = (
@@ -150,7 +152,7 @@ test("partial version conflict keeps only failed contacts selected", async ({
 test("selection bar reverses smoothly and filtering preserves matching rows", async ({
   page,
 }) => {
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   const rows = page.locator("tbody tr[data-contact]");
   await expect(rows).toHaveCount(20);
   const first = rows.first().getByRole("checkbox");
@@ -207,7 +209,7 @@ test("actual operation separates source success and unavailable analysis", async
 test("source list errors retain archive rows and offer retry", async ({
   page,
 }) => {
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   await expect(page.locator("tbody tr[data-contact]")).toHaveCount(20);
   await page.route("**/api/contacts?**", (route) =>
     route.fulfill({
@@ -238,7 +240,7 @@ test("desktop widths, shared styles, time keyboard and reduced motion", async ({
     ).toBeTruthy();
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   await expect(page.locator("tbody tr[data-contact]")).toHaveCount(20);
   await page.screenshot({
     path: "../.local/artifacts/m1/workspace-light.png",
@@ -279,33 +281,30 @@ test("desktop widths, shared styles, time keyboard and reduced motion", async ({
 test("navigation preserves the workspace search and active tab", async ({
   page,
 }) => {
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   await page.getByRole("searchbox").fill("商家甲");
   await expect(page.locator("tbody tr[data-contact]")).toHaveCount(1);
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "工作台", exact: true }).click();
-  await expect(page.getByRole("tab", { name: /全部联系人/ })).toHaveAttribute(
+  await expect(page.getByRole("tab", { name: /业务活跃联系人/ })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   await expect(page.getByRole("searchbox")).toHaveValue("商家甲");
 });
-test("role choices support arrow keys and focus follows selection", async ({
-  page,
-}) => {
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
-  await page.getByRole("searchbox").fill("商家甲");
-  await expect(page.locator("tbody tr[data-contact]")).toHaveCount(1);
-  await page.getByRole("button", { name: "修改身份", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "设置身份" });
-  await dialog
-    .getByRole("radio", { name: "商家", exact: true })
-    .press("ArrowRight");
-  await expect(dialog.getByRole("radio", { name: "服务商" })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-  await expect(dialog.getByRole("radio", { name: "服务商" })).toBeFocused();
+test("role menu opens beside trigger and keyboard navigation does not save until confirmation",async({page})=>{
+  await page.getByRole('tab',{name:/业务活跃联系人/}).click();
+  await page.getByRole('searchbox').fill('商家甲');
+  await expect(page.locator('tbody tr[data-contact]')).toHaveCount(1);
+  const trigger=page.getByRole('button',{name:'修改身份',exact:true});
+  await trigger.click();
+  const menu=page.getByRole('menu',{name:'修改联系人身份'});
+  await menu.getByRole('menuitemradio',{name:'商家',exact:true}).press('ArrowDown');
+  await expect(menu.getByRole('menuitemradio',{name:'服务商',exact:true})).toBeFocused();
+  await expect(menu.getByRole('menuitemradio',{name:'商家',exact:true})).toHaveAttribute('aria-checked','true');
+  await menu.getByRole('menuitemradio',{name:'服务商',exact:true}).press('Escape');
+  await expect(menu).not.toBeVisible();
+  await expect(trigger).toBeFocused();
 });
 
 test("dark appearance is applied before delayed bootstrap after reload", async ({
@@ -326,7 +325,7 @@ test("customer sync belongs to header and incomplete history discloses reasons",
   page,
   request,
 }, testInfo) => {
-  await page.getByRole("tab", { name: /全部联系人/ }).click();
+  await page.getByRole("tab", { name: /业务活跃联系人/ }).click();
   await page.getByRole("searchbox").fill("商家甲");
   await expect(page.locator("tbody tr[data-contact]")).toHaveCount(1);
   await page.getByRole("button", { name: "查看 商家甲", exact: true }).click();
@@ -406,7 +405,7 @@ test("unified sync refreshes metadata and reads messages without a second refres
 });
 
 test("contact search is limited to names and remarks", async ({page}) => {
-  await page.getByRole("tab",{name:/全部联系人/}).click();
+  await page.getByRole("tab",{name:/业务活跃联系人/}).click();
   const search=page.getByRole("searchbox");
   await expect(search).toHaveAttribute("placeholder","搜索姓名或备注");
   await search.fill("业务群");

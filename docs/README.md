@@ -19,3 +19,5 @@
 [归档概要](archive/README.md)只记录删除及替代情况，不保存另一份旧产品方案。
 
 [M0开发与验证报告](verification/m0-report.md) · [M1开发与验证报告](verification/m1-report.md) · [Mac验证记录](verification/mac-validation.md)
+
+- [M2任务3交付与审查记录](verification/m2-task3-report.md)

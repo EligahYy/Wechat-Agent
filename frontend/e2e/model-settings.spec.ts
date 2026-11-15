@@ -1,0 +1,35 @@
+import {test,expect} from '@playwright/test';
+test.beforeEach(async({page,request})=>{await request.post('/api/__test__/reset');await page.goto('/');});
+test('saving model config is separate from explicit probe and never refills secrets',async({page})=>{
+  const checks:string[]=[];
+  page.on('request',request=>{if(request.url().endsWith('/api/model/check'))checks.push(request.method());});
+  await page.getByRole('button',{name:'设置',exact:true}).click();
+  await page.getByRole('button',{name:'配置模型',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'模型配置',exact:true});
+  await dialog.getByLabel('服务地址',{exact:true}).fill('https://synthetic.example/chat/completions');
+  await dialog.getByLabel('模型 ID',{exact:true}).fill('synthetic');
+  await dialog.getByLabel('API 密钥',{exact:true}).fill('browser-test-key');
+  await dialog.getByLabel('上下文上限',{exact:true}).fill('16000');
+  await dialog.getByLabel('最大输出',{exact:true}).fill('1000');
+  await dialog.getByRole('button',{name:'保存配置',exact:true}).click();
+  await expect(dialog.getByText('配置已保存，尚未检查连接',{exact:true})).toBeVisible();
+  expect(checks).toEqual([]);
+  await expect(dialog.getByLabel('API 密钥',{exact:true})).toHaveValue('');
+  await dialog.getByRole('button',{name:'检查连接',exact:true}).click();
+  await expect(dialog.getByText('连接检查通过',{exact:true})).toBeVisible();
+  await expect(dialog.getByText(/容量和视觉能力尚未验证/)).toBeVisible();
+  expect(checks).toEqual(['POST']);
+  await dialog.getByRole('button',{name:'完成',exact:true}).click();
+  await page.reload();
+  await page.getByRole('button',{name:'设置',exact:true}).click();
+  await page.getByRole('button',{name:'配置模型',exact:true}).click();
+  await expect(dialog.getByLabel('API 密钥',{exact:true})).toHaveValue('');
+  await expect(dialog.getByLabel('模型 ID',{exact:true})).toHaveValue('synthetic');
+});
+test('reopened running check refreshes to finished without another paid request',async({page,request})=>{
+ await request.post('/api/__test__/reset');let reads=0;
+ await page.route('**/api/model?*',route=>{reads++;return route.fulfill({json:{account_id:'acct-1',version:1,configured:true,endpoint:'https://synthetic.example/chat/completions',model_id:'synthetic',response_mode:'json_object',context_tokens:16000,max_output_tokens:1000,connection:{state:reads<2?'running':'passed',capacity_verified:false,vision_verified:false}}});});
+ await page.goto('/');await page.getByRole('button',{name:'设置',exact:true}).click();await page.getByRole('button',{name:'配置模型'}).click();
+ await expect(page.getByText('连接检查通过',{exact:true})).toBeVisible();
+ await expect(page.getByRole('button',{name:'检查连接',exact:true})).toBeEnabled();
+});

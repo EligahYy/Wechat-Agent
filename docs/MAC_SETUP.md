@@ -157,3 +157,29 @@ curl -fsS http://127.0.0.1:9100/api/v1/health
 
 
 回退来源时先用项目版本server stop停止，再用原~/.local/bin/wx-cli server run及原参数启动；应用会拒绝未修复的群消息归属。保留数据库，不清空或降级。模型与媒体实测按后续交付安排。
+
+## 验证任务3：模型配置与业务范围
+
+在项目根目录执行（云端推送后）：
+
+```bash
+(
+  set -e
+  git switch main
+  git pull --ff-only origin main
+  .venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
+  .venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+  .venv/bin/python -m pytest -q
+  npm --prefix frontend ci --engine-strict
+  npm --prefix frontend run build
+)
+```
+
+按前文方式重启应用，健康接口应报告schema_version=10。本轮无需重装wx-cli。
+
+1. 确认左上角EU、工作台业务活跃联系人及设置→管理全部联系人。先搜索一名联系人，手动移出，再同步，确认不自动回来；在全量管理重新加入。
+2. 设置→配置模型，按服务文档填写HTTPS完整chat-completions地址、准确模型ID、响应格式和声明容量。首次填写密钥，保存后页面应留空；密钥只写本机Keychain。
+3. 如需验证连接，主动点击“检查连接”（一次最小付费请求，不含客户资料）。未点击不调用模型。此检查不验证容量、图片或真实整理质量。
+4. 近90天实际群发言、群名片和需求归属需用真实样本核对。未有经验证的运行时能力／分类结果时显示“群需求识别待完成”，保守保留候选。模型档案发布闭环仍在M2任务4—7实施，不将来源同步成功当作档案生成成功。
+
+排障时提供脱敏结果即可，不发送API密钥、完整联系人库或聊天原文。

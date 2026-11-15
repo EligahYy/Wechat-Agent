@@ -12,3 +12,8 @@ class Services:
     source: SourceAdapter | None = None
     source_factory: Callable[[str], AbstractAsyncContextManager] | None = None
     auto_run: bool = True
+    credential_store: object | None = None
+    model_transport: object | None = None
+    model: object | None = None
+
+    discovery_factory: Callable | None = None

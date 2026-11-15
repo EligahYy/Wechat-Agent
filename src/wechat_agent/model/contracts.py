@@ -54,6 +54,7 @@ class ModelRequest(BaseModel):
     call_id:str=Field(min_length=1,max_length=128)
     unit_id:str=Field(min_length=1,max_length=128)
     snapshot_id:str=Field(min_length=1)
+    purpose:Literal['profile','discovery']='profile'
     phase:Literal['extract','merge','verify']
     model_config_version:str=Field(min_length=1)
     messages:list[ModelMessage]=Field(min_length=1)

@@ -21,6 +21,7 @@ class ModelGateway:
         saved=self.conn.execute('SELECT * FROM snapshots WHERE snapshot_id=?',(request.snapshot_id,)).fetchall()
         if len(saved)!=1:raise ModelCallError('snapshot_not_authorized')
         manifest=json.loads(saved[0]['manifest_json']);account=saved[0]['account_id'];contact=saved[0]['contact_id']
+        if manifest.get('purpose','profile')!=request.purpose:raise ModelCallError('snapshot_purpose_mismatch')
         if manifest['versions']['model_config']!=self.config.version or request.model_config_version!=self.config.version:
             raise ModelCallError('model_config_changed')
         operation=self.conn.execute('SELECT contact_id FROM operations WHERE account_id=? AND id=?',(account,cancellation.operation_id)).fetchone()
@@ -130,6 +131,8 @@ class ModelGateway:
                     return ModelResponse(payload=output,finish_reason='stop',usage=usage,model_id=data['model'])
                 except asyncio.CancelledError:
                     self._audit(account,request,attempt,'model_cancelled');raise
+                except httpx.TimeoutException:
+                    status='model_timeout'
                 except httpx.TransportError:
                     status='model_temporary_error'
                 except ModelCallError as error:
@@ -139,7 +142,7 @@ class ModelGateway:
                     repaired=True
                     messages=[*messages,{'role':'system','content':'Return one valid JSON object matching the required schema. Preserve original evidence and target; do not invent missing facts.'}]
                     break
-                if status not in ('rate_limited','model_temporary_error') or retry==2:raise ModelCallError(status)
+                if status not in ('rate_limited','model_temporary_error','model_timeout') or retry==2:raise ModelCallError(status)
                 self._cancel(account,token)
                 delay=(2**retry)*random.uniform(.8,1.2)
                 if response is not None and response.headers.get('Retry-After'):

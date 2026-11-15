@@ -2,6 +2,7 @@ export type Role = "merchant" | "provider" | "platform" | "unknown";
 export type ContactKey = { account_id: string; contact_id: string };
 export type Contact = {
   key: ContactKey;
+  business_scope: {included:boolean;reasons:string[];provisional:boolean;version:number};
   display_name: string;
   display_name_source: string;
   copy_name: string | null;

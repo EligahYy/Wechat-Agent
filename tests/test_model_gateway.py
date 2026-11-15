@@ -163,3 +163,12 @@ async def test_unresolved_or_external_schema_rejected_before_sending(setup_gatew
     async with client:
         with pytest.raises(ModelCallError) as error:await gateway.generate(request.model_copy(update={'output_schema':schema}),token)
     assert error.value.code=='output_schema_invalid' and calls==[]
+
+@pytest.mark.asyncio
+async def test_transport_timeouts_keep_their_classification(setup_gateway):
+    from wechat_agent.model.contracts import ModelCallError
+    gateway,request,token,responses,calls,delays,client=setup_gateway
+    responses.extend([httpx.ReadTimeout('synthetic') for _ in range(3)])
+    async with client:
+        with pytest.raises(ModelCallError) as error:await gateway.generate(request,token)
+    assert error.value.code=='model_timeout' and len(calls)==3

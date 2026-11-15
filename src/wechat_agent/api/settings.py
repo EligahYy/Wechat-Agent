@@ -64,6 +64,10 @@ def _response(conn, request, account_id):
             model = {"state": "configured", "model_id": identifier}
         except (OSError, ValueError, AttributeError):
             model["state"] = "invalid"
+    from ..model.settings import public_settings
+    stored_model=public_settings(conn,account_id)
+    if stored_model['configured']:
+        model={'state':'configured','model_id':stored_model['model_id'],'connection_state':stored_model['connection']['state']}
     previous = conn.execute("""SELECT i.state,o.updated_at,o.action FROM operations o JOIN operation_items i
         ON i.account_id=o.account_id AND i.operation_id=o.id AND i.item_id='source'
         WHERE o.account_id=? ORDER BY o.created_at DESC,o.rowid DESC LIMIT 1""", (account_id,)).fetchone()

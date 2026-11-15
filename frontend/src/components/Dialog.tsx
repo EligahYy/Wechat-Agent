@@ -56,7 +56,7 @@ export function Dialog({
     const measure=()=>{
       if(!dialog.open)return;
       const padding=getComputedStyle(scroll);
-      const chrome=Array.from(dialog.children).filter(child=>child!==scroll)
+      const chrome=Array.from(dialog.children).filter(child=>child.matches(".dialog-header,.dialog-status,.dialog-footer"))
         .reduce((height,child)=>height+(child as HTMLElement).offsetHeight,0);
       const max=parseFloat(getComputedStyle(dialog).maxHeight)||window.innerHeight-48;
       const natural=node.offsetHeight+parseFloat(padding.paddingTop)+parseFloat(padding.paddingBottom);

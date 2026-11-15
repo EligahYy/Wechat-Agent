@@ -1,3 +1,4 @@
+import { ContactManager } from "../features/settings/ContactManager";
 import { metadataSummary } from "./operationPresentation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -21,6 +22,7 @@ import { Dialog } from "../components/Dialog";
 import { OperationDetails } from "../components/OperationDetails";
 import { active, operationTitle, useOperations } from "./useOperations";
 export function App() {
+  const [manageContacts,setManageContacts]=useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null),
     [loadError, setLoadError] = useState(""),
     [prefError, setPrefError] = useState(""),
@@ -159,7 +161,7 @@ export function App() {
       <div className="app-shell">
         <aside className="sidebar">
           <div className="brand">
-            <span className="brand-mark">半</span>
+            <span className="brand-mark">EU</span>
             <span>
               半托管欧区
               <br />
@@ -279,6 +281,7 @@ export function App() {
             className={page === "workspace" ? "page-enter" : undefined}
           >
             <ContactsPage
+              onScopeChanged={()=>setRevision(value=>value+1)}
               banner={
                 <>
                   <div className="status-banner" role="status">
@@ -333,12 +336,14 @@ export function App() {
             hidden={page !== "settings"}
             className={page === "settings" ? "page-enter" : undefined}
           >
-            <SettingsPage
+            {manageContacts?<><button className="text-button" onClick={()=>setManageContacts(false)}>返回设置</button><ContactManager settings={settings} revision={revision} onScopeChanged={()=>setRevision(value=>value+1)} onSync={operations.start} operation={job} syncSubmitting={operations.submitting} syncError={operations.error} syncErrorScope={operations.errorScope} onStop={()=>void operations.stop()} onShowOperation={operation=>{setSelectedJob(operation);setRecordsOpen(true);}} notify={setToast}/></>:<SettingsPage
               settings={settings}
               saving={saving}
               onSave={savePreferences}
               onImported={finished}
-            />
+              onModelChanged={()=>void loadSettings()}
+              onManageContacts={()=>setManageContacts(true)}
+            />}
           </div>
         </main>
         <Dialog

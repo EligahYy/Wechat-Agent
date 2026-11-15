@@ -1,3 +1,4 @@
+import { ModelConfigDialog } from "./ModelConfigDialog";
 import { ImportDialog } from "./ImportDialog";
 import { useState } from "react";
 import { Clock3, ExternalLink, Monitor, ShieldCheck } from "lucide-react";
@@ -10,17 +11,24 @@ export function SettingsPage({
   saving,
   onSave,
   onImported,
+  onModelChanged,
+  onManageContacts,
 }: {
   settings: AppSettings;
   saving: boolean;
   onSave: (changes: Partial<Preferences>) => Promise<void>;
   onImported?:()=>void;
+  onModelChanged?:()=>void;
+  onManageContacts?:()=>void;
 }) {
+  const [modelOpen,setModelOpen]=useState(false);
   const [info, setInfo] = useState(false);
   const [importOpen,setImportOpen]=useState(false);
   const disabled = saving || !settings.account_id;
   return (
     <div className="settings-stack">
+      <section className="settings-card"><h3>联系人管理</h3><div className="settings-row"><p>查看全部归档，单个或批量调整业务范围</p><button className="button secondary" onClick={onManageContacts}>管理全部联系人</button></div></section>
+      {modelOpen&&settings.account_id&&<ModelConfigDialog accountId={settings.account_id} onClose={()=>setModelOpen(false)} onChanged={()=>onModelChanged?.()}/>}
       <section className="settings-card">
         <header>
           <ShieldCheck size={21} />
@@ -60,13 +68,7 @@ export function SettingsPage({
                 : "模型整理尚未接入"}
             </p>
           </div>
-          <span className="info-chip">
-            {settings.model.state === "invalid"
-              ? "配置异常"
-              : settings.model.state === "configured"
-                ? "已配置"
-                : "待接入"}
-          </span>
+          <button className="button secondary" disabled={!settings.account_id} onClick={()=>setModelOpen(true)}>配置模型</button>
         </div>
         <div className="settings-row">
           <div>

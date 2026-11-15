@@ -18,6 +18,7 @@ from ..services import Services
 from ..source.adapter import WXCLIAdapter, SourceError
 from ..source.probe import SourceConfig
 from ..storage.db import SCHEMA_VERSION, migrate, open_db
+from .model import router as model_router
 from .messages import router as messages_router
 from .imports import router as imports_router
 from .attachments import router as attachments_router
@@ -67,6 +68,7 @@ def create_app(settings: Settings, services: Services | None = None) -> FastAPI:
     app.include_router(attachments_router)
     app.include_router(operations_router)
     app.include_router(settings_router)
+    app.include_router(model_router)
 
     @app.exception_handler(AccountError)
     async def account_error(request, error):

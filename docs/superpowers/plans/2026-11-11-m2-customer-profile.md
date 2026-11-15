@@ -79,13 +79,13 @@ def test_context_keeps_actual_speakers(db, snapshot):
 
 **实施分段（2026-11-13）：** 3A先交付调用契约、持久请求上限、审计、协议响应校验与凭据存储底座；3B接配置版本及显式连接检查API；3C接设置界面与实机步骤。只有三段及任务所列门槛均通过才标Task3 complete，不因核心用例通过提前完成整项。008迁移保存analysis_units/model_calls；真实配置/API/UI未接入前不注册运行时模型，不触发付费请求。
 
-**本轮合并改造（2026-11-13用户确认）：** 本任务同时执行[业务活跃联系人扩展计划](2026-11-13-m2-task3-business-contacts.md)，依据[范围设计](../specs/2026-11-13-business-contacts-design.md)。工作台业务活跃范围／设置全量管理、90天直接互动及群需求、人工单个／批量加入移出、人工移出永不自动恢复，与原3A/B/C和按钮附近身份菜单同一轮交付。原任务复选框保持未完成；扩展五项及既有门槛均通过后才关闭Task3。群需求分类是独立用途，不得放宽Task4/7商家档案发布限制。
+**本轮合并改造（2026-11-13用户确认）：** 本任务同时执行[业务活跃联系人扩展计划](2026-11-13-m2-task3-business-contacts.md)，依据[范围设计](../specs/2026-11-13-business-contacts-design.md)。工作台业务活跃范围／设置全量管理、90天直接互动及群需求、人工单个／批量加入移出、人工移出永不自动恢复，与原3A/B/C和按钮附近身份菜单同一轮交付。扩展五项与云端门槛已通过，Task3云端完成；真实模型／Mac验证独立保留。群需求分类是独立用途，不得放宽Task4/7商家档案发布限制。
 
 **Files:** Create `model/gateway.py`, `model/deepseek.py`, `model/credentials.py`, `api/model.py`, `tests/fakes/model.py`, `tests/test_model_gateway.py`；Modify `model/contracts.py`, `services.py`, `api/settings.py`, `api/app.py`, `tests/conftest.py`, `pyproject.toml`, `requirements-dev.lock`, `frontend/src/features/settings/SettingsPage.tsx`。
 
 **Interfaces:** Creates ModelConfig／ModelRequest／ModelResponse 与 `ModelGateway.generate`；适配器构造注入 `httpx.AsyncClient`。凭据 `CredentialStore.get(ref: str) -> str`／`set(ref: str, value: str) -> None`，Mac 使用 keyring 的 Keychain 后端，测试用内存替身；前端只看到配置状态。POST `/api/model/check` 由明确的连接测试操作触发，保存配置不隐式调用付费模型。
 
-- [ ] **Step 1 — 写失败测试：** model_transport 返回 429 后成功，断言按 Retry-After 重试且 call_id 不丢；401 只尝试一次；无效 JSON 格式修复最多一次；持续临时错误每调用最多 3 次，整个工作单元请求总数不超过 6。
+- [x] **Step 1 — 写失败测试：** model_transport 返回 429 后成功，断言按 Retry-After 重试且 call_id 不丢；401 只尝试一次；无效 JSON 格式修复最多一次；持续临时错误每调用最多 3 次，整个工作单元请求总数不超过 6。
 
 ```python
 @pytest.mark.asyncio
@@ -98,12 +98,16 @@ async def test_auth_failure_does_not_retry(gateway, model_transport, model_reque
     assert len(model_transport.calls) == 1
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_model_gateway.py -q`，预期网关不存在。
-- [ ] **Step 3 — 实现：** 用 M0 记录的 endpoint、model_id 和能力封装请求，首选支持的结构化输出，回退本地 JSON 校验。完整保存调用 ID、版本、结束原因、用量和尝试计数；退避使用可注入 clock，不让测试实际等 300 秒。鉴权／参数错误不循环重试；失败返回分类错误。增加 keyring 并实际更新依赖锁；设置表仅存 credential_ref，密码输入使用共享 FormField，前端不回填／缓存明文。
-- [ ] **Step 4 — 绿灯：** 补测长度截断不能成功、取消后不再重试、日志不含 key、配置切换不修改运行中快照、无视觉能力不直接送图。执行 pytest 通过；一条最小真实请求仅用于本地能力冒烟，不替代单元测试。
-- [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: call configured models through bounded gateway`。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_model_gateway.py -q`，预期网关不存在。
+- [x] **Step 3 — 实现：** 用 M0 记录的 endpoint、model_id 和能力封装请求，首选支持的结构化输出，回退本地 JSON 校验。完整保存调用 ID、版本、结束原因、用量和尝试计数；退避使用可注入 clock，不让测试实际等 300 秒。鉴权／参数错误不循环重试；失败返回分类错误。增加 keyring 并实际更新依赖锁；设置表仅存 credential_ref，密码输入使用共享 FormField，前端不回填／缓存明文。
+- [x] **Step 4 — 绿灯：** 补测长度截断不能成功、取消后不再重试、日志不含 key、配置切换不修改运行中快照、无视觉能力不直接送图。执行 pytest 通过；一条最小真实请求仅用于本地能力冒烟，不替代单元测试。
+- [x] **Step 5 — 提交检查点：** 获准时消息 `feat: call configured models through bounded gateway`。
+
+**最终云端验收（2026-11-15）：** Python374、前端29单元／30浏览器、构建与wheel生产HTTP通过；一次独立审查4项重要问题均修复。真实最小请求由Mac用户主动执行，尚未实测；不得据此声称真实模型能力已通过。详见[报告](../../verification/m2-task3-report.md)。
 
 ### Task 4: 事实校验、稳定批次与事务发布
+
+**消费者门槛补充：** 领取和事务发布前复核business_scope_allows_analysis；人工exclude不可被迟到模型结果、角色变化或新同步覆盖。discovery用途快照不可用于商家档案发布。
 
 **Files:** Create `profiles/validator.py`, `profiles/publisher.py`, `profiles/shipments.py`, `analysis/workflow.py`, `tests/test_profile_publish.py`；Modify `tests/conftest.py` 以创建 analysis_result fixture。
 
@@ -175,6 +179,8 @@ test("profile has one header and no rail", async ({ page }) => {
 - [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: connect evidence-backed customer profile interface`。
 
 ### Task 7: 单客户真实端到端闭环
+
+**消费者门槛补充：** 注册真实模型及discovery_factory前必须加载经验证能力；连接检查不能冒充容量验证。同步先保留必要全量来源发现，再活动刷新／需求分类／范围过滤，只有范围内已确认merchant进入档案整理。
 
 **Files:** Modify `operations/worker.py`, `services.py`, `api/operations.py`, `frontend/src/features/profile/ProfileDialog.tsx`, `tests/conftest.py`；Create `tests/test_single_customer_flow.py`, `docs/verification/m2-profile-review.md`。
 

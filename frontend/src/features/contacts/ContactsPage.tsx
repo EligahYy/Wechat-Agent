@@ -1,3 +1,6 @@
+import { AnimatePresence } from "motion/react";
+import { SelectField } from "../../components/SelectField";
+import { RoleMenu } from "../../components/RoleMenu";
 import { MessageTimeline } from "../messages/MessageTimeline";
 import { CustomerSyncStatus } from "../../components/CustomerSyncStatus";
 import { active } from "../../app/useOperations";
@@ -49,6 +52,8 @@ export function ContactsPage({
   onSync,
   notify,
   banner,
+  management=false,
+  onScopeChanged,
   operation,
   syncSubmitting,
   syncError,
@@ -57,6 +62,8 @@ export function ContactsPage({
   onShowOperation,
 }: {
   banner?: ReactNode;
+  management?:boolean;
+  onScopeChanged?:()=>void;
   settings: AppSettings;
   revision: number;
   onSync: (contactId?: string) => Promise<void>;
@@ -68,10 +75,13 @@ export function ContactsPage({
   onStop:()=>void;
   onShowOperation:(operation:Operation)=>void;
 }) {
-  const [view, setView] = useState<"merchants" | "all">("merchants"),
+  const [view, setView] = useState<"merchants" | "all">(management?"all":"merchants"),
     [role, setRole] = useState<Role | "all">("all"),
     [query, setQuery] = useState(""),
     [page, setPage] = useState(1);
+  const [scopeResult,setScopeResult]=useState("");
+  const [membership,setMembership]=useState("all");
+  const [scopeBusy,setScopeBusy]=useState(false);
   const [data, setData] = useState<ContactPage | null>(null),
     [counts, setCounts] = useState(initialCounts),
     [busy, setBusy] = useState(false),
@@ -83,6 +93,7 @@ export function ContactsPage({
   const [detailView,setDetailView]=useState<"overview"|"messages">("overview");
   const detailOperation=detail&&operation?.scope.account_id===detail.key.account_id&&operation.scope.contact_id===detail.key.contact_id?operation:null;
   const detailError=detail&&syncErrorScope?.account_id===detail.key.account_id&&syncErrorScope.contact_id===detail.key.contact_id?syncError:'';
+  const [roleAnchor,setRoleAnchor]=useState<HTMLElement|null>(null);
   const [roleOpen, setRoleOpen] = useState(false),
     [roleTargets, setRoleTargets] = useState<Contact[]>([]),
     [nextRole, setNextRole] = useState<Role>("merchant"),
@@ -115,6 +126,8 @@ export function ContactsPage({
       () => {
         const params = new URLSearchParams({
           account_id: account,
+          scope:management?"all":"business",
+          membership:management?membership:"all",
           q: query,
           role: view === "merchants" ? "merchant" : role,
           page: String(page),
@@ -148,7 +161,7 @@ export function ContactsPage({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [account, query, role, page, view, refresh, revision]);
+  }, [account, query, role, page, view, refresh, revision, management, membership]);
   const rows = data?.items || [];
   const selectedOnPage = rows.filter((person) =>
     selected.has(person.key.contact_id),
@@ -180,7 +193,8 @@ export function ContactsPage({
       else next.delete(contact.key.contact_id);
       return next;
     });
-  const openRoles = (contacts: Contact[]) => {
+  const openRoles = (contacts: Contact[],anchor?:HTMLElement) => {
+    setRoleAnchor(anchor||null);
     setRoleTargets(contacts);
     setNextRole(contacts.length === 1 ? contacts[0].role : "merchant");
     setRoleError("");
@@ -195,7 +209,7 @@ export function ContactsPage({
       notify("复制失败，请检查浏览器权限");
     }
   };
-  const saveRoles = async () => {
+  const saveRoles = async (chosenRole?:Role) => {
     if (saving || !account) return;
     setSaving(true);
     setRoleError("");
@@ -206,7 +220,7 @@ export function ContactsPage({
           method: "PATCH",
           body: JSON.stringify({
             account_id: account,
-            role: nextRole,
+            role: chosenRole||nextRole,
             items: roleTargets.map((contact) => ({
               key: contact.key,
               expected_version: contact.role_version,
@@ -266,6 +280,7 @@ export function ContactsPage({
         return next;
       });
       setRefresh((value) => value + 1);
+      if(result.updated.length)onScopeChanged?.();
       if (result.failed.length) {
         setRoleTargets((previous) =>
           previous
@@ -295,9 +310,23 @@ export function ContactsPage({
       setSaving(false);
     }
   };
+  const changeScope=async(people:Contact[],included:boolean)=>{
+    if(scopeBusy||!account)return;
+    setScopeBusy(true);setScopeResult("");
+    try{
+      let result:{updated:{key:ContactKey}[];failed:{key:ContactKey;current_version:number|null}[]};
+      try{result=await request("/api/contacts/scope",{method:"PATCH",body:JSON.stringify({account_id:account,included,items:people.map(person=>({key:person.key,expected_version:person.business_scope.version}))})});}
+      catch(reason){if(reason instanceof ApiError&&reason.status===409&&Array.isArray(reason.details.updated))result=reason.details as typeof result;else throw reason;}
+      setSelected(previous=>{const next=new Map(previous);for(const item of [...result.updated,...result.failed])next.delete(item.key.contact_id);return next;});
+      if(result.failed.length)setScopeResult(`已更新 ${result.updated.length} 位，${result.failed.length} 位信息已变化，请重新选择后重试`);
+      else notify(included?"已加入业务范围":"已移出业务范围；同步不会自动加回");
+      setRefresh(value=>value+1);onScopeChanged?.();
+    }catch(reason){setScopeResult(messageFor(reason));}finally{setScopeBusy(false);}
+  };
+  const scopeReason=(contact:Contact)=>contact.business_scope.reasons.map(reason=>({manual_include:"已手动加入",manual_exclude:"已手动移出",confirmed_role:"已确认身份",recent_private:"近90天私聊",direct_interaction:"近90天直接互动",group_demand:"群内业务需求",group_discovery_pending:"群需求识别待完成"})[reason]||reason).join(" · ")||"未纳入业务范围";
   return (
     <>
-      <div className="workspace-tabs">
+      {!management&&<div className="workspace-tabs">
         <SegmentedControl
           kind="tabs"
           value={view}
@@ -305,10 +334,11 @@ export function ContactsPage({
           onChange={switchView}
           options={[
             { value: "merchants", label: "商家档案", count: counts.merchant },
-            { value: "all", label: "全部联系人", count: counts.all },
+            { value: "all", label: "业务活跃联系人", count: counts.all },
           ]}
         />
-      </div>
+      </div>}
+      {management&&<div className="table-toolbar"><span className="muted">保留全部归档；人工移出优先，不会随同步自动恢复。</span><SelectField label="业务范围筛选" value={membership} onValueChange={value=>{setMembership(value);setPage(1);setSelected(new Map());}} options={[{value:"all",label:"全部归档"},{value:"included",label:"业务范围内"},{value:"excluded",label:"未在业务范围内"}]}/></div>}
       {banner}
       {!account ? (
         <div className="panel empty-state">
@@ -401,6 +431,8 @@ export function ContactsPage({
             <div className="batch-clip">
               <div className="batch-bar">
                 <span>已选 {selected.size} 位联系人</span>
+                {management&&<button className="button secondary" disabled={scopeBusy} onClick={()=>void changeScope(Array.from(selected.values()),true)}>批量加入业务范围</button>}
+                <button className="button secondary" disabled={scopeBusy} onClick={()=>void changeScope(Array.from(selected.values()),false)}>批量移出业务范围</button>
                 <button
                   type="button"
                   className="button primary"
@@ -421,6 +453,7 @@ export function ContactsPage({
               </div>
             </div>
           </div>
+          {scopeResult&&<div className="error-banner" role="alert">{scopeResult}</div>}
           {error && (
             <div className="error-banner" role="alert">
               <span>{error}</span>
@@ -548,7 +581,7 @@ export function ContactsPage({
                       {view === "all" ? (
                         <>
                           <td>
-                            <RoleTag role={contact.role} />
+                            <RoleTag role={contact.role} /><span className="source-line">{scopeReason(contact)}</span>
                           </td>
                           <td>
                             {contact.sources.length ? (
@@ -605,10 +638,11 @@ export function ContactsPage({
                           >
                             <Copy size={15} />
                           </button>
+                          {view === "all"&&<button className="text-button" disabled={scopeBusy} onClick={()=>void changeScope([contact],!contact.business_scope.included)}>{contact.business_scope.included?"移出业务范围":"加入业务范围"}</button>}
                           {view === "all" ? (
                             <button
                               className="text-button"
-                              onClick={() => openRoles([contact])}
+                              onClick={event => openRoles([contact],event.currentTarget)}
                             >
                               修改身份
                             </button>
@@ -651,7 +685,7 @@ export function ContactsPage({
                       className="text-button"
                       onClick={() => switchView("all")}
                     >
-                      前往全部联系人
+                      前往业务活跃联系人
                     </button>
                   )}
                 </div>
@@ -711,7 +745,7 @@ export function ContactsPage({
                   <button
                     className="role-trigger"
                     aria-label="修改身份"
-                    onClick={() => openRoles([detail])}
+                    onClick={event => openRoles([detail],event.currentTarget)}
                   >
                     <RoleTag role={detail.role} />
                     <ChevronDown size={12} />
@@ -750,8 +784,9 @@ export function ContactsPage({
           </>
         )}
       </Dialog>
+      <AnimatePresence>{roleOpen&&roleAnchor&&roleTargets.length===1&&<RoleMenu key="single-role" anchor={roleAnchor} value={roleTargets[0].role} busy={saving} error={roleError} onChoose={value=>void saveRoles(value)} onClose={()=>setRoleOpen(false)}/>}</AnimatePresence>
       <Dialog
-        open={roleOpen}
+        open={roleOpen&&!roleAnchor}
         title="设置身份"
         onClose={() => {
           if (!saving) setRoleOpen(false);
