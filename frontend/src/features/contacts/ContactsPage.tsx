@@ -1,7 +1,7 @@
 import { AnimatePresence } from "motion/react";
 import { SelectField } from "../../components/SelectField";
 import { RoleMenu } from "../../components/RoleMenu";
-import { MessageTimeline } from "../messages/MessageTimeline";
+import { MessageBrowser } from "../messages/MessageBrowser";
 import { CustomerSyncStatus } from "../../components/CustomerSyncStatus";
 import { active } from "../../app/useOperations";
 import { nameNotice, sourceLabel, avatarText } from "./presentation";
@@ -91,7 +91,6 @@ export function ContactsPage({
     [detail, setDetail] = useState<Contact | null>(null),
     [detailOpen, setDetailOpen] = useState(false);
   const detailTabs=useRef<HTMLDivElement>(null);
-  const [messageScrollTop,setMessageScrollTop]=useState<number|null>(null);
   const [messageContact,setMessageContact]=useState<string|null>(null);
   const [detailView,setDetailView]=useState<"overview"|"messages">("overview");
   const detailOperation=detail&&operation?.scope.account_id===detail.key.account_id&&operation.scope.contact_id===detail.key.contact_id?operation:null;
@@ -552,7 +551,7 @@ export function ContactsPage({
                               className="name-button"
                               aria-label={`查看 ${contact.display_name}`}
                               onClick={() => {
-                                setDetail(contact);setMessageContact(null);setMessageScrollTop(null);
+                                setDetail(contact);setMessageContact(null);
                                 setDetailView("overview");
                                 setDetailOpen(true);
                               }}
@@ -654,7 +653,7 @@ export function ContactsPage({
                               className="icon-button"
                               aria-label={`打开 ${contact.display_name}`}
                               onClick={() => {
-                                setDetail(contact);setMessageContact(null);setMessageScrollTop(null);
+                                setDetail(contact);setMessageContact(null);
                                 setDetailView("overview");
                                 setDetailOpen(true);
                               }}
@@ -772,8 +771,8 @@ export function ContactsPage({
       >
         {detail && (
           <>
-            <div className="detail-tabs" ref={detailTabs}><SegmentedControl label="客户资料视图" value={detailView} onChange={value=>{if(detailView==="messages")setMessageScrollTop(detailTabs.current?.closest(".dialog-body")?.scrollTop??0);setDetailView(value);if(value==="messages")setMessageContact(detail.key.contact_id);}} options={[{value:"overview",label:"资料概览"},{value:"messages",label:"沟通原文"}]}/></div>
-            {(detailView==="messages"||messageContact===detail.key.contact_id)&&<div hidden={detailView!=="messages"}><MessageTimeline key={`${detail.key.account_id}:${detail.key.contact_id}`} contact={detail.key} revision={revision} visible={detailView==="messages"} scrollBookmark={messageScrollTop}/></div>}<div hidden={detailView!=="overview"}><div className="detail-unavailable">
+            <div className="detail-tabs" ref={detailTabs}><SegmentedControl label="客户资料视图" value={detailView} onChange={value=>{setDetailView(value);if(value==="messages")setMessageContact(detail.key.contact_id);}} options={[{value:"overview",label:"资料概览"},{value:"messages",label:"沟通原文"}]}/></div>
+            {(detailView==="messages"||messageContact===detail.key.contact_id)&&<div hidden={detailView!=="messages"}><MessageBrowser key={`${detail.key.account_id}:${detail.key.contact_id}`} contact={detail.key} revision={revision} visible={detailView==="messages"}/></div>}<div hidden={detailView!=="overview"}><div className="detail-unavailable">
               <FileText size={28} />
               <strong>
                 {detail.role === "merchant" ? "档案尚未生成" : "仅保留沟通资料"}

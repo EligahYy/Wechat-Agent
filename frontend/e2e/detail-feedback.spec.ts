@@ -52,8 +52,8 @@ test('dialog grows through intermediate heights and search results enter smoothl
   const initial=(await dialog.boundingBox())!.height;
   await dialog.evaluate(node=>{const samples:number[]=[];(window as any).__heights=samples;const start=performance.now();
     const sample=()=>{samples.push(node.getBoundingClientRect().height);if(performance.now()-start<1100)requestAnimationFrame(sample);else (window as any).__heightDone=true;};requestAnimationFrame(sample);});
-  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
-  await expect(dialog.getByText('34 条原文',{exact:true})).toBeVisible();
+  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await dialog.getByRole('button',{name:'回到最新',exact:true}).click();
+  await expect(dialog.getByText('30 条原文',{exact:true})).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>(window as any).__heightDone)).toBe(true);
   const end=(await dialog.boundingBox())!.height;
   const samples:number[]=await page.evaluate(()=>(window as any).__heights);
@@ -66,14 +66,14 @@ test('dialog grows through intermediate heights and search results enter smoothl
   const shrunk=(await dialog.boundingBox())!.height;
   const reverse:number[]=await page.evaluate(()=>(window as any).__heights);
   expect(reverse.some(height=>height>shrunk+5&&height<end-5)).toBe(true);
-  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
+  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await dialog.getByRole('button',{name:'回到最新',exact:true}).click();
   await expect(dialog.locator('[data-message]')).toHaveCount(26);
   await page.route('**/api/contacts/*/messages?**',async route=>{
     if(new URL(route.request().url()).searchParams.get('q'))await new Promise(resolve=>setTimeout(resolve,350));
     await route.continue();
   });
   await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).fill('不会存在的原文');
-  await expect(dialog.locator('[data-message]')).toHaveCount(26);
+  await expect(dialog.locator('[data-message]')).toHaveCount(0);
   await expect(dialog.getByText('没有匹配的原文')).toBeVisible();
   await expect(dialog.locator('.timeline-result-enter')).toHaveCSS('animation-name','timeline-result-in');
   await page.emulateMedia({reducedMotion:'reduce'});
@@ -97,7 +97,7 @@ test('submission errors are shown in this customer and retry can complete the so
 test('an open source menu follows the dialog while search changes its height',async({page})=>{
   await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();
   const dialog=page.getByRole('dialog');
-  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
+  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await dialog.getByRole('button',{name:'回到最新',exact:true}).click();
   await expect(dialog.locator('[data-message]')).toHaveCount(4);
   await settleAnimations(dialog.locator('.dialog-body'));
   await page.route('**/api/contacts/*/messages?**',async route=>{await new Promise(resolve=>setTimeout(resolve,400));await route.continue();});

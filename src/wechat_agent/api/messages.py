@@ -13,6 +13,8 @@ from ..contacts.names import load_catalog, present_source_title, resolve_name
 from ..operations.service import OperationError
 from ..storage.db import open_existing_db
 from ..messages.presentation import display_body
+from ..messages.queries import timeline_sources
+from ..messages.calendar import day_bounds,read_calendar
 
 router=APIRouter()
 ORDER='COALESCE(julianday(m.sent_at),0)'
@@ -35,30 +37,22 @@ def _cursor(value,scope,marker):
     return last
 
 
-def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_size=50,cursor=None,before_cursor=None,focus_id=None,focus_latest=False):
-    contact=conn.execute("SELECT * FROM contacts WHERE account_id=? AND contact_id=? AND is_self=0 AND identity_state='active'",(account_id,contact_id)).fetchone()
-    if contact is None:
-        raise OperationError('messages_not_found',404)
-    sources=[dict(row) for row in conn.execute('''SELECT v.conversation_id,v.kind,v.title FROM conversations v
-        WHERE v.account_id=? AND (v.conversation_id IN (
-            SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?) OR v.conversation_id IN (
-            SELECT conversation_id FROM messages WHERE account_id=? AND sender_id=?)) ORDER BY v.kind,v.conversation_id''',
-        (account_id,account_id,contact_id,account_id,contact_id))]
-    for source in sources:
-        source['title']=present_source_title(source['title'],source['conversation_id'])
-    if conversation_id is not None and conversation_id not in {source['conversation_id'] for source in sources}:
-        raise OperationError('messages_not_found',404)
+def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_size=50,cursor=None,before_cursor=None,focus_id=None,focus_latest=False,day=None,date_latest=False):
+    sources=timeline_sources(conn,account_id,contact_id,conversation_id)
     q=q.strip()
-    scope=[account_id,contact_id,q,conversation_id,page_size]
+    scope=[account_id,contact_id,q,conversation_id,page_size]+([day] if day else [])
     revision=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM message_revisions WHERE account_id=?',(account_id,)).fetchone()[0]
     marker=hashlib.sha256(json.dumps([revision,[source['conversation_id'] for source in sources]],ensure_ascii=False).encode()).hexdigest()
-    if sum(bool(value) for value in (cursor,before_cursor,focus_id,focus_latest))>1:raise OperationError('message_navigation_invalid',422)
+    if sum(bool(value) for value in (cursor,before_cursor,focus_id,focus_latest,date_latest))>1:raise OperationError('message_navigation_invalid',422)
     last=_cursor(cursor,scope,marker) if cursor else _cursor(before_cursor,[*scope,'before'],marker) if before_cursor else None
     clauses=['''m.account_id=? AND m.kind NOT IN ('system','revoke') AND (m.sender_id=? OR m.conversation_id IN (
         SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?))''']
     params=[account_id,contact_id,account_id,contact_id]
     if conversation_id is not None:
         clauses.append('m.conversation_id=?');params.append(conversation_id)
+    if day:
+        start,end=day_bounds(day)
+        clauses.append("julianday(m.sent_at)>=julianday(?) AND julianday(m.sent_at)<julianday(?)");params.extend([start,end])
     if q:
         if len(q)>=3 and any(char.isalnum() for char in q):
             clauses.append('m.rowid IN (SELECT rowid FROM message_search WHERE message_search MATCH ?)')
@@ -77,8 +71,8 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
     def boundary(row,operator):
         return f" AND ({ORDER}{operator}? OR ({ORDER}=? AND m.message_id{operator}?))",[row['order_time'],row['order_time'],row['message_id']]
     target=None
-    if focus_id or focus_latest:
-        candidates=select(' AND m.sender_id=?'+(' AND m.message_id=?' if focus_id else ''),[contact_id,*([focus_id] if focus_id else [])],descending=True,limit=1)
+    if focus_id or focus_latest or date_latest:
+        candidates=select(('' if date_latest else ' AND m.sender_id=?')+(' AND m.message_id=?' if focus_id else ''),([] if date_latest else [contact_id])+([focus_id] if focus_id else []),descending=True,limit=1)
         if focus_id and not candidates:raise OperationError('message_focus_not_found',404)
         target=candidates[0] if candidates else None
     if target:
@@ -98,7 +92,8 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
         if select(extra,values,limit=1):previous_cursor=encode(rows[0],True)
     own_where=base_where+' AND m.sender_id=?';own_params=[*base_params,contact_id]
     own_total=conn.execute('SELECT COUNT(*) FROM messages m WHERE '+own_where,own_params).fetchone()[0]
-    if target is None:target=next((row for row in rows if row['sender_id']==contact_id),None)
+    if target is not None and target['sender_id']!=contact_id:target=None
+    if target is None:target=next((row for row in (reversed(rows) if date_latest else rows) if row['sender_id']==contact_id),None)
     speech={'total':own_total,'current_id':None,'index':0,'previous_id':None,'next_id':None}
     if target:
         extra,values=boundary(target,'<')
@@ -106,6 +101,9 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
         for name,operator,desc in [('previous_id','<',True),('next_id','>',False)]:
             extra,values=boundary(target,operator);neighbor=select(' AND m.sender_id=?'+extra,[contact_id,*values],descending=desc,limit=1)
             speech[name]=neighbor[0]['message_id'] if neighbor else None
+    if target is None and own_total:
+        first=select(' AND m.sender_id=?',[contact_id],descending=date_latest,limit=1)
+        if first:speech['previous_id' if date_latest else 'next_id']=first[0]['message_id']
     senders={row['sender_id'] for row in rows if row['sender_id'] is not None}
     people={}
     if senders:
@@ -141,10 +139,18 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
 def messages(request:Request,contact_id:str,account_id:str=Query(min_length=1,max_length=512),q:str=Query(default='',max_length=256),
              conversation_id:str|None=Query(default=None,min_length=1,max_length=512),page_size:int=Query(default=50,ge=1,le=50),
              cursor:str|None=Query(default=None,max_length=4096),before_cursor:str|None=Query(default=None,max_length=4096),
-             focus_id:str|None=Query(default=None,max_length=2048),focus_latest:bool=False):
+             focus_id:str|None=Query(default=None,max_length=2048),focus_latest:bool=False,day:str|None=Query(default=None,max_length=10),date_latest:bool=False):
     try:
         with closing(open_existing_db(request.app.state.database_path,readonly=True)) as conn,conn:
             conn.execute('BEGIN');authorize_archive(conn,request,account_id)
-            return read_timeline(conn,account_id,contact_id,q=q,conversation_id=conversation_id,page_size=page_size,cursor=cursor,before_cursor=before_cursor,focus_id=focus_id,focus_latest=focus_latest)
+            return read_timeline(conn,account_id,contact_id,q=q,conversation_id=conversation_id,page_size=page_size,cursor=cursor,before_cursor=before_cursor,focus_id=focus_id,focus_latest=focus_latest,day=day,date_latest=date_latest)
     except sqlite3.Error:
         raise OperationError('database_unavailable',503) from None
+
+@router.get('/api/contacts/{contact_id}/message-calendar')
+def calendar(request:Request,contact_id:str,account_id:str=Query(min_length=1,max_length=512),month:str=Query(pattern=r'^\d{4}-\d{2}$'),conversation_id:str|None=Query(default=None,min_length=1,max_length=512)):
+    try:
+        with closing(open_existing_db(request.app.state.database_path,readonly=True)) as conn,conn:
+            conn.execute('BEGIN');authorize_archive(conn,request,account_id)
+            return read_calendar(conn,account_id,contact_id,month,conversation_id=conversation_id)
+    except sqlite3.Error:raise OperationError('database_unavailable',503) from None
