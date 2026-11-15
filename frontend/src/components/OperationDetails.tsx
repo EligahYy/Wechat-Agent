@@ -87,6 +87,7 @@ export function OperationDetails({ operation }: { operation: Operation }) {
         {archive ? "归档人数＝本次来源收录＋其他归档。其他归档为本次联系人资料未包含的沟通或历史人物，不代表当前好友关系。" : "此记录未保存归档人数拆分，来源读取量不代表归档总数。"}
         待识别表示身份尚未确认，与姓名是否缺失无关。
       </p>}
+      {!!counts.analysis_required&&<div className="operation-analysis"><h4>资料整理</h4><div className="operation-facts"><span>目标商家 {counts.analysis_required}</span><span>已更新 {counts.analysis_completed||0}</span><span>无需更新 {counts.analysis_skipped||0}</span><span>未完成 {counts.analysis_failed||0}</span></div>{!!counts.analysis_incomplete&&<p className="muted">有 {counts.analysis_incomplete} 位商家的资料已更新，但仍有来源或字段缺口。</p>}{operation.phase==='analysis'&&operation.error_code&&<p className="muted">{{model_budget_unverified:'请在设置中核对供应商文档与文本预算后再整理。',model_connection_unverified:'请先完成模型连接检查。',context_requires_chunking:'历史超出当前处理预算，需要分段处理，已有资料保留。',contact_changed:'客户身份发生变化，本次结果未发布。',manual_changed:'人工资料已变化，旧结果未覆盖。'}[operation.error_code]||'模型整理未完成，已有资料仍保留。'}<code>{operation.error_code}</code></p>}</div>}
       <p className="muted">
         来源阶段：
         {operation.source_state === "succeeded"

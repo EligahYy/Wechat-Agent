@@ -14,6 +14,14 @@ export const operationTitle = (job: Operation | null) => {
   if (job.state === "stopped") return "任务已停止";
   if (job.error_code === "capability_not_ready")
     return "原文已同步，档案整理尚未接入";
+  if (job.error_code === "model_budget_unverified") return "原文已同步，请核对模型文本预算";
+  if (job.error_code === "model_connection_unverified") return "原文已同步，请检查模型连接";
+  if (job.error_code === "analysis_incomplete") return "资料已更新，仍有整理缺口";
+  if (job.state === "failed" && job.phase === "analysis") return "原文已同步，资料整理未完成";
+  if (job.state === "succeeded" && job.action === "sync_and_organize") {
+    if (job.counts.analysis_completed) return "同步与资料整理已完成";
+    if (job.counts.analysis_skipped) return "原文已同步，资料无需更新";
+  }
   if (job.state === "failed")
     return job.error_code === "source_incomplete"
       ? "来源同步不完整"

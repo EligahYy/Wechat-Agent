@@ -45,6 +45,12 @@ def public_settings(conn,account):
             import time
             expired=check['state']=='running' and check['expires_at']<=time.time()
             result['connection'].update(state='interrupted' if expired else check['state'],code='check_interrupted' if expired else check['code'],checked_at=check['finished_at'])
+    result['runtime_ready']=False
+    result['budget_review']=None
+    review=conn.execute('SELECT reference,reviewed_at FROM model_budget_reviews WHERE account_id=? AND config_version=?',(account,version)).fetchone()
+    if review:
+        result['budget_review']={'method':'operator_document_review','reference':review['reference'],'reviewed_at':review['reviewed_at']}
+        result['runtime_ready']=result['connection']['state']=='passed'
     return result
 
 def save_settings(conn,body,credentials):

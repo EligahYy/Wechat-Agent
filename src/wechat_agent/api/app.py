@@ -49,6 +49,9 @@ def create_app(settings: Settings, services: Services | None = None) -> FastAPI:
     app = FastAPI(title="Wechat-Agent", lifespan=lifespan)
     app.state.settings = settings
     app.state.services = services if services is not None else Services()
+    if app.state.services.analysis_factory is None:
+        from ..analysis.runtime import RuntimeSession
+        app.state.services.analysis_factory=lambda conn,account:RuntimeSession(conn,account,app.state.services)
     app.state.database_path = database_path
     app.state.worker = None
     if services is None:

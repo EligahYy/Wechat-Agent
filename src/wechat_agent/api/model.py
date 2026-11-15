@@ -61,3 +61,14 @@ def check_model(request:Request,body:CheckRequest):
             if current!=version:raise OperationError('model_check_stale',409)
             return public_settings(conn,body.account_id)
     except sqlite3.Error:raise OperationError('model_check_failed',503) from None
+
+
+from ..model.budget import BudgetReview,review_budget
+
+@router.post('/api/model/budget-review')
+def confirm_budget(request:Request,body:BudgetReview):
+    try:
+        with closing(open_existing_db(request.app.state.database_path)) as conn:
+            authorize(conn,request,body.account_id)
+            return review_budget(conn,body)
+    except sqlite3.Error:raise OperationError('model_settings_write_failed',503) from None

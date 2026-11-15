@@ -79,7 +79,7 @@ export function SettingsPage({
             <strong>{settings.model.model_id || "模型服务"}</strong>
             {settings.model.state === "configured" ? <>
               <ModelConnectionStatus state={settings.model.connection_state}/>
-              <p>容量和视觉能力尚未验证</p>
+              <p>{settings.model.runtime_ready?"文本预算已核对；容量与视觉尚未实测":"文本预算尚未核对，整理未启用"}</p>
             </> : <p>模型整理尚未接入</p>}
           </div>
           <button className="button secondary" disabled={!settings.account_id} onClick={()=>setModelOpen(true)}>配置模型</button>

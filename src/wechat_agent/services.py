@@ -17,3 +17,4 @@ class Services:
     model: object | None = None
 
     discovery_factory: Callable | None = None
+    analysis_factory: Callable | None = None

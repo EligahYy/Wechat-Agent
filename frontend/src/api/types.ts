@@ -48,7 +48,7 @@ export type AppSettings = {
   version: number;
   timezone: string;
   source: { state: string };
-  model: { state: string; model_id: string | null; connection_state?: string };
+  model: { state: string; model_id: string | null; connection_state?: string; runtime_ready?:boolean };
   capabilities: { organize: boolean; scheduler: boolean; raw_browser: boolean };
 };
 export type RoleUpdate = {

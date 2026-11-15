@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**最新基线（2026-11-15）：** 任务1—6云端完成，从本计划任务7继续；本阶段未整体完成。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
+**最新基线（2026-11-15）：** 任务1—6云端完成，任务7生产接线已实现并进入整体验收；Mac真实商家质量退出门槛仍保留。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
 
 **Goal:** 一位真实商家从已归档聊天生成可查来源、可纠正、保留独立备货批次的客户档案。
 
@@ -113,6 +113,8 @@ async def test_auth_failure_does_not_retry(gateway, model_transport, model_reque
 
 **阅读边界：** 复用现有原文浏览能力，不在本任务重建日历或缓存。模型快照保持独立的语境／引用契约，不能直接套用原文页的当天会话过滤；同群多人归属及新旧批次须纳入回放与Task7实机验收。
 
+**生产实施说明（2026-11-15）：** RuntimeSession／WorkflowV1已注册；独立预算依据采用明确的操作者文档核对记录，并绑定账号／配置版本，绝不把最小检查或填写的声明值自动当成实测容量。capacity_verified／vision_verified保持false。实机完整质量门槛不因云端实现而勾选。
+
 **消费者门槛补充：** 领取和事务发布前复核business_scope_allows_analysis；人工exclude不可被迟到模型结果、角色变化或新同步覆盖。discovery用途快照不可用于商家档案发布。
 
 **Files:** Create `profiles/validator.py`, `profiles/publisher.py`, `profiles/shipments.py`, `analysis/workflow.py`, `tests/test_profile_publish.py`；Modify `tests/conftest.py` 以创建 analysis_result fixture。
@@ -190,13 +192,15 @@ test("profile has one header and no rail", async ({ page }) => {
 
 ### Task 7: 单客户真实端到端闭环
 
+**生产实施说明（2026-11-15）：** RuntimeSession／WorkflowV1已注册；独立预算依据采用明确的操作者文档核对记录，并绑定账号／配置版本，绝不把最小检查或填写的声明值自动当成实测容量。capacity_verified／vision_verified保持false。实机完整质量门槛不因云端实现而勾选。
+
 **消费者门槛补充：** 注册真实模型及discovery_factory前必须加载经验证能力；连接检查不能冒充容量验证。同步先保留必要全量来源发现，再活动刷新／需求分类／范围过滤，只有范围内已确认merchant进入档案整理。
 
 **Files:** Modify `operations/worker.py`, `services.py`, `api/operations.py`, `frontend/src/features/profile/ProfileDialog.tsx`, `tests/conftest.py`；Create `tests/test_single_customer_flow.py`, `docs/verification/m2-profile-review.md`。
 
 **Interfaces:** 注册 WorkflowV1；Services 增加可空 strategy；tests 的 services fixture 注入回放 SourceAdapter、gateway 及 WorkflowV1。`sync_and_organize` 按 ContactKey 完成同步→快照→模型→发布，只有目标客户进入分析。无模型输入变化时跳过 generate，但仍先完成真实源读取。
 
-- [ ] **Step 1 — 写失败测试：** 回放源含同群 A／B，指定 A；断言来源归档可使 B 待更新，但模型调用只属于 A；第二次无新增且无待处理输入时调用数不增；源失败不能提示没有新消息。
+- [x] **Step 1 — 写失败测试：** 回放源含同群 A／B，指定 A；断言来源归档可使 B 待更新，但模型调用只属于 A；第二次无新增且无待处理输入时调用数不增；源失败不能提示没有新消息。
 
 ```python
 @pytest.mark.asyncio
@@ -212,10 +216,10 @@ async def test_only_requested_customer_is_analyzed(db, services):
     assert [row[0] for row in targets] == ["merchant-a"]
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_single_customer_flow.py -q`，预期 M1 仍返回 capability_not_ready。
-- [ ] **Step 3 — 实现：** 接通现有 worker 和档案入口；前端“同步并整理此客户”使用统一 operations API，停止检查沿用 generation，不单独写一套 Promise 任务。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_single_customer_flow.py -q`，预期 M1 仍返回 capability_not_ready。
+- [x] **Step 3 — 实现：** 接通现有 worker 和档案入口；前端“同步并整理此客户”使用统一 operations API，停止检查沿用 generation，不单独写一套 Promise 任务。
 - [ ] **Step 4 — 绿灯及实测：** 上述测试通过后，在 Mac 选择一位已确认商家，跑一次真实完整小历史；人工核对主体、货量／单位、路线、卡航与海运、旧批已走货＋新批需求、来源及缺口。把错提／漏提如实记录，不以合法 JSON 当验收。
-- [ ] **Step 5 — 提交检查点：** 获准时提交代码及脱敏 review，消息 `feat: complete real single-customer analysis flow`。
+- [x] **Step 5 — 提交检查点：** 获准时提交代码及脱敏 review，消息 `feat: complete real single-customer analysis flow`。
 
 ## 退出条件
 

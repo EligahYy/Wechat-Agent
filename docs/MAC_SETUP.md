@@ -22,6 +22,8 @@ git status --short
   git merge-base --is-ancestor 0b42eac HEAD
   test -f src/wechat_agent/api/messages.py
   test -f src/wechat_agent/profiles/manual.py
+  test -f src/wechat_agent/analysis/runtime.py
+  test -f src/wechat_agent/storage/migrations/014_model_budget_reviews.sql
   git log -1 --oneline
 )
 ```
@@ -76,7 +78,7 @@ export GIT_SSH_COMMAND='ssh -o HostName=ssh.github.com -p 443 -o ConnectTimeout=
 curl -fsS http://127.0.0.1:8766/api/health
 ```
 
-通过标准：`{"status":"ok","schema_version":13}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
+通过标准：`{"status":"ok","schema_version":14}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
 
 若出现来源配置错误，核对既有`.local/config/source.json`的base_url与expected_account_id，沿用token_env，不把凭据贴到聊天。原文浏览和手动导入使用已归档数据，不需要再次全量同步。
 
@@ -169,7 +171,7 @@ curl -fsS http://127.0.0.1:9100/api/v1/health
 )
 ```
 
-按前文方式重启应用，健康接口应报告schema_version=13。本轮无需重装wx-cli。
+按前文方式重启应用，健康接口应报告schema_version=14。本轮无需重装wx-cli。
 
 1. 确认左上角EU、工作台业务活跃联系人及设置→管理全部联系人。先搜索一名联系人，手动移出，再同步，确认不自动回来；在全量管理重新加入。
 2. 设置→配置模型，按服务文档填写HTTPS完整chat-completions地址、准确模型ID、响应格式和声明容量。首次填写密钥，保存后页面应留空；密钥只写本机Keychain。
@@ -197,3 +199,16 @@ curl -fsS http://127.0.0.1:9100/api/v1/health
 ### 整理记录排障
 
 整理记录支持点击条目原位展开，再次点击收起；快速换选会取消旧详情请求。历史记录中的“来源同步不完整”应在展开后查看具体来源缺口；“档案整理尚未接入”与来源读取失败分别处理。
+
+
+## 验证M2任务6—7：客户资料与真实整理
+
+本次schema14自动迁移，保持现有数据库和9100来源服务，不需重装wx-cli。按前文步骤更新、构建并重启8766。
+
+设置→配置模型：保存完整OpenAI兼容chat-completions地址、准确API模型ID、格式和按供应商文档核对的预算；主动检查连接通过后，填写“预算依据”文档HTTPS地址，勾选确认文本预算。该记录绑定当前配置版本，改配置后需重新检查／核对；它是人工文档核对，不是容量实测，也不启用视觉。预算核对本身不发送模型请求。
+
+先选一位业务范围内的已确认商家，在客户页点“同步并整理此客户”。消息同步完成后会执行实际模型请求并更新资料卡／备货记录；明确缺口会保留提示，超窗会拒绝本次完整历史整理而保留原文与旧档案。预算需包含规则、模板、结构约束、原文、输出与安全余量，32768／8192不是对任意历史可处理的保证。不要为通过而填写未经核实的窗口上限。
+
+可直接验证编辑货品／物流／沟通、两组人工补充、单号、来源查看、重启持久化和身份头像配色。单号不自动改成已走货，模型重跑不覆盖人工值；版本冲突保留输入，核对最新版本后再保存。再同步一次，无输入变化不会重复调用档案模型；来源仍会读取最新消息。
+
+首次实测按[单客户质量清单](verification/m2-profile-review.md)核对主体、单位、路线、旧／新批次和来源，先单客户再考虑全局，避免未确认质量时扩大付费调用。图片获取／解析、超窗分段及每日自动执行仍属于后续阶段。

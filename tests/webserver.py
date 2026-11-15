@@ -29,7 +29,17 @@ def app_factory():
         def get(self,ref):return self.values[ref]
         def set(self,ref,value):self.values[ref]=value
     app.state.services.credential_store=MemoryCredentials()
-    app.state.services.model_transport=httpx.MockTransport(lambda request:httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':'{"probe":"ok"}'}}]}))
+    def model_reply(request):
+        import json
+        content=json.loads(request.content)['messages'][-1]['content']
+        if content=='Return {"probe":"ok"}.':answer='{"probe":"ok"}'
+        else:
+            payload=json.loads(content)
+            result=json.loads((Path(__file__).parent/'fixtures/profile-ready.json').read_text())
+            result['contact_id']=payload['contact_id']
+            answer=json.dumps(result)
+        return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':answer}}]})
+    app.state.services.model_transport=httpx.MockTransport(model_reply)
     app.state.test_directory=directory
     with closing(open_db(app.state.database_path)) as conn:
         migrate(conn)

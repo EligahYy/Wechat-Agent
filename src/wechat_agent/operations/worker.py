@@ -1,4 +1,4 @@
-"""One guarded source worker; analysis remains explicitly unavailable in M1."""
+"""Account-owned source and analysis worker; publication rejects stale results."""
 
 import asyncio
 from contextlib import asynccontextmanager, closing
@@ -115,7 +115,15 @@ def _fail_source(conn, operation, owner, code, gaps):
     return True
 
 
-def _complete_source(conn, operation, owner, result):
+def _fail_analysis(conn,operation,owner,code):
+    with transaction(conn):
+        if not _owned(conn,operation,owner):return False
+        conn.execute("UPDATE operations SET state='failed',phase='analysis',error_code=?,worker_id=NULL,remaining=MAX(remaining,1),updated_at=? WHERE account_id=? AND id=?",(code,now(),operation.scope.account_id,operation.id))
+        conn.execute("UPDATE operation_items SET state='failed',error_code=? WHERE account_id=? AND operation_id=? AND phase='analysis' AND state IN ('queued','running')",(code,operation.scope.account_id,operation.id))
+    return True
+
+
+def _complete_source(conn, operation, owner, result, *, ready=False, error_code="capability_not_ready"):
     with transaction(conn):
         if not _owned(conn, operation, owner):
             return False
@@ -133,18 +141,20 @@ def _complete_source(conn, operation, owner, result):
         targets=[target for target in targets if included[target['contact_id']].included]
         counts = _counts(result)
         counts["analysis_required"] = len(targets)
+        counts.update(analysis_completed=0,analysis_skipped=0,analysis_failed=len(targets) if not ready else 0,analysis_incomplete=0)
         conn.execute("""UPDATE operation_items SET state='succeeded',error_code=NULL,gaps_json='[]',counts_json=?
                         WHERE account_id=? AND operation_id=? AND item_id='source'""",
                      (json.dumps(_counts(result)), operation.scope.account_id, operation.id))
         for target in targets:
             conn.execute("""INSERT INTO operation_items(account_id,operation_id,item_id,contact_id,state,phase,
-                            generation,role_version,error_code) VALUES (?,?,?,?,'failed','analysis',?,?,'capability_not_ready')""",
-                         (operation.scope.account_id, operation.id, "analysis:" + target[0], target[0], operation.generation, target[1]))
+                            generation,role_version,error_code) VALUES (?,?,?,?,?,'analysis',?,?,?)""",
+                         (operation.scope.account_id, operation.id, "analysis:" + target[0], target[0], 'queued' if ready else 'failed', operation.generation, target[1],None if ready else error_code))
         conn.execute("""UPDATE operations SET state=?,phase=?,remaining=?,counts_json=?,error_code=?,worker_id=NULL,
                         updated_at=? WHERE account_id=? AND id=?""",
-                     ("failed" if targets else "succeeded", "analysis" if targets else "completed", len(targets),
-                      json.dumps(counts), "capability_not_ready" if targets else None, now(), operation.scope.account_id, operation.id))
-    return True
+                     ("running" if ready and targets else "failed" if targets else "succeeded", "analysis" if targets else "completed", len(targets),
+                      json.dumps(counts), error_code if targets and not ready else None, now(), operation.scope.account_id, operation.id))
+        if ready and targets:conn.execute('UPDATE operations SET worker_id=? WHERE account_id=? AND id=?',(owner,operation.scope.account_id,operation.id))
+    return [row[0] for row in targets]
 
 
 async def run_next(conn, services, *, account_id=None, on_claim=None):
@@ -154,6 +164,12 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
     if claimed is None:
         return None
     operation, owner, encoded_options = claimed
+    runtime=None;runtime_error='capability_not_ready'
+    if operation.action=='sync_and_organize' and services.analysis_factory is not None:
+        from ..model.contracts import ModelCallError
+        try:runtime=services.analysis_factory(conn,operation.scope.account_id)
+        except ModelCallError as error:runtime_error=error.code
+        except Exception:runtime_error='model_config_invalid'
     try:
         if on_claim:
             on_claim(operation)
@@ -174,7 +190,7 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
                 on_progress=lambda value, target: _save_progress(conn, operation, owner, value, target))
         from ..contacts.activity import refresh_activity
         with transaction(conn):refresh_activity(conn,operation.scope.account_id)
-        if not result.stopped and operation.action == 'sync_and_organize' and services.discovery_factory is not None:
+        if not result.stopped and not result.gaps and operation.action == 'sync_and_organize' and services.discovery_factory is not None and runtime is None:
             from ..contacts.scope import decisions
             from ..discovery.context import build_discovery_snapshot
             from ..discovery.repository import publish_discovery
@@ -203,15 +219,31 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
             code = "source_unavailable" if unavailable.intersection(result.gaps) else "source_incomplete"
             if not _fail_source(conn, operation, owner, code, result.gaps):
                 _stop(conn, operation, owner)
-        elif not _complete_source(conn, operation, owner, result):
-            _stop(conn, operation, owner)
+        else:
+            if runtime is not None:
+                from ..analysis.runner import discover,analyze
+                with transaction(conn):
+                    if _owned(conn,operation,owner):
+                        conn.execute("UPDATE operation_items SET state='succeeded',error_code=NULL,gaps_json='[]' WHERE account_id=? AND operation_id=? AND item_id='source'",(operation.scope.account_id,operation.id))
+                        conn.execute("UPDATE operations SET phase='analysis',updated_at=? WHERE account_id=? AND id=?",(now(),operation.scope.account_id,operation.id))
+                async with runtime as session:
+                    await discover(conn,operation,owner,session.discovery)
+                    targets=_complete_source(conn,operation,owner,result,ready=True)
+                    if targets:await analyze(conn,operation,owner,session,targets)
+                    elif targets is False:_stop(conn,operation,owner)
+            else:
+                targets=_complete_source(conn,operation,owner,result,error_code=runtime_error)
+                if targets is False:_stop(conn,operation,owner)
     except asyncio.CancelledError:
         _stop(conn, operation, owner)
     except SourceError as error:
         if not _fail_source(conn, operation, owner, "source_unavailable", [str(error)]):
             _stop(conn, operation, owner)
     except Exception:
-        if not _fail_source(conn, operation, owner, "source_unavailable", ["source_unavailable"]):
+        current=get_operation(conn,operation.scope.account_id,operation.id)
+        if current.phase=='analysis':
+            if not _fail_analysis(conn,operation,owner,'analysis_failed'):_stop(conn,operation,owner)
+        elif not _fail_source(conn, operation, owner, "source_unavailable", ["source_unavailable"]):
             _stop(conn, operation, owner)
     return get_operation(conn, operation.scope.account_id, operation.id)
 

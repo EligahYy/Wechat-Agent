@@ -41,7 +41,7 @@ test('return restores reading position and excludes hidden controls from focus c
  expect(await dialog.locator('.timeline-scroll').evaluate(node=>node.scrollTop)).toBeLessThan(2);
  await dialog.getByRole('tab',{name:'资料概览',exact:true}).click();
  const first=dialog.getByRole('button',{name:'修改身份',exact:true});await first.focus();await page.keyboard.press('Shift+Tab');
- await expect(dialog.getByRole('tab',{name:'资料概览',exact:true})).toBeFocused();
+ await expect(dialog.getByRole('button',{name:'编辑物流资料',exact:true})).toBeFocused();
 });
 test('loaded speech navigation is local and preserves message DOM and count',async({page,request})=>{
  await request.post('/api/__test__/reset');await page.goto('/');await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
