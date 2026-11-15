@@ -238,12 +238,15 @@ def test_timeline_hides_system_notifications_but_preserves_archived_events(popul
     assert messages(populated,cursor='not-a-cursor').status_code==422
 
 
-def test_timeline_cursor_detects_newly_related_existing_history(populated):
+def test_timeline_cursor_ignores_membership_only_and_detects_real_participation(populated):
     with closing(open_db(populated.app.state.database_path)) as conn:
         archive_page(conn,make_page([make_message(message_id='prior-unrelated',conversation_id='prior-room',sender_id='provider-p')],conversation_id='prior-room'))
     first=messages(populated,page_size=2).json()
     with closing(open_db(populated.app.state.database_path)) as conn,conn:
         conn.execute("INSERT INTO members(account_id,conversation_id,contact_id) VALUES('acct-1','prior-room','merchant-a')")
+    assert messages(populated,page_size=2,cursor=first['next_cursor']).status_code==200
+    with closing(open_db(populated.app.state.database_path)) as conn:
+        archive_page(conn,make_page([make_message(message_id='actual-participation',conversation_id='prior-room',sender_id='merchant-a')],conversation_id='prior-room'))
     assert messages(populated,page_size=2,cursor=first['next_cursor']).status_code==409
 
 

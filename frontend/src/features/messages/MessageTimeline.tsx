@@ -88,7 +88,7 @@ export function MessageTimeline({contact,revision,visible=true,scrollBookmark=nu
     <div className="table-meta" aria-live="polite"><span>{data?.total||0} 条原文{loading?" · 更新中":""}</span><span>北京时间 · 不含系统通知</span></div>
     <div className="speech-navigation-slot">
       <div className="speech-navigation" role="group" aria-label="当前联系人发言定位">
-        <span role="status" className="speech-count" title={data?.speech?.total?'当前联系人发言位置':'当前范围内无他的发言'} aria-label={loading?'正在读取发言':jumping?'正在定位':data?.speech?.total?`当前联系人发言 ${data.speech.index} / ${data.speech.total}`:'当前范围内无他的发言'}>{loading||loadingMore||jumping?'…':`${data?.speech?.index||0} / ${data?.speech?.total||0}`}</span>
+        <span role="status" className="speech-count" title={data?.speech?.total?'当前联系人发言位置':data?.total?'当天仅有会话上下文，无本人发言':'当前范围内无他的发言'} aria-label={loading?'正在读取发言':jumping?'正在定位':data?.speech?.total?`当前联系人发言 ${data.speech.index} / ${data.speech.total}`:'当前范围内无他的发言'}>{loading||loadingMore||jumping?'…':`${data?.speech?.index||0} / ${data?.speech?.total||0}`}</span>
         <button type="button" className="icon-button" aria-label="上一条" title="上一条发言" disabled={loading||loadingMore||jumping||!data?.speech?.previous_id} onClick={()=>void jump(data?.speech?.previous_id)}><ArrowUp size={16}/></button>
         <button type="button" className="icon-button" aria-label="下一条" title="下一条发言" disabled={loading||loadingMore||jumping||!data?.speech?.next_id} onClick={()=>void jump(data?.speech?.next_id)}><ArrowDown size={16}/></button>
       </div>

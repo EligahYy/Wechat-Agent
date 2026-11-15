@@ -3,7 +3,7 @@ test.beforeEach(async ({request,page}) => {await request.post('/api/__test__/res
 test('read-only timeline preserves speakers, searches Chinese and filters sources',async ({page},info) => {
   await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();
   const detail=page.getByRole('dialog');
-  await detail.getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await detail.getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await detail.getByRole('button',{name:'回到最新',exact:true}).click();
+  await detail.getByRole('tab',{name:'沟通原文',exact:true}).click();await detail.getByRole('searchbox',{name:'搜索沟通原文'}).waitFor({state:'visible'});
   await expect(detail.locator('[data-message]')).toHaveCount(4);
   await expect(detail.getByText('我方',{exact:true})).toBeVisible();
   const search=detail.getByRole('searchbox',{name:'搜索沟通原文'});
@@ -41,7 +41,7 @@ test('settings is the only import entry, explicit preview and commit are idempot
   await dialog.getByRole('button',{name:'完成',exact:true}).click();
   await page.getByRole('button',{name:'工作台',exact:true}).click();
   await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();
-  await page.getByRole('dialog').getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await page.getByRole('dialog').getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await page.getByRole('dialog').getByRole('button',{name:'回到最新',exact:true}).click();
+  await page.getByRole('dialog').getByRole('tab',{name:'沟通原文',exact:true}).click();await page.getByRole('dialog').getByRole('searchbox',{name:'搜索沟通原文'}).waitFor({state:'visible'});
   await expect(page.getByText('浏览器导入海运报价',{exact:true})).toBeVisible();
   await expect.poll(()=>page.getByRole('tab',{name:'沟通原文',exact:true}).evaluate(button=>{
     const target=button.getBoundingClientRect();
@@ -93,7 +93,7 @@ test('timeline loads more without duplicates and reloads after archive changes',
   await add(55,'pages');
   await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();
   const detail=page.getByRole('dialog');
-  await detail.getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await detail.getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await detail.getByRole('button',{name:'回到最新',exact:true}).click();
+  await detail.getByRole('tab',{name:'沟通原文',exact:true}).click();await detail.getByRole('searchbox',{name:'搜索沟通原文'}).waitFor({state:'visible'});
   await expect(detail.locator('[data-message]')).toHaveCount(26);
   await add(1,'new-revision');
   await detail.locator('.timeline-scroll').hover();await page.mouse.wheel(0,-100000);

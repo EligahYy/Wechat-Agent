@@ -40,7 +40,7 @@ test('customer sees scoped progress and result without closing or scrolling up',
   await page.getByRole('button',{name:'查看 商家乙',exact:true}).click();
   await expect(page.getByRole('region',{name:'当前客户同步状态'})).toHaveCount(0);
 });
-test('dialog grows through intermediate heights and search results enter smoothly',async({page,request})=>{
+test('customer tabs keep a stable envelope and animate content and search',async({page,request})=>{
   const row={conversation_id:'group-1',sender_id:'merchant-a',sent_at:'2026-11-13T08:00:00+08:00',body:'动画原文'};
   const preview=await(await request.post('/api/imports',{data:{mode:'preview',account_id:'acct-1',format:'json',namespace:'animation',
     mapping:Object.fromEntries(['conversation_id','sender_id','sent_at','message_id','body'].map(key=>[key,key])),
@@ -52,21 +52,21 @@ test('dialog grows through intermediate heights and search results enter smoothl
   const initial=(await dialog.boundingBox())!.height;
   await dialog.evaluate(node=>{const samples:number[]=[];(window as any).__heights=samples;const start=performance.now();
     const sample=()=>{samples.push(node.getBoundingClientRect().height);if(performance.now()-start<1100)requestAnimationFrame(sample);else (window as any).__heightDone=true;};requestAnimationFrame(sample);});
-  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await dialog.getByRole('button',{name:'回到最新',exact:true}).click();
+  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).waitFor({state:'visible'});
   await expect(dialog.getByText('30 条原文',{exact:true})).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>(window as any).__heightDone)).toBe(true);
   const end=(await dialog.boundingBox())!.height;
   const samples:number[]=await page.evaluate(()=>(window as any).__heights);
-  expect(end-initial).toBeGreaterThan(100);
-  expect(new Set(samples.filter(height=>height>initial+10&&height<end-10).map(Math.round)).size).toBeGreaterThan(0);
+  expect(Math.abs(end-initial)).toBeLessThan(20);
+  await expect(dialog.locator(".message-browser")).toHaveCSS("animation-name","page-in");
   await dialog.evaluate(node=>{(window as any).__heightDone=false;const samples:number[]=[];(window as any).__heights=samples;const start=performance.now();
     const sample=()=>{samples.push(node.getBoundingClientRect().height);if(performance.now()-start<700)requestAnimationFrame(sample);else (window as any).__heightDone=true;};requestAnimationFrame(sample);});
   await dialog.getByRole('tab',{name:'资料概览',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>(window as any).__heightDone)).toBe(true);
   const shrunk=(await dialog.boundingBox())!.height;
   const reverse:number[]=await page.evaluate(()=>(window as any).__heights);
-  expect(reverse.some(height=>height>shrunk+5&&height<end-5)).toBe(true);
-  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await dialog.getByRole('button',{name:'回到最新',exact:true}).click();
+  expect(Math.abs(shrunk-end)).toBeLessThan(20);
+  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).waitFor({state:'visible'});
   await expect(dialog.locator('[data-message]')).toHaveCount(26);
   await page.route('**/api/contacts/*/messages?**',async route=>{
     if(new URL(route.request().url()).searchParams.get('q'))await new Promise(resolve=>setTimeout(resolve,350));
@@ -97,7 +97,7 @@ test('submission errors are shown in this customer and retry can complete the so
 test('an open source menu follows the dialog while search changes its height',async({page})=>{
   await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();
   const dialog=page.getByRole('dialog');
-  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await dialog.getByRole('button',{name:'回到最新',exact:true}).click();
+  await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).waitFor({state:'visible'});
   await expect(dialog.locator('[data-message]')).toHaveCount(4);
   await settleAnimations(dialog.locator('.dialog-body'));
   await page.route('**/api/contacts/*/messages?**',async route=>{await new Promise(resolve=>setTimeout(resolve,400));await route.continue();});

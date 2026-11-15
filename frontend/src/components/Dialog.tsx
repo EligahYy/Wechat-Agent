@@ -9,6 +9,7 @@ export function Dialog({
   headerActions,
   status,
   wide = false,
+  className = "",
 }: {
   open: boolean;
   title: ReactNode;
@@ -18,6 +19,7 @@ export function Dialog({
   headerActions?: ReactNode;
   status?: ReactNode;
   wide?: boolean;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null),
     previous = useRef<HTMLElement | null>(null);
@@ -72,7 +74,7 @@ export function Dialog({
   return (
     <dialog
       ref={ref}
-      className={`dialog glass ${wide ? "dialog-wide" : ""} ${closing ? "dialog-closing" : ""}`}
+      className={`dialog glass ${className} ${wide ? "dialog-wide" : ""} ${closing ? "dialog-closing" : ""}`}
       aria-modal="true"
       aria-labelledby={titleId}
       onCancel={(event) => {

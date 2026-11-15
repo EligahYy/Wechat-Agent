@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 test('compact speech navigator stays top right with icon buttons and soft selection',async({page,request})=>{
- await request.post('/api/__test__/reset');await page.goto('/');await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();if(!(await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).isVisible()))await dialog.getByRole('button',{name:'回到最新',exact:true}).click();
+ await request.post('/api/__test__/reset');await page.goto('/');await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).waitFor({state:'visible'});
  const nav=dialog.locator('.speech-navigation');await expect(dialog.locator('.is-current-speech')).toBeVisible();
  expect((await nav.boundingBox())!.width).toBeLessThan(240);
  expect(await nav.getByRole('button',{name:'上一条',exact:true}).innerText()).toBe('');

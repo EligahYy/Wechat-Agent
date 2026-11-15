@@ -719,6 +719,7 @@ export function ContactsPage({
       )}
       <Dialog
         open={detailOpen && !!detail}
+        className="dialog-contact"
         wide
         onClose={() => setDetailOpen(false)}
         headerActions={
@@ -772,7 +773,7 @@ export function ContactsPage({
         {detail && (
           <>
             <div className="detail-tabs" ref={detailTabs}><SegmentedControl label="客户资料视图" value={detailView} onChange={value=>{setDetailView(value);if(value==="messages")setMessageContact(detail.key.contact_id);}} options={[{value:"overview",label:"资料概览"},{value:"messages",label:"沟通原文"}]}/></div>
-            {(detailView==="messages"||messageContact===detail.key.contact_id)&&<div hidden={detailView!=="messages"}><MessageBrowser key={`${detail.key.account_id}:${detail.key.contact_id}`} contact={detail.key} revision={revision} visible={detailView==="messages"}/></div>}<div hidden={detailView!=="overview"}><div className="detail-unavailable">
+            {(detailView==="messages"||messageContact===detail.key.contact_id)&&<div hidden={detailView!=="messages"}><MessageBrowser key={`${detail.key.account_id}:${detail.key.contact_id}`} contact={detail.key} revision={revision} visible={detailView==="messages"}/></div>}<div className="detail-overview-pane page-enter" hidden={detailView!=="overview"}><div className="detail-unavailable">
               <FileText size={28} />
               <strong>
                 {detail.role === "merchant" ? "档案尚未生成" : "仅保留沟通资料"}

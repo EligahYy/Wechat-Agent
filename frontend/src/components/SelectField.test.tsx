@@ -15,7 +15,7 @@ it('chooses from a custom list and preserves the controlled value until confirma
   const user=userEvent.setup();render(<Example/>);
   const trigger=screen.getByRole('combobox',{name:'消息来源'});
   await user.click(trigger);
-  expect(screen.getByRole('listbox')).toBeVisible();
+  await waitFor(()=>expect(screen.getByRole('listbox')).toBeVisible());
   expect(screen.getByRole('option',{name:'全部来源'})).toHaveAttribute('aria-selected','true');
   await user.keyboard('{ArrowDown}');
   expect(screen.getByLabelText('选定来源')).toHaveTextContent('all');

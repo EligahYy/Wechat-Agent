@@ -13,7 +13,7 @@ from ..contacts.names import load_catalog, present_source_title, resolve_name
 from ..operations.service import OperationError
 from ..storage.db import open_existing_db
 from ..messages.presentation import display_body
-from ..messages.queries import timeline_sources
+from ..messages.queries import timeline_sources,message_scope
 from ..messages.calendar import day_bounds,read_calendar
 
 router=APIRouter()
@@ -45,9 +45,8 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
     marker=hashlib.sha256(json.dumps([revision,[source['conversation_id'] for source in sources]],ensure_ascii=False).encode()).hexdigest()
     if sum(bool(value) for value in (cursor,before_cursor,focus_id,focus_latest,date_latest))>1:raise OperationError('message_navigation_invalid',422)
     last=_cursor(cursor,scope,marker) if cursor else _cursor(before_cursor,[*scope,'before'],marker) if before_cursor else None
-    clauses=['''m.account_id=? AND m.kind NOT IN ('system','revoke') AND (m.sender_id=? OR m.conversation_id IN (
-        SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?))''']
-    params=[account_id,contact_id,account_id,contact_id]
+    scope_where,params=message_scope(account_id,contact_id)
+    clauses=[scope_where]
     if conversation_id is not None:
         clauses.append('m.conversation_id=?');params.append(conversation_id)
     if day:
