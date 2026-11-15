@@ -727,6 +727,10 @@ small {
   font-size: 18px;
 }
 .toast {
+  margin: 0;
+  top: auto;
+  right: auto;
+  max-width: calc(100vw - 32px);
   position: fixed;
   bottom: 28px;
   left: calc(50% + 80px);
@@ -739,6 +743,9 @@ small {
   box-shadow: var(--shadow);
   z-index: 100;
   font-size: 13px;
+}
+.toast-modal {
+  left: 50%;
 }
 .history-list {
   display: grid;

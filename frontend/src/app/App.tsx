@@ -1,3 +1,4 @@
+import {Toast} from "../components/Toast";
 import { ContactManager } from "../features/settings/ContactManager";
 import { metadataSummary } from "./operationPresentation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -417,11 +418,7 @@ export function App() {
             </div>
           )}
         </Dialog>
-        {toast && (
-          <button className="toast" role="status" onClick={() => setToast("")}>
-            {toast}
-          </button>
-        )}
+        {toast && <Toast message={toast} onDismiss={()=>setToast("")}/>}
       </div>
     </MotionConfig>
   );
