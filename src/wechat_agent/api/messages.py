@@ -35,7 +35,7 @@ def _cursor(value,scope,marker):
     return last
 
 
-def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_size=50,cursor=None):
+def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_size=50,cursor=None,before_cursor=None,focus_id=None,focus_latest=False):
     contact=conn.execute("SELECT * FROM contacts WHERE account_id=? AND contact_id=? AND is_self=0 AND identity_state='active'",(account_id,contact_id)).fetchone()
     if contact is None:
         raise OperationError('messages_not_found',404)
@@ -52,7 +52,8 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
     scope=[account_id,contact_id,q,conversation_id,page_size]
     revision=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM message_revisions WHERE account_id=?',(account_id,)).fetchone()[0]
     marker=hashlib.sha256(json.dumps([revision,[source['conversation_id'] for source in sources]],ensure_ascii=False).encode()).hexdigest()
-    last=_cursor(cursor,scope,marker) if cursor else None
+    if sum(bool(value) for value in (cursor,before_cursor,focus_id,focus_latest))>1:raise OperationError('message_navigation_invalid',422)
+    last=_cursor(cursor,scope,marker) if cursor else _cursor(before_cursor,[*scope,'before'],marker) if before_cursor else None
     clauses=['''m.account_id=? AND m.kind NOT IN ('system','revoke') AND (m.sender_id=? OR m.conversation_id IN (
         SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?))''']
     params=[account_id,contact_id,account_id,contact_id]
@@ -67,13 +68,44 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
             params.append('%'+q.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%')
     where=' AND '.join(clauses)
     total=conn.execute('SELECT COUNT(*) FROM messages m WHERE '+where,params).fetchone()[0]
-    if last:
-        where+=f' AND ({ORDER}>? OR ({ORDER}=? AND m.message_id>?))'
-        params.extend([last[0],last[0],last[1]])
-    rows=conn.execute(f'''SELECT m.*,{ORDER} AS order_time,v.title AS source_title,v.kind AS source_kind
-        FROM messages m JOIN conversations v ON v.account_id=m.account_id AND v.conversation_id=m.conversation_id
-        WHERE {where} ORDER BY order_time,m.message_id LIMIT ?''',[*params,page_size+1]).fetchall()
-    more=len(rows)>page_size;rows=rows[:page_size]
+    base_where=where;base_params=list(params)
+    def encode(row,before=False):
+        return base64.urlsafe_b64encode(json.dumps({'scope':[*scope,'before'] if before else scope,'marker':marker,'last':[row['order_time'],row['message_id']]}).encode()).decode().rstrip('=')
+    def select(extra='',values=(),descending=False,limit=page_size):
+        direction='DESC' if descending else 'ASC'
+        return conn.execute(f"SELECT m.*,{ORDER} AS order_time,v.title AS source_title,v.kind AS source_kind FROM messages m JOIN conversations v ON v.account_id=m.account_id AND v.conversation_id=m.conversation_id WHERE {base_where} {extra} ORDER BY order_time {direction},m.message_id {direction} LIMIT ?",[*base_params,*values,limit]).fetchall()
+    def boundary(row,operator):
+        return f" AND ({ORDER}{operator}? OR ({ORDER}=? AND m.message_id{operator}?))",[row['order_time'],row['order_time'],row['message_id']]
+    target=None
+    if focus_id or focus_latest:
+        candidates=select(' AND m.sender_id=?'+(' AND m.message_id=?' if focus_id else ''),[contact_id,*([focus_id] if focus_id else [])],descending=True,limit=1)
+        if focus_id and not candidates:raise OperationError('message_focus_not_found',404)
+        target=candidates[0] if candidates else None
+    if target:
+        extra,values=boundary(target,'<');before=select(extra,values,descending=True,limit=page_size//2)
+        extra,values=boundary(target,'>');after=select(extra,values,limit=page_size-len(before)-1)
+        rows=[*reversed(before),target,*after]
+    elif last:
+        extra=f" AND ({ORDER}{'<' if before_cursor else '>'}? OR ({ORDER}=? AND m.message_id{'<' if before_cursor else '>'}?))"
+        rows=select(extra,[last[0],last[0],last[1]],descending=bool(before_cursor))
+        if before_cursor:rows=list(reversed(rows))
+    else:rows=select()
+    next_cursor=previous_cursor=None
+    if rows:
+        extra,values=boundary(rows[-1],'>')
+        if select(extra,values,limit=1):next_cursor=encode(rows[-1])
+        extra,values=boundary(rows[0],'<')
+        if select(extra,values,limit=1):previous_cursor=encode(rows[0],True)
+    own_where=base_where+' AND m.sender_id=?';own_params=[*base_params,contact_id]
+    own_total=conn.execute('SELECT COUNT(*) FROM messages m WHERE '+own_where,own_params).fetchone()[0]
+    if target is None:target=next((row for row in rows if row['sender_id']==contact_id),None)
+    speech={'total':own_total,'current_id':None,'index':0,'previous_id':None,'next_id':None}
+    if target:
+        extra,values=boundary(target,'<')
+        speech.update(current_id=target['message_id'],index=1+conn.execute('SELECT COUNT(*) FROM messages m WHERE '+own_where+extra,[*own_params,*values]).fetchone()[0])
+        for name,operator,desc in [('previous_id','<',True),('next_id','>',False)]:
+            extra,values=boundary(target,operator);neighbor=select(' AND m.sender_id=?'+extra,[contact_id,*values],descending=desc,limit=1)
+            speech[name]=neighbor[0]['message_id'] if neighbor else None
     senders={row['sender_id'] for row in rows if row['sender_id'] is not None}
     people={}
     if senders:
@@ -101,20 +133,18 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
             'source_kind':source['kind'],'sender':sender,'sent_at':row['sent_at'],'kind':row['kind'],
             'body':display_body(row['kind'],row['body']),'revision':row['revision'],'reply_to':row['reply_to'],'attachments':attachments,
             'origin':'import' if row['message_id'].startswith('import:') else 'archive'})
-    next_cursor=None
-    if more:
-        tail=rows[-1]
-        next_cursor=base64.urlsafe_b64encode(json.dumps({'scope':scope,'marker':marker,'last':[tail['order_time'],tail['message_id']]}).encode()).decode().rstrip('=')
-    return {'items':items,'total':total,'sources':sources,'next_cursor':next_cursor,'has_more':more,'timezone':'Asia/Shanghai'}
+    return {'items':items,'total':total,'sources':sources,'next_cursor':next_cursor,'previous_cursor':previous_cursor,'speech':speech,'has_more':bool(next_cursor),'timezone':'Asia/Shanghai'}
+
 
 
 @router.get('/api/contacts/{contact_id}/messages')
 def messages(request:Request,contact_id:str,account_id:str=Query(min_length=1,max_length=512),q:str=Query(default='',max_length=256),
              conversation_id:str|None=Query(default=None,min_length=1,max_length=512),page_size:int=Query(default=50,ge=1,le=50),
-             cursor:str|None=Query(default=None,max_length=4096)):
+             cursor:str|None=Query(default=None,max_length=4096),before_cursor:str|None=Query(default=None,max_length=4096),
+             focus_id:str|None=Query(default=None,max_length=2048),focus_latest:bool=False):
     try:
         with closing(open_existing_db(request.app.state.database_path,readonly=True)) as conn,conn:
             conn.execute('BEGIN');authorize_archive(conn,request,account_id)
-            return read_timeline(conn,account_id,contact_id,q=q,conversation_id=conversation_id,page_size=page_size,cursor=cursor)
+            return read_timeline(conn,account_id,contact_id,q=q,conversation_id=conversation_id,page_size=page_size,cursor=cursor,before_cursor=before_cursor,focus_id=focus_id,focus_latest=focus_latest)
     except sqlite3.Error:
         raise OperationError('database_unavailable',503) from None

@@ -102,7 +102,7 @@ export function Dialog({
             ref.current?.querySelectorAll<HTMLElement>(
               'button:not(:disabled),input:not(:disabled),textarea:not(:disabled),[tabindex="0"]',
             ) || [],
-          );
+          ).filter(node=>node.tabIndex>=0&&node.getClientRects().length>0&&!node.closest('[hidden],[inert],[aria-hidden="true"]'));
           const first = nodes[0],
             last = nodes.at(-1);
           if (event.shiftKey && document.activeElement === first) {

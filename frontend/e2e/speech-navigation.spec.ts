@@ -1,0 +1,45 @@
+import {test,expect} from '@playwright/test';
+test('highlight keeps other speakers, navigation and tab switching retain current speech',async({page,request})=>{
+ await request.post('/api/__test__/reset');await page.goto('/');
+ await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');
+ await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
+ await expect(dialog.locator('.is-current-speech')).toHaveCount(1);
+ await expect(dialog.locator('[data-message]:not(.is-contact)')).not.toHaveCount(0);
+ const before=await dialog.locator('.is-current-speech').getAttribute('data-message');
+ await dialog.getByRole('button',{name:'上一条',exact:true}).click();
+ await expect(dialog.locator('.is-current-speech')).not.toHaveAttribute('data-message',before!);
+ const older=await dialog.locator('.is-current-speech').getAttribute('data-message');
+ await dialog.getByRole('tab',{name:'资料概览',exact:true}).click();await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
+ await expect(dialog.locator('.is-current-speech')).toHaveAttribute('data-message',older!);
+ await dialog.getByRole('button',{name:'下一条',exact:true}).click();await expect(dialog.locator('.is-current-speech')).toHaveAttribute('data-message',before!);
+ await dialog.getByRole('searchbox',{name:'搜索沟通原文'}).fill('不存在的本人发言');
+ await expect(dialog.getByText('当前范围内无他的发言',{exact:true})).toBeVisible();
+ await expect(dialog.getByRole('button',{name:'下一条',exact:true})).toBeDisabled();
+});
+test('speech navigation crosses unloaded windows and keeps surrounding speakers',async({page,request})=>{
+ await request.post('/api/__test__/reset');
+ const mapping=Object.fromEntries(['conversation_id','sender_id','sent_at','message_id','body'].map(key=>[key,key]));
+ const rows=Array.from({length:81},(_,index)=>({conversation_id:'group-1',sender_id:index%40===0?'merchant-a':'provider-p',sent_at:new Date(Date.UTC(2026,10,14,0,index)).toISOString(),message_id:`speech-window-${index}`,body:`窗口测试发言${index}`}));
+ const preview=await(await request.post('/api/imports',{data:{mode:'preview',account_id:'acct-1',namespace:'speech-window',format:'json',mapping,content:JSON.stringify(rows)}})).json();
+ expect((await request.post('/api/imports',{data:{mode:'commit',account_id:'acct-1',preview_id:preview.preview_id}})).ok()).toBe(true);
+ await page.goto('/');await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
+ await expect(dialog.locator('.is-current-speech')).toContainText('窗口测试发言80');
+ await expect(dialog.getByText('窗口测试发言40',{exact:true})).toHaveCount(0);
+ await dialog.getByRole('button',{name:'上一条',exact:true}).click();
+ await expect(dialog.locator('.is-current-speech')).toContainText('窗口测试发言40');
+ await expect(dialog.locator('[data-message]:not(.is-contact)')).not.toHaveCount(0);
+ await expect(dialog.locator('.is-current-speech')).toBeInViewport();
+ await page.screenshot({path:'../.local/evidence/m2/speech-navigation-light.png'});
+});
+test('return restores reading position and excludes hidden controls from focus cycle',async({page,request})=>{
+ await request.post('/api/__test__/reset');await page.goto('/');await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');
+ await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();await expect(dialog.locator('.is-current-speech')).toBeVisible();
+ await page.waitForTimeout(400);
+ await dialog.locator('.dialog-body').evaluate(node=>node.scrollTo({top:0,behavior:'instant'}));
+ await dialog.getByRole('tab',{name:'资料概览',exact:true}).click();await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
+ await page.waitForTimeout(400);
+ expect(await dialog.locator('.dialog-body').evaluate(node=>node.scrollTop)).toBeLessThan(2);
+ await dialog.getByRole('tab',{name:'资料概览',exact:true}).click();
+ const first=dialog.getByRole('button',{name:'修改身份',exact:true});await first.focus();await page.keyboard.press('Shift+Tab');
+ await expect(dialog.getByRole('tab',{name:'资料概览',exact:true})).toBeFocused();
+});
