@@ -24,6 +24,7 @@
   --shadow: 0 12px 32px rgba(20, 30, 50, 0.055);
   --focus: rgba(0, 102, 204, 0.16);
   --danger: #bd3038;
+  --success: #15803d;
   --radius: 20px;
   --ease: cubic-bezier(0.22, 0.8, 0.2, 1);
   --fast: 180ms;
@@ -46,6 +47,7 @@
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
   --focus: rgba(101, 173, 255, 0.2);
   --danger: #ff8892;
+  --success: #73dca2;
   color-scheme: dark;
 }
 * {
@@ -888,3 +890,14 @@ html[data-theme="dark"] .timeline-meta .self-speaker{color:#c7a4f2}
 .detail-overview-pane .detail-unavailable{height:100%}
 
 .speech-navigation[aria-busy=true]{opacity:.7}
+
+.model-connection-row{display:flex;align-items:center;justify-content:space-between;gap:12px 20px;flex-wrap:wrap}
+.model-connection-status{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;line-height:1.6}
+.connection-status-indicator{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.model-connection-status[data-state=passed]{color:var(--success)}
+.model-connection-status[data-state=passed] .connection-status-indicator{background:var(--success)}
+.model-connection-status[data-state=failed]{color:var(--danger)}
+.model-connection-status[data-state=failed] .connection-status-indicator{background:var(--danger)}
+.model-connection-status[data-state=running]{color:var(--accent)}
+.model-connection-status[data-state=running] .connection-status-indicator{background:var(--accent)}
+.settings-row .model-connection-status{margin-top:5px}

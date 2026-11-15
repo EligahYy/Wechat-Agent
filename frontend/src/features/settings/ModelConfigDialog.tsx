@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
+import {ModelConnectionStatus} from './ModelConnectionStatus';
 import {RefreshCw} from 'lucide-react';
 import {Dialog} from '../../components/Dialog';
 import {FormField} from '../../components/FormField';
@@ -12,7 +13,7 @@ export function ModelConfigDialog({accountId,onClose,onChanged}:{accountId:strin
   const mounted=useRef(true);
   const apply=(value:ModelSettings)=>{setSaved(value);setEndpoint(value.endpoint||'');setModel(value.model_id||'');setMode(value.response_mode||'json_object');setContext(value.context_tokens?String(value.context_tokens):'');setOutput(value.max_output_tokens?String(value.max_output_tokens):'');setSecret('');};
   useEffect(()=>{mounted.current=true;const controller=new AbortController();
-    request<ModelSettings>(`/api/model?${new URLSearchParams({account_id:accountId})}`,{signal:controller.signal}).then(value=>{if(mounted.current)apply(value);}).catch(reason=>{if(!controller.signal.aborted)setError(messageFor(reason));}).finally(()=>{if(mounted.current)setBusy('');});
+    request<ModelSettings>(`/api/model?${new URLSearchParams({account_id:accountId})}`,{signal:controller.signal}).then(value=>{if(mounted.current&&!controller.signal.aborted){apply(value);if(value.configured&&value.connection.state!=='running')onChanged();}}).catch(reason=>{if(!controller.signal.aborted)setError(messageFor(reason));}).finally(()=>{if(mounted.current)setBusy('');});
     return()=>{mounted.current=false;controller.abort();};
   },[accountId]);
   useEffect(()=>{
@@ -20,7 +21,7 @@ export function ModelConfigDialog({accountId,onClose,onChanged}:{accountId:strin
     const controller=new AbortController();
     const timer=window.setInterval(()=>{
       request<ModelSettings>(`/api/model?${new URLSearchParams({account_id:accountId})}`,{signal:controller.signal})
-        .then(value=>{if(mounted.current)setSaved(previous=>previous?.version===value.version?value:previous);})
+        .then(value=>{if(mounted.current&&!controller.signal.aborted){setSaved(previous=>previous?.version===value.version?value:previous);if(value.connection.state!=='running')onChanged();}})
         .catch(()=>{});
     },1000);
     return()=>{window.clearInterval(timer);controller.abort();};
@@ -53,10 +54,12 @@ export function ModelConfigDialog({accountId,onClose,onChanged}:{accountId:strin
         <FormField label="最大输出" type="number" min={16} value={output} disabled={!!busy} onChange={event=>setOutput(event.target.value)}/>
       </div><p className="field-hint">按服务文档填写声明值。连接检查不证明窗口容量或视觉能力；未验证能力不会自动启用图片处理。</p></section>
       {saved?.configured&&<section className="import-preview"><h3>连接检查</h3>
-        <p role="status">{busy==='checking'?'正在检查连接…':state==='passed'?'连接检查通过':state==='failed'?'连接检查未通过':state==='running'?'连接检查进行中':state==='interrupted'?'上次检查已中断':'配置已保存，尚未检查连接'}</p>
-        {state==='failed'&&<p className="muted">{saved.connection.code==='model_authentication_failed'?'请检查 API 密钥及服务权限。':'请核对服务地址、模型 ID、响应格式及网络后重试。'}</p>}
+        <div className="model-connection-row">
+          <ModelConnectionStatus state={busy==='checking'?'running':state} modified={dirty}/>
+          <button className="button secondary" disabled={!!busy||dirty||state==='running'} onClick={()=>void check()}><RefreshCw size={16} className={busy==='checking'||state==='running'?'spin':undefined}/>检查连接</button>
+        </div>
+        {!dirty&&state==='failed'&&<p className="muted">{saved.connection.code==='model_authentication_failed'?'请检查 API 密钥及服务权限。':'请核对服务地址、模型 ID、响应格式及网络后重试。'}</p>}
         <p className="field-hint">点击将发送一次不含客户资料的最小请求，可能产生少量费用。容量和视觉能力尚未验证。</p>
-        <button className="button secondary" disabled={!!busy||dirty||state==='running'} onClick={()=>void check()}><RefreshCw size={16} className={busy==='checking'?'spin':undefined}/>检查连接</button>
         {dirty&&<p className="field-hint">请先保存修改，再检查连接。</p>}
       </section>}
     </div>

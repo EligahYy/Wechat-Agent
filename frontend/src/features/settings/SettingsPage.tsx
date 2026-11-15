@@ -1,3 +1,4 @@
+import { ModelConnectionStatus } from "./ModelConnectionStatus";
 import { ModelConfigDialog } from "./ModelConfigDialog";
 import { ImportDialog } from "./ImportDialog";
 import { useState } from "react";
@@ -76,11 +77,10 @@ export function SettingsPage({
         <div className="settings-row">
           <div>
             <strong>{settings.model.model_id || "模型服务"}</strong>
-            <p>
-              {settings.model.state === "configured"
-                ? "配置已保存，运行能力尚未验证"
-                : "模型整理尚未接入"}
-            </p>
+            {settings.model.state === "configured" ? <>
+              <ModelConnectionStatus state={settings.model.connection_state}/>
+              <p>容量和视觉能力尚未验证</p>
+            </> : <p>模型整理尚未接入</p>}
           </div>
           <button className="button secondary" disabled={!settings.account_id} onClick={()=>setModelOpen(true)}>配置模型</button>
         </div>
