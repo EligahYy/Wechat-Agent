@@ -113,6 +113,7 @@ export function MessageTimeline({contact,revision,visible=true,scrollBookmark=nu
     </div>
     <div className="timeline-scroll" ref={scrollRef} onScroll={()=>{if(visible&&scrollRef.current){ownScroll.current=scrollRef.current.scrollTop;if(data)cache.current.update(scopeKey,{page:data,top:ownScroll.current});}}} tabIndex={0} aria-label="消息原文滚动区">
     <div className="table-meta" aria-live="polite"><span>{data?.total||0} 条原文{loading?" · 更新中":""}</span><span>北京时间 · 不含系统通知</span></div>
+    {!!data?.items.length&&<div className="timeline-day">{date(data.items[0].sent_at,true)}</div>}
     <div className="speech-navigation-slot">
       <div className="speech-navigation" aria-busy={jumping} role="group" aria-label="当前联系人发言定位">
         <span role="status" className="speech-count" title={data?.speech?.total?'当前联系人发言位置':data?.total?'当天仅有会话上下文，无本人发言':'当前范围内无他的发言'} aria-label={loading?'正在读取发言':jumping?'正在定位':data?.speech?.total?`当前联系人发言 ${data.speech.index} / ${data.speech.total}`:'当前范围内无他的发言'}>{loading?'…':`${data?.speech?.index||0} / ${data?.speech?.total||0}`}</span>
@@ -125,7 +126,7 @@ export function MessageTimeline({contact,revision,visible=true,scrollBookmark=nu
     <div className="timeline-items" aria-busy={loading}>
       <div key={`${day}:${query}:${source}`} className="timeline-result-enter">
       {!data&&loading?<p className="muted">正在读取原文…</p>:!data?.items.length&&!error?<div className="empty-state"><FileText size={26}/><strong>{query||source?"没有匹配的原文":day?"当天暂无已同步消息":"尚无可展示的聊天原文"}</strong><span>{day?"可选择其他日期，或回到最新记录":"可先同步此客户，或在设置中导入消息"}</span></div>:data?.items.map((item,index)=><div key={item.message_id}>
-        {(index===0||date(item.sent_at,true)!==date(data.items[index-1].sent_at,true))&&<div className="timeline-day">{date(item.sent_at,true)}</div>}
+        {(index>0&&date(item.sent_at,true)!==date(data.items[index-1].sent_at,true))&&<div className="timeline-day">{date(item.sent_at,true)}</div>}
         <article className={`timeline-message ${item.sender.is_self?"is-self":""} ${item.sender.contact_id===contact.contact_id?"is-contact":""} ${item.message_id===data.speech?.current_id?"is-current-speech":""}`} data-message={item.message_id}>
           <div className="timeline-meta"><strong className={item.sender.is_self?"self-speaker":""}>{item.sender.display_name}</strong>{item.sender.role&&<RoleTag role={item.sender.role}/>}<time dateTime={item.sent_at}>{date(item.sent_at)}</time>{item.origin==="import"&&<span>手动导入</span>}</div>
           <p className="original-body">{item.body||`${kinds[item.kind]||"消息"}（暂无文本）`}</p>
