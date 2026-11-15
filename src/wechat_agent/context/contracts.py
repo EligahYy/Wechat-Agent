@@ -14,4 +14,6 @@ class ContextSnapshot(BaseModel):
     role_version:int=Field(gt=0)
     manual_version:int=Field(ge=0)
     versions:dict[str,str]
+    profile_version:int=Field(default=0,ge=0)
+    scope_version:int=Field(default=0,ge=0)
     gaps:tuple[str,...]

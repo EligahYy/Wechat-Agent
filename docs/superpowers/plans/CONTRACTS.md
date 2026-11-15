@@ -150,4 +150,12 @@ M2 Task2：schema007增加snapshots(account_id,snapshot_id,contact_id,manifest_j
 
 M2 Task3A核心：ModelConfig增加显式response_mode=text／json_object／json_schema（默认json_object）；structured_output不推断JSON-schema支持。Gateway注入连接、不可变配置副本、AsyncClient、CredentialStore和可替换sleep；客户端不跟随重定向。每次实际供应商请求持久预留analysis_units计数并写model_calls，call_id至多3次、unit至多6次，配置／操作／快照不可换绑。输出Schema提供给模型且在本地验证，只支持本地可解析引用，禁止隐式联网取Schema。以上是核心检查点，Task3B/C配置持久化、权限、主动连接检查与页面已交付；Services和worker当前没有启用真实模型。
 
-当前schema11：009为模型配置版本／检查租约，010为业务范围／活动／发现信号，011为消息作者／会话时间、附件和修订账号索引。月历days/speech_days只统计本人发言；latest_day优先本人发言，缺失时回退有效私聊。speech.positions提供窗口内本人位置及精确相邻ID，允许前端本地定位。消息月历和day参数统一北京时间，游标绑定账号／联系人／筛选／日期与归档代次。配置保存不调模型，显式检查不证明容量；worker真实分析发布仍由Task4／7接入。人工exclude是领取和发布前的门槛。
+前次schema11：009为模型配置版本／检查租约，010为业务范围／活动／发现信号，011为消息作者／会话时间、附件和修订账号索引。月历days/speech_days只统计本人发言；latest_day优先本人发言，缺失时回退有效私聊。speech.positions提供窗口内本人位置及精确相邻ID，允许前端本地定位。消息月历和day参数统一北京时间，游标绑定账号／联系人／筛选／日期与归档代次。配置保存不调模型，显式检查不证明容量；worker真实分析发布仍由Task4／7接入。人工exclude是领取和发布前的门槛。
+
+## M2任务4交付（schema12）
+
+012保存profile_heads(version/manual_version)、不可变profile_versions(candidate/result/issues/complete/pending)、shipments以及候选键／来源锚点映射。ContextSnapshot增加profile_version／scope_version，manual_version读取heads；ContextReader继续核对保存清单。
+
+validate_result返回ValidationResult(result/issues/reason)，publish返回PublishResult(version/complete/reason/pending/issues)。run只返回候选，publish事务复核范围／版本／输入／取消后落盘；同snapshot幂等，追加消息可发布并pending。未知附件不能当已解析证据；局部数值／单位／日期核对不承诺语义准确。
+
+Task5新增profile/manual/numbers HTTP消费者；Task7再注册生产策略和worker，当前organize capability仍False。下一迁移从013起顺延。

@@ -41,3 +41,16 @@ def snapshot(db):
     from wechat_agent.source.contracts import ContactKey
     seed_case(db)
     return build_snapshot(db,ContactKey(account_id='acct-1',contact_id='merchant-a'),datetime(2027,1,1,tzinfo=timezone.utc))
+
+@pytest.fixture
+def analysis_result(snapshot):
+    from wechat_agent.profiles.contracts import AnalysisResult
+    ref={'message_id':'fixture:dm-a:1','revision':1}
+    return AnalysisResult.model_validate({'contact_id':'merchant-a','goods':{'volume':{'state':'known','value':'约12方','sources':[ref]}},'communication':{'summary':{'state':'known','value':'义乌到德国，询问海运含税到门价','sources':[ref]},'tags':['询价中']}})
+
+@pytest.fixture
+def cancellation(db,snapshot):
+    from wechat_agent.operations.service import create_operation
+    from wechat_agent.operations.contracts import OperationScope,CancellationToken
+    operation=create_operation(db,'sync_and_organize',OperationScope(account_id=snapshot.key.account_id,contact_id=snapshot.key.contact_id),'publish-test')
+    return CancellationToken(operation_id=operation.id,generation=operation.generation)

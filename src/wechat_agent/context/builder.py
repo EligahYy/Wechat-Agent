@@ -69,9 +69,11 @@ def build_snapshot(conn,key:ContactKey,cutoff:datetime,*,versions:dict[str,str]|
                 for gap in json.loads(cursor['gaps_json']):gaps.add('source_gap:'+room+':'+gap)
             for issue in conn.execute('SELECT DISTINCT code FROM source_issues WHERE account_id=? AND conversation_id=? AND resolved=0',(account,room)):
                 gaps.add('source_issue:'+room+':'+issue['code'])
+        head=conn.execute('SELECT version,manual_version FROM profile_heads WHERE account_id=? AND contact_id=?',(account,contact)).fetchone()
+        override=conn.execute('SELECT version FROM business_scope_overrides WHERE account_id=? AND contact_id=?',(account,contact)).fetchone()
         snapshot=ContextSnapshot(id=str(uuid4()),key=key,cutoff=cutoff,
             material_refs=tuple(SourceRef(message_id=row['message_id'],revision=row['revision']) for row in messages),
-            role_version=person['role_version'],manual_version=0,versions=selected_versions,gaps=tuple(sorted(gaps)))
+            role_version=person['role_version'],manual_version=head[1] if head else 0,profile_version=head[0] if head else 0,scope_version=override[0] if override else 0,versions=selected_versions,gaps=tuple(sorted(gaps)))
         payload={'messages':messages,'actors':actors,'conversations':rooms}
         conn.execute('INSERT INTO snapshots(account_id,snapshot_id,contact_id,manifest_json,payload_json) VALUES(?,?,?,?,?)',
             (account,snapshot.id,contact,snapshot.model_dump_json(),json.dumps(payload,ensure_ascii=False,allow_nan=False)))

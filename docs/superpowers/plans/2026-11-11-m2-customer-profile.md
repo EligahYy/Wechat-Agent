@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**最新基线（2026-11-15）：** 任务1—3云端完成，从本计划任务4继续；本阶段未整体完成。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
+**最新基线（2026-11-15）：** 任务1—4云端完成，从本计划任务5继续；本阶段未整体完成。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
 
 **Goal:** 一位真实商家从已归档聊天生成可查来源、可纠正、保留独立备货批次的客户档案。
 
@@ -107,9 +107,9 @@ async def test_auth_failure_does_not_retry(gateway, model_transport, model_reque
 
 ### Task 4: 事实校验、稳定批次与事务发布
 
-**当前下一执行项（未开始）：** 代码核对确认validator／publisher／shipments／workflow及其发布测试尚不存在。使用任务1—3已有契约、快照／ContextReader和网关，先用云端回放完成校验→稳定批次→事务发布→固定工作流；真实模型注册和worker接线属于Task7，Mac能力实测单独推进。
+**云端完成（2026-11-15）：** validator／publisher／shipments／workflow和schema012已交付，Python446／前端31单元及49浏览器通过，见[报告](../../verification/m2-task4-report.md)。使用任务1—3已有契约、快照／ContextReader和网关，先用云端回放完成校验→稳定批次→事务发布→固定工作流；真实模型注册和worker接线属于Task7，Mac能力实测单独推进。
 
-**迁移起点：** 当前schema11，001—011已交付。Task4首次建立档案／批次存储时从012起顺延；不覆盖011原文查询索引，也不提前占用Task5后续迁移。
+**迁移交付：** 012保存档案版本、人工版本门槛、批次及身份映射；当前schema12。Task5从013起顺延，不覆盖001—012。
 
 **阅读边界：** 复用现有原文浏览能力，不在本任务重建日历或缓存。模型快照保持独立的语境／引用契约，不能直接套用原文页的当天会话过滤；同群多人归属及新旧批次须纳入回放与Task7实机验收。
 
@@ -119,7 +119,7 @@ async def test_auth_failure_does_not_retry(gateway, model_transport, model_reque
 
 **Interfaces:** `validate_result(conn, snapshot, result) -> ValidationResult`（含可保留候选及逐字段问题）；`publish` 见 CONTRACTS；`WorkflowV1.run` 首版消费完整可装入窗口的上下文，超窗返回 context_requires_chunking，不裁掉历史。
 
-- [ ] **Step 1 — 写失败测试：** 已有批次 shipment-old，模型建议为其补履约，同时提出独立新批询价；断言旧 ID／人工单号保留、新批唯一、客户为询价中。再跑同一候选不得重复建批；货量修改不能仅凭值变化拆批。
+- [x] **Step 1 — 写失败测试：** 已有批次 shipment-old，模型建议为其补履约，同时提出独立新批询价；断言旧 ID／人工单号保留、新批唯一、客户为询价中。再跑同一候选不得重复建批；货量修改不能仅凭值变化拆批。
 
 ```python
 def test_wrong_customer_cannot_publish(db, snapshot, analysis_result, cancellation):
@@ -130,12 +130,14 @@ def test_wrong_customer_cannot_publish(db, snapshot, analysis_result, cancellati
     assert outcome.reason == "target_mismatch"
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_profile_publish.py -q`，预期 publisher 未实现。
-- [ ] **Step 3 — 实现：** 引用校验限定账号／快照及修订；数字、单位和时点做局部核对。模型提出批次匹配，代码分配／复用稳定 ID，冲突保留疑点；禁止任意匹配其他客户。字段引用错误保留其他有依据字段及旧的有效值，记录不完整；目标错误、空泛输出及结构失败不覆盖旧档案。
-- [ ] **Step 4 — 绿灯：** 增加角色改为 provider、人工版本变更、历史修订、停止或 generation 失效时拒绝发布；仅追加消息允许发布该快照并保持待更新。明确“已发车／已发出但晚登记”样例不得因无关字段缺失消失；语义识别由 Task 7 真实回放核验，不硬编码样本原句。运行 pytest 全过。
-- [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: publish validated profiles and stable shipment batches`。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_profile_publish.py -q`，预期 publisher 未实现。
+- [x] **Step 3 — 实现：** 引用校验限定账号／快照及修订；数字、单位和时点做局部核对。模型提出批次匹配，代码分配／复用稳定 ID，冲突保留疑点；禁止任意匹配其他客户。字段引用错误保留其他有依据字段及旧的有效值，记录不完整；目标错误、空泛输出及结构失败不覆盖旧档案。
+- [x] **Step 4 — 绿灯：** 增加角色改为 provider、人工版本变更、历史修订、停止或 generation 失效时拒绝发布；仅追加消息允许发布该快照并保持待更新。明确“已发车／已发出但晚登记”样例不得因无关字段缺失消失；语义识别由 Task 7 真实回放核验，不硬编码样本原句。运行 pytest 全过。
+- [x] **Step 5 — 提交检查点：** 获准时消息 `feat: publish validated profiles and stable shipment batches`。
 
 ### Task 5: 人工纠正、补充及单号 API
+
+**当前下一执行项：** Task4内部发布已完成，schema12。消费profile_heads.manual_version及既有档案／批次存储，新增人工覆盖／记录和HTTP接口；不重建Task4发布表。
 
 **Files:** Create `profiles/manual.py`, `api/profiles.py`, `api/shipments.py`, `tests/test_manual_profiles.py`；Modify app router。
 
