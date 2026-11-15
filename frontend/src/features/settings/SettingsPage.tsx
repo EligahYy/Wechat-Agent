@@ -1,7 +1,7 @@
 import { ModelConfigDialog } from "./ModelConfigDialog";
 import { ImportDialog } from "./ImportDialog";
 import { useState } from "react";
-import { Clock3, ExternalLink, Monitor, ShieldCheck } from "lucide-react";
+import { Clock3, ExternalLink, Monitor, ShieldCheck, Users } from "lucide-react";
 import { TimePicker } from "../../components/TimePicker";
 import { SegmentedControl } from "../../components/SegmentedControl";
 import { Dialog } from "../../components/Dialog";
@@ -27,7 +27,21 @@ export function SettingsPage({
   const disabled = saving || !settings.account_id;
   return (
     <div className="settings-stack">
-      <section className="settings-card"><h3>联系人管理</h3><div className="settings-row"><p>查看全部归档，单个或批量调整业务范围</p><button className="button secondary" onClick={onManageContacts}>管理全部联系人</button></div></section>
+      <section className="settings-card">
+        <header>
+          <Users size={21} aria-hidden="true" />
+          <h3>联系人管理</h3>
+        </header>
+        <div className="settings-row">
+          <div>
+            <strong>全部联系人</strong>
+            <p>查看全部归档，单个或批量调整业务范围</p>
+          </div>
+          <button type="button" className="button secondary" onClick={onManageContacts}>
+            管理全部联系人
+          </button>
+        </div>
+      </section>
       {modelOpen&&settings.account_id&&<ModelConfigDialog accountId={settings.account_id} onClose={()=>setModelOpen(false)} onChanged={()=>onModelChanged?.()}/>}
       <section className="settings-card">
         <header>
