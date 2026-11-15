@@ -19,8 +19,8 @@ class WorkflowV1:
             if (head['version'] if head else 0)!=snapshot.profile_version:raise ModelCallError('profile_changed')
             if snapshot.versions!={'template':'profile-v1','strategy':'workflow-v1','output_schema':'1','model_config':self.gateway.config.version}:
                 raise ModelCallError('workflow_versions_mismatch')
-            batches=[{'shipment_id':row['shipment_id'],'stage':row['stage'],'facts':json.loads(row['payload_json'])} for row in self.conn.execute('SELECT * FROM shipments WHERE account_id=? AND contact_id=? ORDER BY shipment_id',(snapshot.key.account_id,snapshot.key.contact_id))]
-            payload={'account_id':snapshot.key.account_id,'contact_id':snapshot.key.contact_id,'messages':reader.messages(),'actors':reader.actors(),'conversations':reader.conversations(),'gaps':list(snapshot.gaps),'existing_shipments':batches}
+            batches=[{'shipment_id':row['shipment_id'],'stage':row['stage'],'facts':json.loads(row['payload_json']),'numbers':json.loads(row['numbers_json']),'numbers_origin':row['numbers_origin']} for row in self.conn.execute('SELECT * FROM shipments WHERE account_id=? AND contact_id=? ORDER BY shipment_id',(snapshot.key.account_id,snapshot.key.contact_id))]
+            payload={'account_id':snapshot.key.account_id,'contact_id':snapshot.key.contact_id,'messages':reader.messages(),'actors':reader.actors(),'conversations':reader.conversations(),'gaps':list(snapshot.gaps),'existing_shipments':batches,'manual_constraints':reader.manual()}
         prompt=files('wechat_agent.model').joinpath('prompts/profile-v1.md').read_text()
         request=ModelRequest(call_id='profile:'+snapshot.id,unit_id='profile:'+snapshot.id,snapshot_id=snapshot.id,purpose='profile',phase='extract',model_config_version=snapshot.versions['model_config'],
             messages=[ModelMessage(role='system',content=prompt),ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))],

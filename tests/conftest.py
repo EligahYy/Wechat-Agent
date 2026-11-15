@@ -54,3 +54,15 @@ def cancellation(db,snapshot):
     from wechat_agent.operations.contracts import OperationScope,CancellationToken
     operation=create_operation(db,'sync_and_organize',OperationScope(account_id=snapshot.key.account_id,contact_id=snapshot.key.contact_id),'publish-test')
     return CancellationToken(operation_id=operation.id,generation=operation.generation)
+
+
+@pytest.fixture
+def seeded_shipment(client):
+    from wechat_agent.storage.db import open_existing_db
+    from tests.factories import seed_case
+    from tests.fakes.source import FakeSource
+    with closing(open_existing_db(client.app.state.database_path)) as conn,conn:
+        seed_case(conn)
+        conn.execute("INSERT INTO shipments(account_id,contact_id,shipment_id,stage,payload_json) VALUES('acct-1','merchant-a','shipment-test','询价','{}')")
+    client.app.state.services.source=FakeSource()
+    return 'shipment-test'

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**最新基线（2026-11-15）：** 任务1—4云端完成，从本计划任务5继续；本阶段未整体完成。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
+**最新基线（2026-11-15）：** 任务1—5云端完成，从本计划任务6继续；本阶段未整体完成。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
 
 **Goal:** 一位真实商家从已归档聊天生成可查来源、可纠正、保留独立备货批次的客户档案。
 
@@ -137,28 +137,30 @@ def test_wrong_customer_cannot_publish(db, snapshot, analysis_result, cancellati
 
 ### Task 5: 人工纠正、补充及单号 API
 
-**当前下一执行项：** Task4内部发布已完成，schema12。消费profile_heads.manual_version及既有档案／批次存储，新增人工覆盖／记录和HTTP接口；不重建Task4发布表。
+**云端完成（2026-11-15）：** schema013和人工API已交付，Python476／前端31单元及49浏览器通过，见[报告](../../verification/m2-task5-report.md)。Task4内部发布复用，当前schema13。消费profile_heads.manual_version及既有档案／批次存储，新增人工覆盖／记录和HTTP接口；不重建Task4发布表。
 
 **Files:** Create `profiles/manual.py`, `api/profiles.py`, `api/shipments.py`, `tests/test_manual_profiles.py`；Modify app router。
 
 **Interfaces:** GET `/api/contacts/{id}/profile`、PATCH `/api/contacts/{id}/manual`、PATCH `/api/shipments/{id}/numbers`；save_manual 返回新人工版本，响应组合模型值／人工覆盖／来源及完整性。
 
-- [ ] **Step 1 — 写失败测试：**
+- [x] **Step 1 — 写失败测试：**
 
 ```python
 def test_manual_numbers_do_not_ship(client, seeded_shipment):
     response = client.patch(f"/api/shipments/{seeded_shipment}/numbers",
-                            json={"numbers": ["A-1", "A-1"], "expected_version": 1})
+                            json={"account_id":"acct-1", "contact_id":"merchant-a", "numbers": ["A-1", "A-1"], "expected_version": 1})
     assert response.json()["numbers"] == ["A-1"]
     assert response.json()["stage"] == "询价"
 ```
 
-- [ ] **Step 2 — 红灯：** `python -m pytest tests/test_manual_profiles.py -q`，预期接口不存在。此任务在 conftest 创建 `seeded_shipment` 夹具：同账号商家的一条 stage=询价、version=1 记录。
-- [ ] **Step 3 — 实现：** 支持固定字段纠正、货品／物流补充备注编辑／清空、多个单号。人工内容标记 manual，不生成聊天来源；原模型结果和变更记录保留。expected_version 不一致返回 409，不能覆盖他人更新。
-- [ ] **Step 4 — 绿灯：** 增加重启持久化、重跑不丢人工内容、删除备注后正常显示模型值、跨客户单号 404、超长或空单号 422 的测试；pytest 全过。
-- [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: persist manual corrections and shipment numbers`。
+- [x] **Step 2 — 红灯：** `python -m pytest tests/test_manual_profiles.py -q`，预期接口不存在。此任务在 conftest 创建 `seeded_shipment` 夹具：同账号商家的一条 stage=询价、version=1 记录。
+- [x] **Step 3 — 实现：** 支持固定字段纠正、货品／物流补充备注编辑／清空、多个单号。人工内容标记 manual，不生成聊天来源；原模型结果和变更记录保留。expected_version 不一致返回 409，不能覆盖他人更新。
+- [x] **Step 4 — 绿灯：** 增加重启持久化、重跑不丢人工内容、删除备注后正常显示模型值、跨客户单号 404、超长或空单号 422 的测试；pytest 全过。
+- [x] **Step 5 — 提交检查点：** 获准时消息 `feat: persist manual corrections and shipment numbers`。
 
 ### Task 6: 无侧栏档案与编辑交互
+
+**当前下一执行项：** Task5 API已有，消费model/manual/effective/conflicts、manual_version与shipment.version。人工空值通过null清除覆盖；单号请求必须携带account_id和contact_id，保存后重新GET profile。后续schema从014顺延，不重建已交付存储。
 
 **Files:** Create `frontend/src/features/profile/{ProfileDialog,ProfileOverview,ProfileEditor,ShipmentList,NumberEditor,EvidencePanel}.tsx`, `frontend/e2e/profile.spec.ts`, `tests/fixtures/profile-ready.json`；Modify `tests/webserver.py`、`frontend/src/features/contacts/ContactsPage.tsx`、`frontend/src/api/types.ts`、共享组件及 `src/wechat_agent/contacts/service.py`。
 

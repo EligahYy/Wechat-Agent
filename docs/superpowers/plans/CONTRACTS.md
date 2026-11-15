@@ -159,3 +159,11 @@ M2 Task3A核心：ModelConfig增加显式response_mode=text／json_object／json
 validate_result返回ValidationResult(result/issues/reason)，publish返回PublishResult(version/complete/reason/pending/issues)。run只返回候选，publish事务复核范围／版本／输入／取消后落盘；同snapshot幂等，追加消息可发布并pending。未知附件不能当已解析证据；局部数值／单位／日期核对不承诺语义准确。
 
 Task5新增profile/manual/numbers HTTP消费者；Task7再注册生产策略和worker，当前organize capability仍False。下一迁移从013起顺延。
+
+## M2任务5交付（schema13）
+
+GET profile返回model_version/manual_version、model/manual/effective、field_origins/conflicts、shipments、complete/pending/issues。effective为展示DTO，不能当AnalysisResult反写。人工Fact origin=manual且sources=[]；模型原值另留。manual.notes仅goods/logistics两组。
+
+PATCH manual body为account_id、expected_version（manual_version）、fields（固定dotted paths到字符串／null；tags是枚举列表）、notes。null删除覆盖，备注空/null删除；省略不修改。last_business_at为带时区ISO。PATCH numbers body为account_id/contact_id/expected_version（批次version）/numbers；空数组清除，去重保序。写入核对商家身份，读取允许active非本人历史资料。冲突409、越界404、无效输入422。
+
+013新增profile_manual/profile_manual_events、shipments.version/numbers_origin；人工和事件／版本同事务，新增／变更单号不改变stage，所有人工编辑增加heads.manual_version。模型只更新stage/payload并在变化时增加批次version，不能改人工numbers列。snapshot冻结人工fields/notes，WorkflowV1消费manual_constraints；新消息／修订／新会话也会使GET pending=true。后续schema从014起顺延。

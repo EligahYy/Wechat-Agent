@@ -18,6 +18,8 @@ class ContextReader:
     def actors(self)->dict:return copy.deepcopy(self._payload['actors'])
     def conversations(self)->dict:return copy.deepcopy(self._payload['conversations'])
 
+    def manual(self)->dict:return copy.deepcopy(self._payload.get('manual',{'fields':{},'notes':{}}))
+
     def resolve(self,ref:SourceRef)->dict:
         ref=SourceRef.model_validate(ref)
         row=self._messages.get((ref.message_id,ref.revision))

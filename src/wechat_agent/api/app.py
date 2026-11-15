@@ -22,6 +22,8 @@ from .model import router as model_router
 from .messages import router as messages_router
 from .imports import router as imports_router
 from .attachments import router as attachments_router
+from .profiles import router as profiles_router
+from .shipments import router as shipments_router
 from .contacts import router as contacts_router
 from .operations import router as operations_router
 from .settings import router as settings_router
@@ -63,6 +65,8 @@ def create_app(settings: Settings, services: Services | None = None) -> FastAPI:
             return WXCLIAdapter(config)
         app.state.services.source_factory = source_factory
     app.include_router(contacts_router)
+    app.include_router(profiles_router)
+    app.include_router(shipments_router)
     app.include_router(messages_router)
     app.include_router(imports_router)
     app.include_router(attachments_router)

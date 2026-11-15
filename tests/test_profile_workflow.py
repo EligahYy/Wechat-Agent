@@ -57,3 +57,16 @@ async def test_oversized_workflow_refuses_without_truncating(db,workflow_env):
     async with client:
         with pytest.raises(ModelCallError) as error:await WorkflowV1(db,gateway).run(snapshot,None,token)
     assert error.value.code=='context_requires_chunking' and not calls
+
+
+@pytest.mark.asyncio
+async def test_workflow_uses_frozen_manual_constraints(db,workflow_env):
+    from wechat_agent.profiles.manual import save_manual
+    from wechat_agent.analysis.workflow import WorkflowV1
+    gateway,snapshot,token,calls,client=workflow_env
+    save_manual(db,snapshot.key,{'fields':{'goods.volume':'15方'},'notes':{'goods':'人工补充'}},0)
+    current=build_snapshot(db,snapshot.key,snapshot.cutoff,versions=snapshot.versions)
+    async with client:await WorkflowV1(db,gateway).run(current,None,token)
+    payload=json.loads(calls[0]['messages'][-1]['content'])
+    assert payload['manual_constraints']['fields']['goods.volume']=='15方'
+    assert payload['manual_constraints']['notes']['goods']=='人工补充'

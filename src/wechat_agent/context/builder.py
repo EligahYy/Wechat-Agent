@@ -4,6 +4,7 @@ import json
 from uuid import uuid4
 from .contracts import ContextSnapshot,SnapshotError
 from ..profiles.contracts import SourceRef
+from ..profiles.manual import read_manual
 from ..source.contracts import ContactKey
 from ..source.repository import transaction
 
@@ -74,7 +75,7 @@ def build_snapshot(conn,key:ContactKey,cutoff:datetime,*,versions:dict[str,str]|
         snapshot=ContextSnapshot(id=str(uuid4()),key=key,cutoff=cutoff,
             material_refs=tuple(SourceRef(message_id=row['message_id'],revision=row['revision']) for row in messages),
             role_version=person['role_version'],manual_version=head[1] if head else 0,profile_version=head[0] if head else 0,scope_version=override[0] if override else 0,versions=selected_versions,gaps=tuple(sorted(gaps)))
-        payload={'messages':messages,'actors':actors,'conversations':rooms}
+        payload={'messages':messages,'actors':actors,'conversations':rooms,'manual':read_manual(conn,key)}
         conn.execute('INSERT INTO snapshots(account_id,snapshot_id,contact_id,manifest_json,payload_json) VALUES(?,?,?,?,?)',
             (account,snapshot.id,contact,snapshot.model_dump_json(),json.dumps(payload,ensure_ascii=False,allow_nan=False)))
     return snapshot

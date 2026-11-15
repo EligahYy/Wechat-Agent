@@ -32,7 +32,7 @@ def save_shipments(conn,key,candidates,restore=None):
         candidate=candidate.model_copy(update={'existing_id':identifier})
         # Model reruns never overwrite the separately editable human numbers.
         conn.execute('''INSERT INTO shipments(account_id,contact_id,shipment_id,stage,payload_json,numbers_json)
-            VALUES(?,?,?,?,?,?) ON CONFLICT(account_id,shipment_id) DO UPDATE SET stage=excluded.stage,payload_json=excluded.payload_json''',
+            VALUES(?,?,?,?,?,?) ON CONFLICT(account_id,shipment_id) DO UPDATE SET version=shipments.version+CASE WHEN shipments.stage!=excluded.stage OR shipments.payload_json!=excluded.payload_json THEN 1 ELSE 0 END,stage=excluded.stage,payload_json=excluded.payload_json''',
             (key.account_id,key.contact_id,identifier,candidate.stage,candidate.model_dump_json(),json.dumps(candidate.numbers,ensure_ascii=False)))
         conn.execute('INSERT INTO shipment_keys VALUES(?,?,?,?) ON CONFLICT DO NOTHING',(key.account_id,key.contact_id,candidate.candidate_key,identifier))
         conn.execute('INSERT INTO shipment_anchors VALUES(?,?,?,?) ON CONFLICT DO NOTHING',(key.account_id,key.contact_id,anchor,identifier))

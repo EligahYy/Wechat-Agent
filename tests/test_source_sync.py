@@ -257,7 +257,7 @@ def test_version_one_database_upgrades_without_losing_originals(tmp_path):
             conn.execute("INSERT INTO schema_version VALUES (1,1)")
             conn.execute("INSERT INTO accounts(account_id) VALUES ('original-account')")
         migrate(conn)
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 12
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 13
         assert conn.execute("SELECT account_id FROM accounts").fetchone()[0] == "original-account"
         assert conn.execute("SELECT COUNT(*) FROM source_issues").fetchone()[0] == 0
 
