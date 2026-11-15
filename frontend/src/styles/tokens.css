@@ -719,6 +719,7 @@ small {
   text-align: center;
   display: grid;
   justify-items: center;
+  align-content: center;
   gap: 12px;
   color: var(--muted);
 }
