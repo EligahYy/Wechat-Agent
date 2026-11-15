@@ -12,6 +12,7 @@ from .archive_access import authorize_archive
 from ..contacts.names import load_catalog, present_source_title, resolve_name
 from ..operations.service import OperationError
 from ..storage.db import open_existing_db
+from ..messages.presentation import display_body
 
 router=APIRouter()
 ORDER='COALESCE(julianday(m.sent_at),0)'
@@ -98,7 +99,7 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
         source=source_map[row['conversation_id']]
         items.append({'message_id':row['message_id'],'conversation_id':row['conversation_id'],'source_title':source['title'],
             'source_kind':source['kind'],'sender':sender,'sent_at':row['sent_at'],'kind':row['kind'],
-            'body':row['body'],'revision':row['revision'],'reply_to':row['reply_to'],'attachments':attachments,
+            'body':display_body(row['kind'],row['body']),'revision':row['revision'],'reply_to':row['reply_to'],'attachments':attachments,
             'origin':'import' if row['message_id'].startswith('import:') else 'archive'})
     next_cursor=None
     if more:
