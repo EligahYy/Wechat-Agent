@@ -689,8 +689,6 @@ small {
 .detail-heading .avatar {
   width: 48px;
   height: 48px;
-  color: var(--accent);
-  background: var(--blue-soft);
   font-size: 20px;
 }
 .detail-heading .detail-name {
@@ -901,3 +899,5 @@ html[data-theme="dark"] .timeline-meta .self-speaker{color:#c7a4f2}
 .model-connection-status[data-state=running]{color:var(--accent)}
 .model-connection-status[data-state=running] .connection-status-indicator{background:var(--accent)}
 .settings-row .model-connection-status{margin-top:5px}
+.profile-overview,.profile-shipments,.profile-editor{display:grid;gap:20px}.profile-card{border:1px solid var(--line);border-radius:16px;padding:22px;background:var(--surface)}.profile-card header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}.profile-card h3{font-size:18px}.profile-field{display:grid;grid-template-columns:130px minmax(0,1fr);gap:16px;padding:12px 0;border-top:1px solid var(--line)}.profile-field dt{color:var(--muted)}.profile-field dd{margin:0;display:flex;align-items:center;gap:10px;flex-wrap:wrap}.profile-field details{width:100%}.profile-actions,.profile-numbers{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px}.profile-note{padding:16px;background:var(--surface-soft);border-radius:12px;margin-top:16px}.profile-card p,.profile-note p,.evidence-message p{white-space:pre-wrap;overflow-wrap:anywhere}.profile-empty{display:flex;align-items:center;justify-content:center;gap:10px;flex-direction:column;padding:24px;color:var(--muted)}.profile-editor .form-field{width:100%}.evidence-message{margin-top:18px;padding:16px;border-left:2px solid var(--line)}.evidence-message.is-evidence{background:var(--blue-soft);border-left-color:var(--accent);border-radius:10px}.evidence-message header{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.evidence-message time,.evidence-message header>span{font-size:12px;color:var(--muted)}.evidence-message p{margin:12px 0}
+@media(max-width:650px){.profile-field{grid-template-columns:1fr;gap:5px}.profile-card{padding:16px}}

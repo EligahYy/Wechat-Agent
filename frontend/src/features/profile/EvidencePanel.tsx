@@ -1,0 +1,11 @@
+import {useEffect,useState} from 'react';
+import {Dialog} from '../../components/Dialog';
+import {request,messageFor} from '../../api/client';
+import type {ContactKey} from '../../api/types';
+import {endpoint,type SourceRef} from './types';
+type Evidence={items:{message_id:string;body:string;sender_name:string;source_title:string;sent_at:string;revision:number;is_evidence:boolean;is_historical:boolean}[]};
+export function EvidencePanel({contact,refs,onClose}:{contact:ContactKey;refs:SourceRef[];onClose:()=>void}){
+ const [selected,setSelected]=useState(0),[data,setData]=useState<Evidence|null>(null),[error,setError]=useState(''),[reload,setReload]=useState(0);
+ useEffect(()=>{const controller=new AbortController();setData(null);setError('');request<Evidence>(`${endpoint(contact,'profile/evidence')}?${new URLSearchParams({account_id:contact.account_id,message_id:refs[selected].message_id,revision:String(refs[selected].revision)})}`,{signal:controller.signal}).then(result=>{if(!controller.signal.aborted)setData(result);}).catch(reason=>{if(!controller.signal.aborted)setError(messageFor(reason));});return()=>controller.abort();},[contact.account_id,contact.contact_id,selected,refs,reload]);
+ return <Dialog open wide title="资料来源" onClose={onClose}><p className="field-hint">展示生成该结论时保存的原文及必要上下文，人物和修订保持原样。</p>{refs.length>1&&<div className="profile-actions">{refs.map((ref,index)=><button key={`${ref.message_id}:${ref.revision}`} className="button secondary" aria-pressed={index===selected} onClick={()=>setSelected(index)}>来源 {index+1}</button>)}</div>}{error?<div className="error-banner" role="alert">{error}<button className="text-button" onClick={()=>setReload(value=>value+1)}>重试</button></div>:!data?<p role="status">正在读取来源…</p>:data.items.map(item=><article className={`evidence-message${item.is_evidence?' is-evidence':''}`} key={`${item.message_id}:${item.revision}`}><header><strong>{item.sender_name}</strong><time>{new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',dateStyle:'medium',timeStyle:'short'}).format(new Date(item.sent_at))}</time><span>{item.is_evidence?'引用原文':'上下文'}</span></header><p>{item.body}</p><span className="source-line">{item.source_title} · 修订 {item.revision}{item.is_historical?' · 历史版本':''}</span></article>)}</Dialog>;
+}

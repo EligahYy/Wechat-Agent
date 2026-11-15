@@ -3,6 +3,7 @@ from contextlib import closing
 from pathlib import Path
 import tempfile
 import httpx
+from fastapi import Body
 
 from tests.factories import seed_case as base_seed,make_message,make_page
 from datetime import datetime,timezone
@@ -35,7 +36,7 @@ def app_factory():
         seed_case(conn)
 
     @app.post('/api/__test__/reset')
-    def reset():
+    def reset(body:dict=Body(default={})):
         with closing(open_db(app.state.database_path)) as conn:
             conn.execute('PRAGMA foreign_keys=OFF')
             tables=[row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'message_search%' AND name!='schema_version'")]
@@ -44,5 +45,8 @@ def app_factory():
                     conn.execute('DELETE FROM "'+table+'"')
             conn.execute('PRAGMA foreign_keys=ON')
             seed_case(conn)
+            if body.get('case')=='profile-ready':
+                from tests.profile_seed import seed_profile
+                seed_profile(conn)
         return {'status':'ok'}
     return app

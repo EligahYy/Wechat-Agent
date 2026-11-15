@@ -1,3 +1,4 @@
+import { ProfileDialog } from "../profile/ProfileDialog";
 import { AnimatePresence } from "motion/react";
 import { SelectField } from "../../components/SelectField";
 import { RoleMenu } from "../../components/RoleMenu";
@@ -92,7 +93,7 @@ export function ContactsPage({
     [detailOpen, setDetailOpen] = useState(false);
   const detailTabs=useRef<HTMLDivElement>(null);
   const [messageContact,setMessageContact]=useState<string|null>(null);
-  const [detailView,setDetailView]=useState<"overview"|"messages">("overview");
+  const [detailView,setDetailView]=useState<"overview"|"messages"|"shipments">("overview");
   const detailOperation=detail&&operation?.scope.account_id===detail.key.account_id&&operation.scope.contact_id===detail.key.contact_id?operation:null;
   const detailError=detail&&syncErrorScope?.account_id===detail.key.account_id&&syncErrorScope.contact_id===detail.key.contact_id?syncError:'';
   const [roleAnchor,setRoleAnchor]=useState<HTMLElement|null>(null);
@@ -607,13 +608,12 @@ export function ContactsPage({
                         </>
                       ) : (
                         <>
-                          <td className="muted">—</td>
+                          <td><span>{contact.profile_summary?.goods||"—"}</span>{contact.profile_summary?.logistics&&<span className="source-line">{contact.profile_summary.logistics}</span>}</td>
                           <td>
                             <span className="info-chip">
-                              {contact.profile_status === "pending"
-                                ? "待整理"
-                                : "暂无资料"}
+                              {{pending:"待整理",ready:"已更新",incomplete:"整理不完整",manual:"人工资料",no_data:"暂无资料"}[contact.profile_status||"no_data"]}
                             </span>
+                            {contact.profile_summary?.communication&&<span className="source-line">{contact.profile_summary.communication}</span>}
                             {contact.source_gaps.length > 0 && (
                               <span className="source-line">来源有缺口</span>
                             )}
@@ -739,7 +739,7 @@ export function ContactsPage({
         title={
           detail && (
             <span className="detail-heading">
-              <span className="avatar" aria-hidden="true">
+              <span className={`avatar role-${detail.role}`} aria-hidden="true">
                 {avatarText(detail.display_name)}
               </span>
               <span>
@@ -772,18 +772,8 @@ export function ContactsPage({
       >
         {detail && (
           <>
-            <div className="detail-tabs" ref={detailTabs}><SegmentedControl label="客户资料视图" value={detailView} onChange={value=>{setDetailView(value);if(value==="messages")setMessageContact(detail.key.contact_id);}} options={[{value:"overview",label:"资料概览"},{value:"messages",label:"沟通原文"}]}/></div>
-            {(detailView==="messages"||messageContact===detail.key.contact_id)&&<div hidden={detailView!=="messages"}><MessageBrowser key={`${detail.key.account_id}:${detail.key.contact_id}`} contact={detail.key} revision={revision} visible={detailView==="messages"}/></div>}<div className="detail-overview-pane page-enter" hidden={detailView!=="overview"}><div className="detail-unavailable">
-              <FileText size={28} />
-              <strong>
-                {detail.role === "merchant" ? "档案尚未生成" : "仅保留沟通资料"}
-              </strong>
-              <span>
-                {detail.role === "merchant"
-                  ? "模型整理将在后续阶段接入"
-                  : "此身份不参与商家档案整理"}
-              </span>
-            </div></div>
+            <div className="detail-tabs" ref={detailTabs}><SegmentedControl label="客户资料视图" value={detailView} onChange={value=>{setDetailView(value as "overview"|"messages"|"shipments");if(value==="messages")setMessageContact(detail.key.contact_id);}} options={[{value:"overview",label:"资料概览"},...(detail.role==="merchant"?[{value:"shipments",label:"备货记录"}]:[]),{value:"messages",label:"沟通原文"}]}/></div>
+            {(detailView==="messages"||messageContact===detail.key.contact_id)&&<div hidden={detailView!=="messages"}><MessageBrowser key={`${detail.key.account_id}:${detail.key.contact_id}`} contact={detail.key} revision={revision} visible={detailView==="messages"}/></div>}<div className="detail-overview-pane page-enter" hidden={detailView==="messages"}>{detail.role==="merchant"?<ProfileDialog key={`${detail.key.account_id}:${detail.key.contact_id}`} contact={detail.key} revision={revision} visible={detailOpen&&detailView!=="messages"} view={detailView} onChanged={()=>setRefresh(value=>value+1)}/>:<div className="detail-unavailable"><FileText size={28}/><strong>仅保留沟通资料</strong><span>此身份不参与商家档案整理</span></div>}</div>
           </>
         )}
       </Dialog>

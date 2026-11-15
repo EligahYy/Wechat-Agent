@@ -123,9 +123,14 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, s
                 JOIN latest m ON m.conversation_id=s.conversation_id AND m.conversation_position=1),
         recent AS (SELECT contact_id,sent_at,ROW_NUMBER() OVER (
             PARTITION BY contact_id ORDER BY julianday(sent_at) DESC,message_id DESC) AS position FROM related)
-        SELECT c.*,r.sent_at AS last_message_at FROM eligible c LEFT JOIN recent r
+        SELECT c.*,r.sent_at AS last_message_at,
+            COALESCE(json_extract(pm.value_json,'$.fields."communication.last_business_at"'),json_extract(pv.result_json,'$.communication.last_business_at')) AS business_at
+        FROM eligible c LEFT JOIN profile_heads ph ON ph.account_id=c.account_id AND ph.contact_id=c.contact_id
+        LEFT JOIN profile_versions pv ON pv.account_id=c.account_id AND pv.contact_id=c.contact_id AND pv.version=ph.version
+        LEFT JOIN profile_manual pm ON pm.account_id=c.account_id AND pm.contact_id=c.contact_id
+        LEFT JOIN recent r
             ON r.contact_id=c.contact_id AND r.position=1
-        ORDER BY julianday(r.sent_at) DESC,
+        ORDER BY julianday(COALESCE(business_at,r.sent_at)) DESC,
             COALESCE(NULLIF(trim(c.remark),''),NULLIF(trim(c.nickname),''),'') COLLATE NOCASE,c.contact_id
         LIMIT ? OFFSET ?""", [*params, account_id, page_size, (page - 1) * page_size]).fetchall()
     items = []
@@ -140,12 +145,25 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, s
         for source in sources:
             source['title'] = present_source_title(source['title'], source['conversation_id'])
             source['has_messages'] = bool(source['has_messages'])
+        profile=None
+        if row['role']=='merchant':
+            from ..profiles.manual import read_profile
+            profile=read_profile(conn,ContactKey(account_id=account_id,contact_id=row['contact_id']))
+        published=conn.execute('SELECT v.created_at FROM profile_heads h JOIN profile_versions v ON v.account_id=h.account_id AND v.contact_id=h.contact_id AND v.version=h.version WHERE h.account_id=? AND h.contact_id=?',(account_id,row['contact_id'])).fetchone() if profile and profile['model'] else None
+        summary={'goods':None,'logistics':None,'communication':None,'tags':[]}
+        if profile:
+            effective=profile['effective']
+            summary={group:' · '.join(fact['value'] for fact in effective[group].values() if fact.get('value')) or None for group in ('goods','logistics')}
+            summary.update(communication=effective['communication']['summary']['value'],tags=effective['communication']['tags'])
+        profile_status=None
+        if profile:
+            profile_status='pending' if profile['pending'] else 'ready' if profile['complete'] else 'incomplete' if profile['model'] else 'manual' if profile['manual']['fields'] or profile['manual']['notes'] else 'pending' if row['last_message_at'] else 'no_data'
         items.append({"key": {"account_id": account_id, "contact_id": row["contact_id"]},
                       **presentation, "business_scope": scope_decisions[row["contact_id"]].model_dump(),
                       "role": row["role"], "role_version": row["role_version"], "sources": sources,
-                      "last_message_at": row["last_message_at"], "last_business_at": None,
-                      "profile_status": ("pending" if row["last_message_at"] else "no_data") if row["role"] == "merchant" else None,
-                      "profile_updated_at": None, "source_gaps": _source_gaps(conn, account_id, row["contact_id"])})
+                      "last_message_at": row["last_message_at"], "last_business_at": row["business_at"], "profile_summary":summary,
+                      "profile_status": profile_status,
+                      "profile_updated_at": published['created_at'] if published else None, "source_gaps": _source_gaps(conn, account_id, row["contact_id"])})
     quality = identity_quality(conn, account_id, catalog, presentations)
     return {"items": items, "total": total, "page": page, "page_size": page_size,
             "scope_totals": scope_totals, "role_counts": {"all": sum(counts.values()), **counts}, "identity_quality": quality,

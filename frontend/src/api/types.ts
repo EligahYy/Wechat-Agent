@@ -24,7 +24,8 @@ export type Contact = {
   }[];
   last_message_at: string | null;
   last_business_at: string | null;
-  profile_status: "pending" | "no_data" | null;
+  profile_status: "pending" | "no_data" | "manual" | "ready" | "incomplete" | null;
+  profile_summary?:{goods:string|null;logistics:string|null;communication:string|null;tags:string[]};
   profile_updated_at: string | null;
   source_gaps: string[];
 };

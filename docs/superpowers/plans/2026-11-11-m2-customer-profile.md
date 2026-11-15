@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**最新基线（2026-11-15）：** 任务1—5云端完成，从本计划任务6继续；本阶段未整体完成。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
+**最新基线（2026-11-15）：** 任务1—6云端完成，从本计划任务7继续；本阶段未整体完成。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
 
 **Goal:** 一位真实商家从已归档聊天生成可查来源、可纠正、保留独立备货批次的客户档案。
 
@@ -166,7 +166,7 @@ def test_manual_numbers_do_not_ship(client, seeded_shipment):
 
 **Interfaces:** 消费 profile／manual／numbers／messages API；状态和来源字段使用后端类型，不在前端拼 fake 档案。
 
-- [ ] **Step 1 — 写失败 E2E：** 打开商家后只显示一组头像／姓名／可编辑身份／复制名称／弱化 wxid；详情无侧栏。货品和物流为整合卡，来源按字段展开。修改资料后保存、刷新仍在，未修改时保存禁用，409 保留填写。
+- [x] **Step 1 — 写失败 E2E：** 打开商家后只显示一组头像／姓名／可编辑身份／复制名称／弱化 wxid；详情无侧栏。货品和物流为整合卡，来源按字段展开。修改资料后保存、刷新仍在，未修改时保存禁用，409 保留填写。
 
 ```ts
 test("profile has one header and no rail", async ({ page }) => {
@@ -183,10 +183,10 @@ test("profile has one header and no rail", async ({ page }) => {
 });
 ```
 
-- [ ] **Step 2 — 红灯：** `cd frontend && npm run test:e2e -- profile.spec.ts`，预期页面未实现。使用测试服务器注入的脱敏数据，不在产品代码塞演示记录。
-- [ ] **Step 3 — 实现：** 默认资料概览，补充备货记录，并保留最新日历式沟通原文入口；结论通过查看来源展示关联消息及必要前后文，注明会话、说话人、时间；复用现有日历按日／来源／关键词检索和按需加载，不再另建旧式原文阅读器。当前摘要／标签、整卡编辑、分组标题 16px、正文 14px、常规标签 28px；所有填写框使用 FormField。查看来源、复制、身份修改、单号和取消／保存都有真实结果及焦点返回。非商家只显示适用的身份／原文／同步入口。联系人 API 接入真实档案列表摘要和最近业务时间排序，不能仍按模型完成时间或旧的示例字段排列。
-- [ ] **Step 4 — 绿灯：** 补测快速展开收起、所有编辑器输入皮肤一致、单号不改变已走货状态、人工来源不冒充原文；跑上述 E2E、unit 和 build 通过。
-- [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: connect evidence-backed customer profile interface`。
+- [x] **Step 2 — 红灯：** `cd frontend && npm run test:e2e -- profile.spec.ts`，预期页面未实现。使用测试服务器注入的脱敏数据，不在产品代码塞演示记录。
+- [x] **Step 3 — 实现：** 默认资料概览，补充备货记录，并保留最新日历式沟通原文入口；结论通过查看来源展示关联消息及必要前后文，注明会话、说话人、时间；复用现有日历按日／来源／关键词检索和按需加载，不再另建旧式原文阅读器。当前摘要／标签、整卡编辑、分组标题 16px、正文 14px、常规标签 28px；所有填写框使用 FormField。查看来源、复制、身份修改、单号和取消／保存都有真实结果及焦点返回。非商家只显示适用的身份／原文／同步入口。联系人 API 接入真实档案列表摘要和最近业务时间排序，不能仍按模型完成时间或旧的示例字段排列。
+- [x] **Step 4 — 绿灯：** 补测快速展开收起、所有编辑器输入皮肤一致、单号不改变已走货状态、人工来源不冒充原文；跑上述 E2E、unit 和 build 通过。
+- [x] **Step 5 — 提交检查点：** 获准时消息 `feat: connect evidence-backed customer profile interface`。
 
 ### Task 7: 单客户真实端到端闭环
 
