@@ -19,13 +19,13 @@ git status --short
   set -e
   git switch main
   git pull --ff-only origin main
-  git merge-base --is-ancestor 30bb407 HEAD
+  git merge-base --is-ancestor 0b42eac HEAD
   test -f src/wechat_agent/api/messages.py
   git log -1 --oneline
 )
 ```
 
-通过标准：pull成功，包含日历双栏交付提交30bb407，原文接口文件存在。以本次交付的最新main为准，该祖先检查只排除仍在运行旧阶段代码的情况。**pull失败就先处理连接，后续旧版测试成功不算完成更新。**
+通过标准：pull成功，包含原文查询优化交付提交0b42eac，原文接口文件存在。以本次交付的最新main为准，该祖先检查只排除仍在运行旧阶段代码的情况。**pull失败就先处理连接，后续旧版测试成功不算完成更新。**
 
 SSH连接失败时，可临时指定22端口再重跑上框：
 
@@ -57,7 +57,7 @@ export GIT_SSH_COMMAND='ssh -o HostName=ssh.github.com -p 443 -o ConnectTimeout=
 )
 ```
 
-通过标准：Python3.12.x、Node24.14.1或更高24.x，后端测试和前端构建均成功。最新日历交付基线为405项后端测试；后续修复以[状态页](STATUS.md)记录为准。已有.venv无需重建；Mac不需要运行浏览器开发测试。
+通过标准：Python3.12.x、Node24.14.1或更高24.x，后端测试和前端构建均成功。最近完整云端验收及其对应提交统一见[状态页](STATUS.md)；本地结果按本次实际输出判断。已有.venv无需重建；Mac不需要运行浏览器开发测试。
 
 <a id="start-app"></a>
 ## 3. 启动正式应用

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans。按用户授权在main串行实施，最后一次独立只读审查。
 
+**状态：** 已于`0b42eac`云端交付；本计划已结束，后续主线见[M2任务4](2026-11-11-m2-customer-profile.md#task-4-事实校验稳定批次与事务发布)。本计划任务编号不代表M2主计划的进度。
+
 **Goal:** 统一联系人原文筛选和查询，修复首屏、切日和每次定位刷新。
 
 **Architecture:** 本人发言索引产生日期／群会话范围，有效私聊单独兼容；单页及导航共享范围，前端就地定位和有界缓存。
@@ -22,7 +24,7 @@
 
 Files: `messages/queries.py`, `messages/calendar.py`, `api/messages.py`, `storage/db.py`, `storage/migrations/011_message_query_indexes.sql`, `tests/test_message_query_performance.py`, 现有日历／来源／storage测试。
 
-Interfaces: `timeline_sources(conn,account,contact,conversation_id=None)`返回来源；`message_scope(...,sources,day)`返回一次解析的where/params；read_calendar返回本人days及轻量首末日期。
+Interfaces: `timeline_sources(conn,account,contact,conversation_id=None)`返回来源；`message_scope(conn,account,contact,*,sources,conversation_id=None,bounds=None)`返回一次解析的where/params；read_calendar返回本人days及轻量首末日期。
 
 - [x] 写两群跨日、纯上下文日期撤销、作者修订、私聊落点和SQLite工作量上限测试，运行看失败。
 - [x] 实施来源直查、日内会话范围、schema11表达式／附件／revision索引和批取附件。
@@ -30,7 +32,7 @@ Interfaces: `timeline_sources(conn,account,contact,conversation_id=None)`返回�
 
 ### Task 2: 窗口定位元数据与本地跳转
 
-Files: `api/messages.py`, `api/types.ts`, `MessageTimeline.tsx`, `frontend/e2e/message-navigation.spec.ts`。
+Files: `api/messages.py`, `api/types.ts`, `MessageTimeline.tsx`, `frontend/e2e/speech-navigation.spec.ts`。
 
 Interfaces: speech.positions每个位置有current_id/index/previous_id/next_id；分页合并positions；jump命中窗口直接设置speech。
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**最新基线（2026-11-15）：** 任务1—3云端完成，从任务4继续。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
+**最新基线（2026-11-15）：** 任务1—3云端完成，从本计划任务4继续；本阶段未整体完成。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
 
 **Goal:** 一位真实商家从已归档聊天生成可查来源、可纠正、保留独立备货批次的客户档案。
 
@@ -106,6 +106,12 @@ async def test_auth_failure_does_not_retry(gateway, model_transport, model_reque
 **最终云端验收（2026-11-15）：** Python374、前端29单元／30浏览器、构建与wheel生产HTTP通过；一次独立审查4项重要问题均修复。真实最小请求由Mac用户主动执行，尚未实测；不得据此声称真实模型能力已通过。详见[报告](../../verification/m2-task3-report.md)。
 
 ### Task 4: 事实校验、稳定批次与事务发布
+
+**当前下一执行项（未开始）：** 代码核对确认validator／publisher／shipments／workflow及其发布测试尚不存在。使用任务1—3已有契约、快照／ContextReader和网关，先用云端回放完成校验→稳定批次→事务发布→固定工作流；真实模型注册和worker接线属于Task7，Mac能力实测单独推进。
+
+**迁移起点：** 当前schema11，001—011已交付。Task4首次建立档案／批次存储时从012起顺延；不覆盖011原文查询索引，也不提前占用Task5后续迁移。
+
+**阅读边界：** 复用现有原文浏览能力，不在本任务重建日历或缓存。模型快照保持独立的语境／引用契约，不能直接套用原文页的当天会话过滤；同群多人归属及新旧批次须纳入回放与Task7实机验收。
 
 **消费者门槛补充：** 领取和事务发布前复核business_scope_allows_analysis；人工exclude不可被迟到模型结果、角色变化或新同步覆盖。discovery用途快照不可用于商家档案发布。
 
