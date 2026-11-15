@@ -1,5 +1,7 @@
 # M1 来源归档与联系人 Implementation Plan
 
+> 历史归档：保留当时方案、命令和验证结果，不代表当前实现。当前入口见[实施状态](../../STATUS.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 Mac 实现真实消息幂等归档、联系人归一、身份管理、原文浏览和两页桌面应用底座。
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Python 3.12、FastAPI、SQLite／FTS5、Pydantic、HTTPX、React／TypeScript／Vite、Node 24、Vitest、Playwright。
 
-**Spec:** [产品 §3–4](../../PRODUCT_DESIGN.md)、[交互方案](../../INTERACTION_DESIGN.md)、[内部契约](CONTRACTS.md)。前提：M0 内部契约和回放测试已建立；真实源映射／连接仍单列实机待验证，不能伪造。
+**Spec:** [产品 §3–4](../../PRODUCT_DESIGN.md)、[交互方案](../../INTERACTION_DESIGN.md)、[内部契约](../../superpowers/plans/CONTRACTS.md)。前提：M0 内部契约和回放测试已建立；真实源映射／连接仍单列实机待验证，不能伪造。
 
 ## Global Constraints
 
@@ -177,4 +179,4 @@ def test_attachment_api_does_not_accept_paths(client):
 - [x] 两页 UI 使用真实后端，搜索分页、共享控件及原文／导入可运行。
 - [x] `python -m pytest -q`、前端 unit／build／本阶段 E2E 通过；未连接或未实现不显示假成功。
 
-任务6云端交付：schema6；Python308、前端25单元／19浏览器、Node24.14.1构建及解包wheel生产HTTP通过。独立审查5项问题均补失败回归后修复。原文／导入／附件访问的Mac验证仍待回传，附件下载自来源及解析属M3。具体边界见[M1报告](../../verification/m1-report.md#task6)。
+任务6云端交付：schema6；Python308、前端25单元／19浏览器、Node24.14.1构建及解包wheel生产HTTP通过。独立审查5项问题均补失败回归后修复。原文／导入／附件访问的Mac验证仍待回传，附件下载自来源及解析属M3。具体边界见[M1报告](../verification/m1-report.md#task6)。

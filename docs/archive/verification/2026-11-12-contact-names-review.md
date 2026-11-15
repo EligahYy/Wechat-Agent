@@ -1,5 +1,7 @@
 # 联系人来源与名称链路代码审查
 
+> 历史归档：保留当时方案、命令和验证结果，不代表当前实现。当前入口见[实施状态](../../STATUS.md)。
+
 日期：2026-11-12（北京时间）。审查本项目main／137f246（上一基线78955d3）及第三方pandorafuture/wx-cli固定提交7bed9e767a55d86ac2b9142a49ca078f95623c8b。使用Superpowers requesting-code-review，由单个独立代理只读审查；主代理核对关键源码并用内存数据库复现。未读取用户Mac真实库、未调用模型、未修改wx-cli或本项目运行时代码。
 
 ## 结论与当前实机证据
@@ -14,7 +16,7 @@
 
 ### 范围说明：全部归档人物与当前微信好友不同
 
-上游[contacts.rs](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/contacts.rs#L47)查询整个contact表，没有当前好友状态筛选；Contact模型不暴露可验证的好友关系状态。本项目[source/adapter.py](../../src/wechat_agent/source/adapter.py#L110)读取联系人／会话，归档层还通过私聊成员与群发言人建立人物；此次metadata未出现的历史人物也不会被删除。
+上游[contacts.rs](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/contacts.rs#L47)查询整个contact表，没有当前好友状态筛选；Contact模型不暴露可验证的好友关系状态。本项目[source/adapter.py](../../../src/wechat_agent/source/adapter.py#L110)读取联系人／会话，归档层还通过私聊成员与群发言人建立人物；此次metadata未出现的历史人物也不会被删除。
 
 因此现有列表是“归档来源中出现的人物集合”，不是“当前微信可搜索好友集合”。历史人物和非好友可能在里面，但不能凭搜索不到就确定已删除好友。show_hidden=1只绕过wx-cli自身的visibility规则，不是一个经核实的“微信已删除好友开关”。
 
@@ -22,7 +24,7 @@
 
 ### Important 1：错误正文前缀仍可生成active联系人
 
-上游[decode.rs:234](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/decode.rs#L234)对群正文无条件按首个`:\n`切分发送人。XML会被本项目隔离，但`https:\nexample.com`可被拆成sender=https。该字符串通过[identities.py](../../src/wechat_agent/identities.py#L6)的结构性校验，随后[source/repository.py](../../src/wechat_agent/source/repository.py#L43)可以建立active人物。
+上游[decode.rs:234](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/decode.rs#L234)对群正文无条件按首个`:\n`切分发送人。XML会被本项目隔离，但`https:\nexample.com`可被拆成sender=https。该字符串通过[identities.py](../../../src/wechat_agent/identities.py#L6)的结构性校验，随后[source/repository.py](../../../src/wechat_agent/source/repository.py#L43)可以建立active人物。
 
 最小验证：依据上游拆分函数得到https，下游内存回放确认其可入库，且不产生身份异常缺口。这证明仍有错误路径，不证明截图中的某个具体wxid就是这样生成的。
 
@@ -30,7 +32,7 @@
 
 ### Important 2：已有名称证据被丢弃，群成员名称尚无HTTP入口
 
-上游[model.rs:419](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/model.rs#L419)的Session有last_msg_sender及last_sender_display_name，sessions查询直接读取这些字段；本项目[adapter.py](../../src/wechat_agent/source/adapter.py#L156)只将会话display_name写入title，未保存上述与具体人物关联的名称。_person为无好友卡人物只插入空名称。
+上游[model.rs:419](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/model.rs#L419)的Session有last_msg_sender及last_sender_display_name，sessions查询直接读取这些字段；本项目[adapter.py](../../../src/wechat_agent/source/adapter.py#L156)只将会话display_name写入title，未保存上述与具体人物关联的名称。_person为无好友卡人物只插入空名称。
 
 内存最小回放确认：contacts无某人物，但session有对应last_msg_sender和last_sender_display_name时，该人物仍显示“名称缺失”。这些字段只能补充部分已观察人物，不能代表完整群成员目录。
 
@@ -44,7 +46,7 @@
 
 上游[contacts.rs:129](https://github.com/pandorafuture/wx-cli/blob/7bed9e767a55d86ac2b9142a49ca078f95623c8b/crates/wx-db/src/contacts.rs#L129)用row.get(String).unwrap_or_default()读取remark／nick_name，字段类型或UTF-8错误会变空串；列表也用filter_map(r.ok())吞掉行错误，而stats.skipped仍为0。
 
-本项目将空串转None，再在[archive_metadata](../../src/wechat_agent/source/repository.py#L65)无条件覆盖原备注／昵称。内存复现确认：先保存有名人物，再传同一ID双None元数据，旧名称被清空。**清空路径确定；用户真实库是否存在BLOB／编码异常，当前尚未证实。**
+本项目将空串转None，再在[archive_metadata](../../../src/wechat_agent/source/repository.py#L65)无条件覆盖原备注／昵称。内存复现确认：先保存有名人物，再传同一ID双None元数据，旧名称被清空。**清空路径确定；用户真实库是否存在BLOB／编码异常，当前尚未证实。**
 
 修复方向：源端区分known／empty／unreadable，提供不含原始值的类型／解码失败计数；归档保存最后成功状态和时间。真实清空应能更新，读取失败则不能冒充空值覆盖。不能用COALESCE永久保留旧备注，也不能盲猜字节编码来“修复”名字。
 
@@ -98,4 +100,4 @@ R1—R4闭合后再继续M1任务6。不要让用户通过清库、批量删联�
 
 最终Python276、前端20项单元和14项浏览器通过，生产构建通过。Rust完整工作区800通过、11忽略、3个server_manager_cli失败；三个失败均已在干净同commit上游复现，为云端PID1未回收退出进程，未改测试规避。固定补丁release及干净安装／重复完整性校验通过；合成加密来源→解包wheel→生产API的真实HTTP确认刷新前后代次一致、外部写入使旧代次失效、再次刷新补名，消息与分析计数均为0。
 
-上述证据只覆盖云端代码和合成回放；Mac安装、实际好友覆盖、真实名称与来源生命周期待回传。未观察群成员单独保存为目录证据，不自动扩大联系人列表；无证据的旧消息作者不批量改写。[Mac验证步骤](../MAC_SETUP.md#update-repository)。
+上述证据只覆盖云端代码和合成回放；Mac安装、实际好友覆盖、真实名称与来源生命周期待回传。未观察群成员单独保存为目录证据，不自动扩大联系人列表；无证据的旧消息作者不批量改写。[Mac验证步骤](../../MAC_SETUP.md#update-repository)。

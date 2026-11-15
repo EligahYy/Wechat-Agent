@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**2026-11-13调整：** 用户确认“默认看资料 → 按结论查来源 → 次级按需查聊天”；不继续扩展全量原文阅读器。Task6负责替换M1临时页签，Task1—5先完成支撑接口。
+**最新基线（2026-11-15）：** 任务1—3云端完成，从任务4继续。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
 
 **Goal:** 一位真实商家从已归档聊天生成可查来源、可纠正、保留独立备货批次的客户档案。
 
@@ -79,7 +79,7 @@ def test_context_keeps_actual_speakers(db, snapshot):
 
 **实施分段（2026-11-13）：** 3A先交付调用契约、持久请求上限、审计、协议响应校验与凭据存储底座；3B接配置版本及显式连接检查API；3C接设置界面与实机步骤。只有三段及任务所列门槛均通过才标Task3 complete，不因核心用例通过提前完成整项。008迁移保存analysis_units/model_calls；真实配置/API/UI未接入前不注册运行时模型，不触发付费请求。
 
-**本轮合并改造（2026-11-13用户确认）：** 本任务同时执行[业务活跃联系人扩展计划](2026-11-13-m2-task3-business-contacts.md)，依据[范围设计](../specs/2026-11-13-business-contacts-design.md)。工作台业务活跃范围／设置全量管理、90天直接互动及群需求、人工单个／批量加入移出、人工移出永不自动恢复，与原3A/B/C和按钮附近身份菜单同一轮交付。扩展五项与云端门槛已通过，Task3云端完成；真实模型／Mac验证独立保留。群需求分类是独立用途，不得放宽Task4/7商家档案发布限制。
+**本轮合并改造（2026-11-13用户确认）：** 本任务同时执行[业务活跃联系人扩展计划](../../archive/plans/2026-11-13-m2-task3-business-contacts.md)，依据[范围设计](../specs/2026-11-13-business-contacts-design.md)。工作台业务活跃范围／设置全量管理、90天直接互动及群需求、人工单个／批量加入移出、人工移出永不自动恢复，与原3A/B/C和按钮附近身份菜单同一轮交付。扩展五项与云端门槛已通过，Task3云端完成；真实模型／Mac验证独立保留。群需求分类是独立用途，不得放宽Task4/7商家档案发布限制。
 
 **Files:** Create `model/gateway.py`, `model/deepseek.py`, `model/credentials.py`, `api/model.py`, `tests/fakes/model.py`, `tests/test_model_gateway.py`；Modify `model/contracts.py`, `services.py`, `api/settings.py`, `api/app.py`, `tests/conftest.py`, `pyproject.toml`, `requirements-dev.lock`, `frontend/src/features/settings/SettingsPage.tsx`。
 
@@ -174,7 +174,7 @@ test("profile has one header and no rail", async ({ page }) => {
 ```
 
 - [ ] **Step 2 — 红灯：** `cd frontend && npm run test:e2e -- profile.spec.ts`，预期页面未实现。使用测试服务器注入的脱敏数据，不在产品代码塞演示记录。
-- [ ] **Step 3 — 实现：** 默认资料概览／备货记录，不设一级沟通原文页签；结论通过查看来源展示关联消息及必要前后文，注明会话、说话人、时间；次级“查找聊天记录”按会话、关键词、时间检索且按需加载，不默认铺开全量原文。当前摘要／标签、整卡编辑、分组标题 16px、正文 14px、常规标签 28px；所有填写框使用 FormField。查看来源、复制、身份修改、单号和取消／保存都有真实结果及焦点返回。非商家只显示适用的身份／原文／同步入口。联系人 API 接入真实档案列表摘要和最近业务时间排序，不能仍按模型完成时间或旧的示例字段排列。
+- [ ] **Step 3 — 实现：** 默认资料概览，补充备货记录，并保留最新日历式沟通原文入口；结论通过查看来源展示关联消息及必要前后文，注明会话、说话人、时间；复用现有日历按日／来源／关键词检索和按需加载，不再另建旧式原文阅读器。当前摘要／标签、整卡编辑、分组标题 16px、正文 14px、常规标签 28px；所有填写框使用 FormField。查看来源、复制、身份修改、单号和取消／保存都有真实结果及焦点返回。非商家只显示适用的身份／原文／同步入口。联系人 API 接入真实档案列表摘要和最近业务时间排序，不能仍按模型完成时间或旧的示例字段排列。
 - [ ] **Step 4 — 绿灯：** 补测快速展开收起、所有编辑器输入皮肤一致、单号不改变已走货状态、人工来源不冒充原文；跑上述 E2E、unit 和 build 通过。
 - [ ] **Step 5 — 提交检查点：** 获准时消息 `feat: connect evidence-backed customer profile interface`。
 

@@ -2,11 +2,11 @@
 
 更新：2026-11-11（北京时间）。云端已实现一次性连接探测及合成回放测试；尚未提供真实 API 凭据或确认最新 Pro 模型 ID，不宣称已接入 Pro。
 
-## 当前实现
+## doctor诊断工具
 
 使用明确配置的 HTTPS、OpenAI 兼容 chat-completions 端点，发送一条无客户数据的最小 JSON 请求。不提供猜测的 Pro 默认 model ID，不自动退换模型。默认 doctor 离线；只有 `--check-model` 才可能发出一次付费请求，M0 不自动重试。
 
-配置位于 `.local/config/model.json`，不入 Git。字段：
+这里的 `.local/config/model.json` 仅用于doctor诊断，不入Git；正式设置页已使用版本化SQLite非敏感配置和本机Keychain，见[M2任务3](m2-task3-report.md)。两者不应混用或把最小请求当作容量证明。doctor配置字段：
 
 | 字段                | 含义                                                                 |
 | ------------------- | -------------------------------------------------------------------- |

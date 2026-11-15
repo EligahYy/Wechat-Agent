@@ -9,7 +9,7 @@ npm --prefix frontend ci --engine-strict
 npm --prefix frontend run build
 ```
 
-从根目录启动后端时，Settings.load选择`frontend/dist`，静态资源和API由同一端口提供。Python wheel本身尚不捆绑前端，独立打包在M5交付。Mac完整命令见[验证指南](../docs/MAC_SETUP.md#13-m1任务5正式桌面页面与设置)，执行位置及未闭合问题见[当前状态](../docs/STATUS.md)。
+从根目录启动后端时，Settings.load选择`frontend/dist`，静态资源和API由同一端口提供。Python wheel本身尚不捆绑前端，独立打包在M5交付。Mac完整命令见[验证指南](../docs/MAC_SETUP.md#start-app)，执行位置及未闭合问题见[当前状态](../docs/STATUS.md)。
 
 开发模式：
 
@@ -24,11 +24,13 @@ npm --prefix frontend run test:unit -- --run
 npm --prefix frontend run build
 cd frontend
 npx playwright install chromium
-npm run test:e2e -- contacts.spec.ts
+npm run test:e2e
 ```
 
 E2E由Playwright启动独立FastAPI与Vite，使用临时SQLite／合成来源，逐用例复位、workers=1。`/api/__test__/reset`只在tests.webserver注册。默认使用Playwright浏览器；云端若下载被拦，可通过`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`明确选用已经安装的浏览器，不在配置里硬编码系统路径。
 
 设计使用项目Apple参考和taste的控件／动效原则，桌面最小1120px。采用系统字体，正文14px，输入48px高／12px圆角，常规身份标签28px高。营销页hero、照片、手机适配和营销评分不适用于这个内部工作台。
 
-模型、档案编辑和自动调度尚未实现，界面明确标记能力边界；不使用原型数据冒充真实档案。来源状态来自后端持久化任务，不做隐式网络探测。
+模型配置、主动连接检查已实现；真实档案闭环、档案编辑和自动调度尚未实现，界面明确标记能力边界；不使用原型数据冒充真实档案。来源状态来自后端持久化任务，不做隐式网络探测。
+
+当前原文使用日历／当天消息双栏，详情内独立滚动；最近云端基线见STATUS。静态原型已移至docs/archive/ui-prototype，非运行依赖或默认设计依据。

@@ -1,5 +1,7 @@
 # M2任务3扩展：业务活跃联系人 Implementation Plan
 
+> 历史归档：保留当时方案、命令和验证结果，不代表当前实现。当前入口见[实施状态](../../STATUS.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans 串行执行；不派发实现代理。步骤使用复选框，云端检查后推main，Mac仅验证。
 
 **Goal:** 在本轮任务3完成业务范围、全量管理入口及有证据的群需求识别，人工移出绝不被自动恢复。
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Python3.12／FastAPI／SQLite、React／TypeScript、Node24.14.1及现有测试工具。
 
-**Spec:** [已确认范围与设计](../specs/2026-11-13-business-contacts-design.md)。属于[主计划Task3](2026-11-11-m2-customer-profile.md)，不是新增独立产品阶段。
+**Spec:** [已确认范围与设计](../../superpowers/specs/2026-11-13-business-contacts-design.md)。属于[主计划Task3](../../superpowers/plans/2026-11-11-m2-customer-profile.md)，不是新增独立产品阶段。
 
 ## Global Constraints
 

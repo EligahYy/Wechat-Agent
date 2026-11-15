@@ -1,4 +1,4 @@
-# Locally installed reference skills; install sources are documented in ui-prototype.
+# Local skills and generated artifacts; active instructions are in docs/DEVELOPMENT_WORKFLOW.md.
 .agents/skills/
 .agents/vendor/
 ui-prototype/.taste-skill/
@@ -17,3 +17,6 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/.taste-skill/
 *.tsbuildinfo
+
+docs/archive/ui-prototype/.taste-skill/
+docs/archive/ui-prototype/artifacts/

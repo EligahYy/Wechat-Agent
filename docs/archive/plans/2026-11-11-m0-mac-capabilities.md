@@ -1,5 +1,7 @@
 # M0 Mac 环境与真实能力 Implementation Plan
 
+> 历史归档：保留当时方案、命令和验证结果，不代表当前实现。当前入口见[实施状态](../../STATUS.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在云端开发可重复执行的环境、微信源和模型检查工具，由用户 Mac 运行验证并反馈真实证据。
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Python 3.12、Pydantic、HTTPX、pytest、pip-tools；真实 wx-cli 协议待本机核验。
 
-**Spec:** [实施方案 §11](../../IMPLEMENTATION_PLAN.md)、[模型执行方案](../../MODEL_EXECUTION.md)、[Mac 指南](../../MAC_SETUP.md)、[内部契约](CONTRACTS.md)。
+**Spec:** [实施方案 §11](../../IMPLEMENTATION_PLAN.md)、[模型执行方案](../../MODEL_EXECUTION.md)、[Mac 指南](../../MAC_SETUP.md)、[内部契约](../../superpowers/plans/CONTRACTS.md)。
 
 ## Global Constraints
 
@@ -67,7 +69,7 @@ def test_missing_connections_stay_pending(tmp_path, monkeypatch):
 
 **Files:** Create `src/wechat_agent/source/{__init__,contracts,probe}.py`, `tests/test_source_probe.py`, `tests/fixtures/source-probe.json`, `docs/verification/source-capabilities.md`；Modify `doctor.py`。
 
-**Interfaces:** Creates [M0 来源类型](CONTRACTS.md)；`normalize_probe(raw: dict, mapping: dict) -> CapabilityReport`；`run_source_probe(config_path: Path) -> CapabilityReport`（async）。mapping 只根据真实响应记录填写，不猜上游字段。
+**Interfaces:** Creates [M0 来源类型](../../superpowers/plans/CONTRACTS.md)；`normalize_probe(raw: dict, mapping: dict) -> CapabilityReport`；`run_source_probe(config_path: Path) -> CapabilityReport`（async）。mapping 只根据真实响应记录填写，不猜上游字段。
 
 - [x] **Step 1 — 先写失败测试：**
 

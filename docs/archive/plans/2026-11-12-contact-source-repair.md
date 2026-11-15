@@ -1,5 +1,7 @@
 # 联系人来源与名称修复 Implementation Plan
 
+> 历史归档：保留当时方案、命令和验证结果，不代表当前实现。当前入口见[实施状态](../../STATUS.md)。
+
 > **For agentic workers:** Use superpowers:executing-plans，按R1—R4串行执行，采用TDD；最后进行一次独立只读审查。
 
 **Goal:** 修复错误发送人、名称丢失和来源范围不透明，提供只刷新联系人元数据的入口与可复制验证工具。
@@ -8,7 +10,7 @@
 
 **Tech Stack:** Python3.12／FastAPI／SQLite、React／TypeScript、Rust及固定wx-cli Cargo.lock。
 
-**Spec:** [审查与验收](../../verification/2026-11-12-contact-names-review.md)、[产品方案](../../PRODUCT_DESIGN.md)、[内部契约](CONTRACTS.md)。
+**Spec:** [审查与验收](../verification/2026-11-12-contact-names-review.md)、[产品方案](../../PRODUCT_DESIGN.md)、[内部契约](../../superpowers/plans/CONTRACTS.md)。
 
 ## Global Constraints
 

@@ -1,5 +1,7 @@
 # Calendar Message Browser Implementation Plan
 
+> 历史归档：保留当时方案、命令和验证结果，不代表当前实现。当前入口见[实施状态](../../STATUS.md)。
+
 > **For agentic workers:** Use superpowers:executing-plans 串行TDD，一次最终独立只读审查。云端main提交推送已授权。
 
 **Goal:** 左日历右当日原文，完整上下文、本人定位和连续阅读。

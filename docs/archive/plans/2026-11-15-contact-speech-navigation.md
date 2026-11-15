@@ -1,5 +1,7 @@
 # Contact Speech Navigation Implementation Plan
 
+> 历史归档：保留当时方案、命令和验证结果，不代表当前实现。当前入口见[实施状态](../../STATUS.md)。
+
 > **For agentic workers:** Use superpowers:executing-plans 串行实施，TDD，一次最终独立只读审查。用户授权main云端提交推送。
 
 **Goal:** 保留其他人上下文，稳定ID高亮本人，跨分页前后定位。
@@ -16,4 +18,4 @@
 ### Task 3: 验收与交付
 - [x] 完整Python，相关浏览器，单元及Node24.14.1构建；一次独立只读审查，重要问题RED→GREEN修复；更新STATUS和报告，提交并非强制推main。
 
-完成：Python400、前端29单元／35浏览器、Node24.14.1构建通过。一次最终独立审查后的修复及延期项见[验收报告](../../verification/speech-navigation-report.md)。
+完成：Python400、前端29单元／35浏览器、Node24.14.1构建通过。一次最终独立审查后的修复及延期项见[验收报告](../verification/speech-navigation-report.md)。

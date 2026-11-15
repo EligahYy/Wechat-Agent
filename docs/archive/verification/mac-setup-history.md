@@ -1,6 +1,8 @@
 # 历史 Mac 阶段验证命令（归档）
 
-本页保存各阶段当时的命令和版本，不能作为当前安装流程。当前请只执行[Mac操作指南](../MAC_SETUP.md)。
+> 历史归档：保留当时方案、命令和验证结果，不代表当前实现。当前入口见[实施状态](../../STATUS.md)。
+
+本页保存各阶段当时的命令和版本，不能作为当前安装流程。当前请只执行[Mac操作指南](../../MAC_SETUP.md)。
 
 # Mac 拉取项目与本地验证
 
@@ -74,7 +76,7 @@ python3 -m http.server 8765 --directory ui-prototype --bind 127.0.0.1
 
 微信数据只在本机读取；模型凭据只在本地受控配置，不发到聊天或提交 Git。反馈时提供提交号（`git rev-parse --short HEAD`）、命令、版本、退出码及必要的脱敏错误，不上传原始聊天或密钥。云端据此修代码，再推 main 复验。
 
-[六阶段开发计划](../superpowers/plans/README.md)分别记录云端开发与本地验收，不把未实测内容标为成功。这里的命令尚未在你的 Mac 执行。
+[六阶段开发计划](../../superpowers/plans/README.md)分别记录云端开发与本地验收，不把未实测内容标为成功。这里的命令尚未在你的 Mac 执行。
 
 ## 6. 验证已有 wx-cli 服务
 
@@ -102,7 +104,7 @@ python3 -m http.server 8765 --directory ui-prototype --bind 127.0.0.1
 
 ## 7. 模型和媒体：按需验证
 
-模型配置见 [模型检查说明](model-capabilities.md)。真实model_id和凭据未准备时保持pending即可，不用为本轮来源验证配置模型。只有明确执行 `--check-model` 才发送一次最小请求，不自动重试，不发聊天正文。
+模型配置见 [模型检查说明](../../verification/model-capabilities.md)。真实model_id和凭据未准备时保持pending即可，不用为本轮来源验证配置模型。只有明确执行 `--check-model` 才发送一次最小请求，不自动重试，不发聊天正文。
 
 媒体检查只读取你指定的本机文件；替换为实际路径再运行：
 
@@ -190,7 +192,7 @@ HTTP应为200，每页最多20位，不包含本人或群标识。首次归档�
 
 ## 12. M1任务4：后台同步任务验证
 
-本节是任务4的历史检查点（当时schema3／203项测试）；当前版本为schema4，执行位置见[状态页](../STATUS.md)。先Control+C停止旧API，再拉取并重启，保留已有归档。
+本节是任务4的历史检查点（当时schema3／203项测试）；当前版本为schema4，执行位置见[状态页](../../STATUS.md)。先Control+C停止旧API，再拉取并重启，保留已有归档。
 
 ```bash
 git pull --ff-only origin main
