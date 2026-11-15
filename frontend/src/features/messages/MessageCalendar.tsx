@@ -20,11 +20,11 @@ export function MessageCalendar({month,selected,data,busy,onMonth,onSelect,onLat
   <div className="calendar-weekdays" aria-hidden="true">{'一二三四五六日'.split('').map(day=><span key={day}>{day}</span>)}</div>
   <div className="calendar-days" ref={grid} aria-label={`${year}年${number}月`}>
    {Array.from({length:offset},(_,i)=><span key={`blank${i}`}/>)}
-   {Array.from({length:count},(_,i)=>{const day=`${month}-${String(i+1).padStart(2,'0')}`,messages=data?.days[day]||0;return <button type="button" key={day} data-day={day} className={`calendar-day${day===today?' is-today':''}`} aria-label={`${day}，${messages?`${messages}条消息`:'暂无消息'}`} title={messages?`本人${data?.speech_days?.[day]||0}条，共${messages}条会话消息`:undefined} aria-pressed={day===selected} disabled={busy||(day>today&&!messages)} tabIndex={day===focus?0:-1} onFocus={()=>setFocus(day)} onClick={()=>onSelect(day)} onKeyDown={event=>{
+   {Array.from({length:count},(_,i)=>{const day=`${month}-${String(i+1).padStart(2,'0')}`,messages=data?.days[day]||0;return <button type="button" key={day} data-day={day} className={`calendar-day${day===today?' is-today':''}`} aria-label={`${day}，${messages?`${messages}条本人发言`:'暂无消息'}`} title={messages?`本人${messages}条发言`:undefined} aria-pressed={day===selected} disabled={busy||(day>today&&!messages)} tabIndex={day===focus?0:-1} onFocus={()=>setFocus(day)} onClick={()=>onSelect(day)} onKeyDown={event=>{
     const step=({ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7} as Record<string,number>)[event.key];if(!step)return;event.preventDefault();const d=new Date(day+'T12:00:00Z');d.setUTCDate(d.getUTCDate()+step);const next=d.toISOString().slice(0,10);if(next>today)return;
     if(next.slice(0,7)!==month){pending.current=next;onMonth(next.slice(0,7));}else{setFocus(next);grid.current?.querySelector<HTMLButtonElement>(`[data-day="${next}"]`)?.focus();}
-   }}><span>{i+1}</span>{messages>0&&<i className={`calendar-dot${data?.speech_days&&!data.speech_days[day]?" is-context-only":""}`} aria-hidden="true"/>}</button>;})}
+   }}><span>{i+1}</span>{messages>0&&<i className="calendar-dot" aria-hidden="true"/>}</button>;})}
   </div>
-  <div className="calendar-footer"><span>{busy?'正在读取…':'蓝点：本人发言 · 灰点：上下文'}</span><button className="text-button" disabled={busy||!data?.latest_day} onClick={onLatest}>回到最新</button></div>
+  <div className="calendar-footer"><span>{busy?'正在读取…':'蓝点：本人发言'}</span><button className="text-button" disabled={busy||!data?.latest_day} onClick={onLatest}>回到最新</button></div>
  </section>;
 }

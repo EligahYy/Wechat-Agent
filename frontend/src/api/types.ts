@@ -87,7 +87,8 @@ export type TimelineItem = {
   sent_at:string;kind:string;body:string;revision:number;reply_to:string|null;origin:"import"|"archive";
   attachments:{id:string;state:string;mime:string|null;reason:string|null;downloadable:boolean}[];
 };
-export type SpeechNavigation = {total:number;current_id:string|null;index:number;previous_id:string|null;next_id:string|null};
+export type SpeechPosition = {current_id:string;index:number;previous_id:string|null;next_id:string|null};
+export type SpeechNavigation = {total:number;current_id:string|null;index:number;previous_id:string|null;next_id:string|null;positions?:SpeechPosition[]};
 export type TimelinePage = {speech?:SpeechNavigation;previous_cursor?:string|null;items:TimelineItem[];total:number;sources:{conversation_id:string;kind:string;title:string|null}[];next_cursor:string|null;has_more:boolean;timezone:string};
 export type ImportPreview = {
   preview_id:string|null;columns:string[];sample_rows:Record<string,string>[];total_rows:number;mapping_defaults:Record<string,string>;

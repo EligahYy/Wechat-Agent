@@ -43,3 +43,40 @@ test('return restores reading position and excludes hidden controls from focus c
  const first=dialog.getByRole('button',{name:'修改身份',exact:true});await first.focus();await page.keyboard.press('Shift+Tab');
  await expect(dialog.getByRole('tab',{name:'资料概览',exact:true})).toBeFocused();
 });
+test('loaded speech navigation is local and preserves message DOM and count',async({page,request})=>{
+ await request.post('/api/__test__/reset');await page.goto('/');await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();
+ await expect(dialog.locator('.speech-count')).toHaveText('2 / 2');
+ const id=await dialog.locator('.is-current-speech').getAttribute('data-message');
+ await dialog.locator('[data-message]').first().evaluate(node=>node.setAttribute('data-preserve','yes'));
+ let focusRequests=0;page.on('request',request=>{if(new URL(request.url()).searchParams.has('focus_id'))focusRequests++;});
+ await dialog.getByRole('button',{name:'上一条',exact:true}).click();await expect(dialog.locator('.speech-count')).toHaveText('1 / 2');
+ expect(focusRequests).toBe(0);await expect(dialog.locator('[data-message]').first()).toHaveAttribute('data-preserve','yes');
+ await dialog.getByRole('button',{name:'下一条',exact:true}).click();await expect(dialog.locator('.is-current-speech')).toHaveAttribute('data-message',id!);expect(focusRequests).toBe(0);
+});
+test('unloaded navigation keeps count and messages while fetching and after failure',async({page,request})=>{
+ await request.post('/api/__test__/reset');
+ const mapping=Object.fromEntries(['conversation_id','sender_id','sent_at','message_id','body'].map(key=>[key,key]));
+ const rows=Array.from({length:81},(_,i)=>({conversation_id:'group-1',sender_id:i%40===0?'merchant-a':'provider-p',sent_at:new Date(Date.UTC(2026,10,14,0,i)).toISOString(),message_id:`busy-${i}`,body:`延迟定位${i}`}));
+ const preview=await(await request.post('/api/imports',{data:{mode:'preview',account_id:'acct-1',namespace:'busy',format:'json',mapping,content:JSON.stringify(rows)}})).json();await request.post('/api/imports',{data:{mode:'commit',account_id:'acct-1',preview_id:preview.preview_id}});
+ await page.goto('/');await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();await expect(dialog.locator('.speech-count')).toHaveText('3 / 3');
+ await page.route('**/messages?*',async route=>{if(new URL(route.request().url()).searchParams.has('focus_id')){await new Promise(resolve=>setTimeout(resolve,600));await route.fulfill({status:503,json:{code:'database_unavailable'}});}else await route.continue();});
+ await dialog.getByRole('button',{name:'上一条',exact:true}).click();await expect(dialog.getByRole('group',{name:'当前联系人发言定位'})).toHaveAttribute('aria-busy','true');await expect(dialog.locator('.speech-count')).toHaveText('3 / 3');await expect(dialog.locator('.is-current-speech')).toContainText('延迟定位80');
+ await expect(dialog.getByRole('alert')).toBeVisible();await expect(dialog.getByRole('button',{name:'上一条',exact:true})).toBeEnabled();await expect(dialog.locator('.speech-count')).toHaveText('3 / 3');
+ await page.unroute('**/messages?*');await dialog.getByRole('button',{name:'上一条',exact:true}).click();await expect(dialog.locator('.is-current-speech')).toContainText('延迟定位40');await expect(dialog.locator('.speech-count')).toHaveText('2 / 3');
+});
+test('return to latest from another day bypasses a cached middle window',async({page,request})=>{
+ await request.post('/api/__test__/reset');
+ const mapping=Object.fromEntries(['conversation_id','sender_id','sent_at','message_id','body'].map(key=>[key,key]));
+ const rows=Array.from({length:81},(_,i)=>({conversation_id:'group-1',sender_id:i%40===0?'merchant-a':'provider-p',sent_at:new Date(Date.UTC(2026,10,14,0,i)).toISOString(),message_id:`latest-${i}`,body:`最新落点${i}`}));
+ const preview=await(await request.post('/api/imports',{data:{mode:'preview',account_id:'acct-1',namespace:'latest-cache',format:'json',mapping,content:JSON.stringify(rows)}})).json();await request.post('/api/imports',{data:{mode:'commit',account_id:'acct-1',preview_id:preview.preview_id}});
+ await page.goto('/');await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();await expect(dialog.locator('.speech-count')).toHaveText('3 / 3');
+ await dialog.getByRole('button',{name:'上一条',exact:true}).click();await expect(dialog.locator('.speech-count')).toHaveText('2 / 3');
+ await dialog.getByRole('button',{name:'2026-11-13，暂无消息'}).click();await expect(dialog.getByText('当天暂无已同步消息',{exact:true})).toBeVisible();
+ await dialog.getByRole('region',{name:'当天消息详情'}).getByRole('button',{name:'回到最新',exact:true}).click();await expect(dialog.locator('.is-current-speech')).toContainText('最新落点80');await expect(dialog.locator('.speech-count')).toHaveText('3 / 3');
+});
+test('return to latest restores the last speech highlight in an already loaded window',async({page,request})=>{
+ await request.post('/api/__test__/reset');await page.goto('/');await page.getByRole('button',{name:'查看 商家甲',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByRole('tab',{name:'沟通原文',exact:true}).click();await expect(dialog.locator('.speech-count')).toHaveText('2 / 2');
+ const latest=await dialog.locator('.is-current-speech').getAttribute('data-message');await dialog.getByRole('button',{name:'上一条',exact:true}).click();await expect(dialog.locator('.speech-count')).toHaveText('1 / 2');
+ let reads=0;page.on('request',req=>{if(new URL(req.url()).pathname.endsWith('/messages'))reads++;});
+ await dialog.getByRole('region',{name:'当天消息详情'}).getByRole('button',{name:'回到最新',exact:true}).click();await expect(dialog.locator('.speech-count')).toHaveText('2 / 2');await expect(dialog.locator('.is-current-speech')).toHaveAttribute('data-message',latest!);expect(reads).toBe(0);
+});

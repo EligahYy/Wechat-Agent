@@ -15,14 +15,14 @@ def test_membership_alone_does_not_make_unrelated_group_a_message_source(db):
  assert 'unrelated' not in {row['message_id'] for row in result['items']}
  with pytest.raises(OperationError):read_timeline(db,'acct-1','merchant-a',conversation_id='directory-only')
 
-def test_real_group_keeps_other_speakers_but_marks_context_only_days(db):
+def test_real_group_does_not_admit_context_only_days(db):
  seed_case(db)
  archive_page(db,make_page([make_message(message_id='context-day',sender_id='provider-p',sent_at=datetime.fromisoformat('2026-11-14T12:00:00+08:00'))]))
  calendar=read_calendar(db,'acct-1','merchant-a','2026-11',conversation_id='group-1')
- assert calendar['days']['2026-11-14']==1 and calendar['speech_days'].get('2026-11-14',0)==0
+ assert calendar['days'].get('2026-11-14',0)==0 and calendar['speech_days'].get('2026-11-14',0)==0
  assert calendar['speech_days']['2026-11-11']>0
  result=read_timeline(db,'acct-1','merchant-a',day='2026-11-14',conversation_id='group-1')
- assert result['total']==1 and result['speech']['total']==0
+ assert result['total']==0 and result['speech']['total']==0
 
 def test_private_outgoing_only_conversation_remains_accessible(db):
  seed_case(db)

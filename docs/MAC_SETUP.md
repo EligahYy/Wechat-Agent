@@ -75,7 +75,7 @@ export GIT_SSH_COMMAND='ssh -o HostName=ssh.github.com -p 443 -o ConnectTimeout=
 curl -fsS http://127.0.0.1:8766/api/health
 ```
 
-通过标准：`{"status":"ok","schema_version":10}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
+通过标准：`{"status":"ok","schema_version":11}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
 
 若出现来源配置错误，核对既有`.local/config/source.json`的base_url与expected_account_id，沿用token_env，不把凭据贴到聊天。原文浏览和手动导入使用已归档数据，不需要再次全量同步。
 
@@ -168,7 +168,7 @@ curl -fsS http://127.0.0.1:9100/api/v1/health
 )
 ```
 
-按前文方式重启应用，健康接口应报告schema_version=10。本轮无需重装wx-cli。
+按前文方式重启应用，健康接口应报告schema_version=11。本轮无需重装wx-cli。
 
 1. 确认左上角EU、工作台业务活跃联系人及设置→管理全部联系人。先搜索一名联系人，手动移出，再同步，确认不自动回来；在全量管理重新加入。
 2. 设置→配置模型，按服务文档填写HTTPS完整chat-completions地址、准确模型ID、响应格式和声明容量。首次填写密钥，保存后页面应留空；密钥只写本机Keychain。

@@ -59,9 +59,9 @@ M1 创建 `tests/conftest.py` 的 `db`（临时 SQLite）、`client`（隔离 Fa
 
 ## M1任务6：原文、导入与附件访问（schema6）
 
-- GET `/api/contacts/{id}/messages?account_id=...&q=...&conversation_id=...&page_size=50&cursor=...`；只读，接受当前账号active非本人联系人，不限制商家角色。范围为其 authored messages 与已有成员关系所关联的会话，保留共享群中的其他说话人；不推导好友关系或私人对话收件人。越界账号／联系人／来源404，未知配置仍显式报错。
+- GET `/api/contacts/{id}/messages?account_id=...&q=...&conversation_id=...&page_size=50&cursor=...`；只读，接受当前账号active非本人联系人，不限制商家角色。来源为本人真实发言的群或已验证私聊，day范围收敛到本人当天发言的群及有效私聊，保留这些会话中的其他说话人；不推导好友关系或私人对话收件人。越界账号／联系人／来源404，未知配置仍显式报错。
 - 返回`{items,total,sources,has_more,next_cursor}`；items含message_id、conversation_id、source_title／source_kind、sender、sent_at、kind、body、revision、reply_to、origin、attachments。sender含contact_id、display_name、role、is_self；本人显示我方，异常／隔离作者显示归属待核实且不返回伪人物ID。attachments仅返回id、state、mime、reason、downloadable，无磁盘路径或raw。origin为archive／import，导入来源保留在原始记录中。
-- 按`julianday(sent_at),message_id`升序keyset分页，最多50条。游标绑定账号、联系人、查询、来源和页大小，同时绑定账号消息修订与相关来源集合；归档变化返回409/message_cursor_stale，范围错配或损坏游标422。前端保留现有行并显式重新加载，不拼接不同快照。当前策略对账号内不相关消息变化也可能要求重载，优先保证不混页。
+- 按`julianday(sent_at),message_id`升序keyset分页，最多50条。游标绑定账号、联系人、查询、来源和页大小，同时绑定浏览策略版本、账号消息修订与相关来源集合；归档变化返回409/message_cursor_stale，范围错配或损坏游标422。前端保留现有行并显式重新加载，不拼接不同快照。当前策略对账号内不相关消息变化也可能要求重载，优先保证不混页。
 - q为最长256字的字面正文查询；现有FTS5为trigram，至少3字且含字母／数字时安全引用为phrase，其余用转义参数化LIKE。“海运”等1—2字中文、百分号等不作为查询操作符。所有结果继续限定账号与联系人相关范围。
 - POST `/api/imports`仅接受`Content-Type: application/json`（允许charset参数），其他类型在读请求体前415。请求体有流式上限，内容最多2MiB UTF-8／5000行／100列；JSON必须为对象数组，拒绝无效解码Unicode、NaN／Infinity／指数溢出及过深嵌套。CSV列名需唯一，行宽不符记为逐行问题。
 - 预览body为`{mode:'preview',account_id,format:'csv'|'json',namespace,content,mapping?}`。不传mapping只返回列、3行样本及mapping_defaults，不生成确认令牌；mapping为目标字段到来源列名。必需conversation_id、sender_id、sent_at、message_id、body，可选account_id、kind、conversation_kind、attachment_ids。namespace为1—128字可打印标识；ID最长512，正文128KiB，时间需带时区且可正常归一UTC。普通消息发送人必须为结构合法的稳定编号，仅system／revoke可无人物归属。
@@ -150,4 +150,4 @@ M2 Task2：schema007增加snapshots(account_id,snapshot_id,contact_id,manifest_j
 
 M2 Task3A核心：ModelConfig增加显式response_mode=text／json_object／json_schema（默认json_object）；structured_output不推断JSON-schema支持。Gateway注入连接、不可变配置副本、AsyncClient、CredentialStore和可替换sleep；客户端不跟随重定向。每次实际供应商请求持久预留analysis_units计数并写model_calls，call_id至多3次、unit至多6次，配置／操作／快照不可换绑。输出Schema提供给模型且在本地验证，只支持本地可解析引用，禁止隐式联网取Schema。以上是核心检查点，Task3B/C配置持久化、权限、主动连接检查与页面已交付；Services和worker当前没有启用真实模型。
 
-当前schema10：009为模型配置版本／检查租约，010为业务范围／活动／发现信号。消息月历和day参数统一北京时间，游标绑定账号／联系人／筛选／日期与归档代次。配置保存不调模型，显式检查不证明容量；worker真实分析发布仍由Task4／7接入。人工exclude是领取和发布前的门槛。
+当前schema11：009为模型配置版本／检查租约，010为业务范围／活动／发现信号，011为消息作者／会话时间、附件和修订账号索引。月历days/speech_days只统计本人发言；latest_day优先本人发言，缺失时回退有效私聊。speech.positions提供窗口内本人位置及精确相邻ID，允许前端本地定位。消息月历和day参数统一北京时间，游标绑定账号／联系人／筛选／日期与归档代次。配置保存不调模型，显式检查不证明容量；worker真实分析发布仍由Task4／7接入。人工exclude是领取和发布前的门槛。

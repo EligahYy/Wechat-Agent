@@ -1,4 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
+import {ReadCache} from './ReadCache';
 import {CalendarDays} from 'lucide-react';
 import {request,messageFor} from '../../api/client';
 import type {ContactKey} from '../../api/types';
@@ -6,10 +7,21 @@ import {MessageCalendar,beijingToday,type CalendarData} from './MessageCalendar'
 import {MessageTimeline} from './MessageTimeline';
 export function MessageBrowser({contact,revision,visible=true}:{contact:ContactKey;revision:number;visible?:boolean}){
  const [month,setMonth]=useState(beijingToday().slice(0,7)),[day,setDay]=useState<string|null>(null),[source,setSource]=useState(''),[data,setData]=useState<CalendarData|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[refresh,setRefresh]=useState(0),[latest,setLatest]=useState(0),[calendarOpen,setCalendarOpen]=useState(false);
- const initialized=useRef(false),version=useRef(0);
- useEffect(()=>{const id=++version.current,controller=new AbortController();setBusy(true);setError('');
- request<CalendarData>(`/api/contacts/${encodeURIComponent(contact.contact_id)}/message-calendar?${new URLSearchParams({account_id:contact.account_id,month,...(source?{conversation_id:source}:{})})}`,{signal:controller.signal}).then(result=>{if(id===version.current){setData(result);if(!initialized.current){initialized.current=true;const initial=result.latest_day||beijingToday();setDay(initial);setMonth(initial.slice(0,7));setLatest(1);}}}).catch(reason=>{if(!controller.signal.aborted)setError(messageFor(reason));}).finally(()=>{if(id===version.current&&!controller.signal.aborted)setBusy(false);});return()=>controller.abort();
- },[contact.account_id,contact.contact_id,month,source,revision,refresh]);
+ const initialized=useRef(false),version=useRef(0),cache=useRef(new ReadCache<CalendarData>());
+ useEffect(()=>{cache.current.clear();},[revision,refresh]);
+ useEffect(()=>{
+  const id=++version.current,controller=new AbortController();if(!visible)return;
+  const key=JSON.stringify([contact.account_id,contact.contact_id,month,source,revision,refresh]);
+  const accept=(result:CalendarData)=>{if(id!==version.current)return;setData(result);setBusy(false);
+   if(!initialized.current){initialized.current=true;const initial=Object.keys(result.days).sort().at(-1)||result.latest_day||beijingToday();setDay(initial);setMonth(initial.slice(0,7));setLatest(1);}
+  };
+  setError('');const cached=cache.current.get(key);if(cached){accept(cached);return;}
+  setBusy(true);
+  request<CalendarData>(`/api/contacts/${encodeURIComponent(contact.contact_id)}/message-calendar?${new URLSearchParams({account_id:contact.account_id,month,...(source?{conversation_id:source}:{})})}`,{signal:controller.signal})
+   .then(result=>{if(id===version.current){cache.current.set(key,result);accept(result);}})
+   .catch(reason=>{if(!controller.signal.aborted&&id===version.current)setError(messageFor(reason));})
+   .finally(()=>{if(id===version.current&&!controller.signal.aborted)setBusy(false);});return()=>controller.abort();
+ },[contact.account_id,contact.contact_id,month,source,revision,refresh,visible]);
  const select=(value:string)=>{setDay(value);setLatest(0);setCalendarOpen(false);};
  const goLatest=()=>{if(data?.latest_day){setDay(data.latest_day);setMonth(data.latest_day.slice(0,7));setLatest(value=>value+1);setCalendarOpen(false);}};
  return <section className={`message-browser has-details page-enter${calendarOpen?' calendar-open':''}`} aria-label="聊天记录浏览">

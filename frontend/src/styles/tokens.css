@@ -880,4 +880,4 @@ html[data-theme="dark"] .timeline-meta .self-speaker{color:#c7a4f2}
 .dialog-contact .message-browser.has-details,.dialog-contact .detail-overview-pane{height:min(620px,calc(100dvh - 310px));min-height:320px}
 .detail-overview-pane .detail-unavailable{height:100%}
 
-.calendar-dot.is-context-only{background:var(--muted);opacity:.5}
+.speech-navigation[aria-busy=true]{opacity:.7}

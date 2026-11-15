@@ -12,14 +12,14 @@ def test_calendar_local_days_and_latest(db):
  from wechat_agent.messages.calendar import read_calendar
  seed(db)
  result=read_calendar(db,'acct-1','merchant-a','2026-11')
- assert result['days']['2026-11-14']==1 and result['days']['2026-11-15']==1
- assert result['latest_day']=='2026-11-15'
+ assert result['days']['2026-11-14']==1 and '2026-11-15' not in result['days']
+ assert result['latest_day']=='2026-11-14'
  assert read_calendar(db,'acct-1','merchant-a','2026-12')['days']=={}
 
 def test_day_scope_keeps_other_people_and_cursor_bound(db):
  seed(db)
  result=read_timeline(db,'acct-1','merchant-a',day='2026-11-15',date_latest=True)
- assert [row['message_id'] for row in result['items']]==['after-midnight']
+ assert result['items']==[]
  assert result['speech']['total']==0
  assert read_timeline(db,'acct-1','merchant-a',day='2026-11-14')['speech']['total']==1
  assert read_timeline(db,'acct-1','merchant-a',day='2026-11-16')['total']==0
@@ -38,7 +38,7 @@ def test_day_cursors_cannot_cross_dates_and_latest_keeps_author_navigation(db):
  seed(db)
  # Exact ordering includes other people's newest message, not just target speech.
  result=read_timeline(db,'acct-1','merchant-a',day='2026-11-15',date_latest=True)
- assert result['items'][-1]['message_id']=='after-midnight'
+ assert result['items']==[]
  # Build a full day and verify directional cursors bind the local day.
  from datetime import timedelta
  start=datetime.fromisoformat('2026-11-14T01:00:00+00:00')

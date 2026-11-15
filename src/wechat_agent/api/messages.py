@@ -9,15 +9,14 @@ import sqlite3
 from fastapi import APIRouter, Query, Request
 
 from .archive_access import authorize_archive
-from ..contacts.names import load_catalog, present_source_title, resolve_name
+from ..contacts.names import load_catalog, resolve_name
 from ..operations.service import OperationError
 from ..storage.db import open_existing_db
 from ..messages.presentation import display_body
-from ..messages.queries import timeline_sources,message_scope
+from ..messages.queries import timeline_sources,message_scope,ORDER
 from ..messages.calendar import day_bounds,read_calendar
 
 router=APIRouter()
-ORDER='COALESCE(julianday(m.sent_at),0)'
 
 
 def _cursor(value,scope,marker):
@@ -42,16 +41,12 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
     q=q.strip()
     scope=[account_id,contact_id,q,conversation_id,page_size]+([day] if day else [])
     revision=conn.execute('SELECT COALESCE(MAX(rowid),0) FROM message_revisions WHERE account_id=?',(account_id,)).fetchone()[0]
-    marker=hashlib.sha256(json.dumps([revision,[source['conversation_id'] for source in sources]],ensure_ascii=False).encode()).hexdigest()
+    marker=hashlib.sha256(json.dumps(['daily-author-v2',revision,[source['conversation_id'] for source in sources]],ensure_ascii=False).encode()).hexdigest()
     if sum(bool(value) for value in (cursor,before_cursor,focus_id,focus_latest,date_latest))>1:raise OperationError('message_navigation_invalid',422)
     last=_cursor(cursor,scope,marker) if cursor else _cursor(before_cursor,[*scope,'before'],marker) if before_cursor else None
-    scope_where,params=message_scope(account_id,contact_id)
+    bounds=day_bounds(day) if day else None
+    scope_where,params=message_scope(conn,account_id,contact_id,sources=sources,conversation_id=conversation_id,bounds=bounds)
     clauses=[scope_where]
-    if conversation_id is not None:
-        clauses.append('m.conversation_id=?');params.append(conversation_id)
-    if day:
-        start,end=day_bounds(day)
-        clauses.append("julianday(m.sent_at)>=julianday(?) AND julianday(m.sent_at)<julianday(?)");params.extend([start,end])
     if q:
         if len(q)>=3 and any(char.isalnum() for char in q):
             clauses.append('m.rowid IN (SELECT rowid FROM message_search WHERE message_search MATCH ?)')
@@ -91,16 +86,23 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
         if select(extra,values,limit=1):previous_cursor=encode(rows[0],True)
     own_where=base_where+' AND m.sender_id=?';own_params=[*base_params,contact_id]
     own_total=conn.execute('SELECT COUNT(*) FROM messages m WHERE '+own_where,own_params).fetchone()[0]
-    if target is not None and target['sender_id']!=contact_id:target=None
-    if target is None:target=next((row for row in (reversed(rows) if date_latest else rows) if row['sender_id']==contact_id),None)
-    speech={'total':own_total,'current_id':None,'index':0,'previous_id':None,'next_id':None}
-    if target:
-        extra,values=boundary(target,'<')
-        speech.update(current_id=target['message_id'],index=1+conn.execute('SELECT COUNT(*) FROM messages m WHERE '+own_where+extra,[*own_params,*values]).fetchone()[0])
-        for name,operator,desc in [('previous_id','<',True),('next_id','>',False)]:
-            extra,values=boundary(target,operator);neighbor=select(' AND m.sender_id=?'+extra,[contact_id,*values],descending=desc,limit=1)
-            speech[name]=neighbor[0]['message_id'] if neighbor else None
-    if target is None and own_total:
+    own_rows=[row for row in rows if row['sender_id']==contact_id]
+    positions=[]
+    if own_rows:
+        extra,values=boundary(own_rows[0],'<')
+        first_index=1+conn.execute('SELECT COUNT(*) FROM messages m WHERE '+own_where+extra,[*own_params,*values]).fetchone()[0]
+        before=select(' AND m.sender_id=?'+extra,[contact_id,*values],descending=True,limit=1)
+        extra,values=boundary(own_rows[-1],'>')
+        after=select(' AND m.sender_id=?'+extra,[contact_id,*values],limit=1)
+        for index,row in enumerate(own_rows):
+            positions.append({'current_id':row['message_id'],'index':first_index+index,
+                'previous_id':own_rows[index-1]['message_id'] if index else before[0]['message_id'] if before else None,
+                'next_id':own_rows[index+1]['message_id'] if index+1<len(own_rows) else after[0]['message_id'] if after else None})
+    speech={'total':own_total,'current_id':None,'index':0,'previous_id':None,'next_id':None,'positions':positions}
+    chosen=next((item for item in positions if target is not None and item['current_id']==target['message_id']),None)
+    if chosen is None and positions:chosen=positions[-1] if date_latest else positions[0]
+    if chosen:speech.update(chosen)
+    elif own_total:
         first=select(' AND m.sender_id=?',[contact_id],descending=date_latest,limit=1)
         if first:speech['previous_id' if date_latest else 'next_id']=first[0]['message_id']
     senders={row['sender_id'] for row in rows if row['sender_id'] is not None}
@@ -110,6 +112,11 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
         people={row['contact_id']:row for row in conn.execute(f'SELECT * FROM contacts WHERE account_id=? AND contact_id IN ({placeholders})',[account_id,*senders])}
     catalog=load_catalog(conn,account_id,contact_ids=senders)
     source_map={source['conversation_id']:source for source in sources}
+    attachment_map={}
+    if rows:
+        placeholders=','.join('?' for _ in rows)
+        for attachment in conn.execute(f'SELECT * FROM attachments WHERE account_id=? AND message_id IN ({placeholders}) ORDER BY attachment_id',[account_id,*[row['message_id'] for row in rows]]):
+            attachment_map.setdefault(attachment['message_id'],[]).append(attachment)
     items=[]
     for row in rows:
         person=people.get(row['sender_id'])
@@ -124,7 +131,7 @@ def read_timeline(conn,account_id,contact_id,*,q='',conversation_id=None,page_si
                     'role':None if is_self else person['role'],'is_self':is_self,'identity_state':'active','name_status':name['name_status']}
         attachments=[{'id':a['attachment_id'],'state':a['state'],'mime':a['mime'],'reason':a['reason'],
                       'downloadable':a['state'] in ('original','thumbnail') and bool(a['local_path'])}
-            for a in conn.execute('SELECT * FROM attachments WHERE account_id=? AND message_id=? ORDER BY attachment_id',(account_id,row['message_id']))]
+            for a in attachment_map.get(row['message_id'],[])]
         source=source_map[row['conversation_id']]
         items.append({'message_id':row['message_id'],'conversation_id':row['conversation_id'],'source_title':source['title'],
             'source_kind':source['kind'],'sender':sender,'sent_at':row['sent_at'],'kind':row['kind'],
