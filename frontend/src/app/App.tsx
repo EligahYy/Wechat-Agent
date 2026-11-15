@@ -35,7 +35,12 @@ export function App() {
   const [recordsOpen, setRecordsOpen] = useState(false),
     [recordsLoading, setRecordsLoading] = useState(false),
     [recordsError, setRecordsError] = useState(""),
-    [selectedJob, setSelectedJob] = useState<Operation | null>(null);
+    [selectedJob, setSelectedJob] = useState<Operation | null>(null),
+    [recordDetailLoading, setRecordDetailLoading] = useState(false),
+    [recordDetailError, setRecordDetailError] = useState("");
+  const recordRequest = useRef<AbortController | null>(null);
+  const recordDetailRef = useRef<HTMLElement | null>(null), revealRecord = useRef(false);
+  useEffect(() => () => recordRequest.current?.abort(), [recordsOpen, settings?.account_id]);
   const settingsRef = useRef<AppSettings | null>(null),
     prefLock = useRef(false);
   const loadSettings = useCallback(async () => {
@@ -56,6 +61,12 @@ export function App() {
     void loadSettings();
   }, [loadSettings]);
   const operations = useOperations(settings?.account_id || null, finished);
+  useEffect(() => {
+    if (recordsOpen && revealRecord.current && recordDetailRef.current) {
+      recordDetailRef.current.scrollIntoView({block:"start", behavior:"instant"});
+      revealRecord.current = false;
+    }
+  }, [recordsOpen, selectedJob?.id, recordsLoading, operations.history]);
   useEffect(() => {
     if (!settings) return;
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -114,7 +125,42 @@ export function App() {
       setSaving(false);
     }
   };
+  const selectRecord = async (item: Operation, retry = false) => {
+    revealRecord.current = false;
+    recordRequest.current?.abort();
+    setRecordDetailError("");
+    setRecordDetailLoading(false);
+    if (!retry && selectedJob?.id === item.id) {
+      setSelectedJob(null);
+      return;
+    }
+    setSelectedJob(item);
+    const controller = new AbortController();
+    recordRequest.current = controller;
+    setRecordDetailLoading(true);
+    try {
+      const result = await operations.read(item.id, controller.signal);
+      if (!controller.signal.aborted) setSelectedJob(result);
+    } catch (reason) {
+      if (!controller.signal.aborted) setRecordDetailError(messageFor(reason));
+    } finally {
+      if (!controller.signal.aborted) setRecordDetailLoading(false);
+    }
+  };
+  const showOperation = (operation: Operation) => {
+    revealRecord.current = true;
+    recordRequest.current?.abort();
+    setRecordDetailLoading(false);
+    setRecordDetailError("");
+    setRecordsError("");
+    setSelectedJob(operation);
+    setRecordsOpen(true);
+  };
   const showRecords = async () => {
+    revealRecord.current = false;
+    recordRequest.current?.abort();
+    setRecordDetailLoading(false);
+    setRecordDetailError("");
     setRecordsOpen(true);
     setRecordsLoading(true);
     setRecordsError("");
@@ -155,6 +201,18 @@ export function App() {
     Date.parse(job.updated_at) >= Date.parse(selectedJob.updated_at)
       ? job
       : selectedJob;
+  const recordDetail = current && (
+    <section ref={recordDetailRef} className="history-detail" id={`record-${current.id}`} role="region" aria-label="记录详情" aria-busy={recordDetailLoading}>
+      {recordDetailLoading ? <p className="muted" role="status">正在读取记录详情…</p> : recordDetailError ? (
+        <div className="error-banner" role="alert"><span>{recordDetailError}</span><button className="text-button" onClick={() => void selectRecord(current, true)}>重试</button></div>
+      ) : <>
+        <OperationDetails operation={current} />
+        {current.available_actions.includes("stop") && current.id === job?.id && (
+          <button className="button secondary" disabled={operations.submitting} onClick={() => void operations.stop()}>停止本次</button>
+        )}
+      </>}
+    </section>
+  );
   return (
     <MotionConfig
       reducedMotion={settings.preferences.reduce_motion ? "always" : "user"}
@@ -329,7 +387,7 @@ export function App() {
               syncError={operations.error}
               syncErrorScope={operations.errorScope}
               onStop={()=>void operations.stop()}
-              onShowOperation={operation=>{setSelectedJob(operation);setRecordsError('');setRecordsOpen(true);}}
+              onShowOperation={showOperation}
               notify={setToast}
             />
           </div>
@@ -337,7 +395,7 @@ export function App() {
             hidden={page !== "settings"}
             className={page === "settings" ? "page-enter" : undefined}
           >
-            {manageContacts?<><button className="text-button" onClick={()=>setManageContacts(false)}>返回设置</button><ContactManager settings={settings} revision={revision} onScopeChanged={()=>setRevision(value=>value+1)} onSync={operations.start} operation={job} syncSubmitting={operations.submitting} syncError={operations.error} syncErrorScope={operations.errorScope} onStop={()=>void operations.stop()} onShowOperation={operation=>{setSelectedJob(operation);setRecordsOpen(true);}} notify={setToast}/></>:<SettingsPage
+            {manageContacts?<><button className="text-button" onClick={()=>setManageContacts(false)}>返回设置</button><ContactManager settings={settings} revision={revision} onScopeChanged={()=>setRevision(value=>value+1)} onSync={operations.start} operation={job} syncSubmitting={operations.submitting} syncError={operations.error} syncErrorScope={operations.errorScope} onStop={()=>void operations.stop()} onShowOperation={showOperation} notify={setToast}/></>:<SettingsPage
               settings={settings}
               saving={saving}
               onSave={savePreferences}
@@ -364,21 +422,7 @@ export function App() {
               </button>
             </div>
           )}
-          {current && (
-            <>
-              <OperationDetails operation={current} />
-              {current.available_actions.includes("stop") &&
-                current.id === job?.id && (
-                  <button
-                    className="button secondary"
-                    disabled={operations.submitting}
-                    onClick={() => void operations.stop()}
-                  >
-                    停止本次
-                  </button>
-                )}
-            </>
-          )}
+          {current && !operations.history.some(item => item.id === current.id) && recordDetail}
           {recordsLoading ? (
             <p className="muted" role="status">
               正在读取记录…
@@ -386,15 +430,12 @@ export function App() {
           ) : operations.history.length ? (
             <div className="history-list">
               {operations.history.map((item) => (
+                <div className="history-record" key={item.id}>
                 <button
                   className="history-entry"
-                  key={item.id}
-                  onClick={() => {
-                    operations
-                      .read(item.id)
-                      .then(setSelectedJob)
-                      .catch((reason) => setRecordsError(messageFor(reason)));
-                  }}
+                  aria-expanded={current?.id === item.id}
+                  aria-controls={current?.id === item.id ? `record-${item.id}` : undefined}
+                  onClick={() => void selectRecord(item)}
                 >
                   <div>
                     <strong>{operationTitle(item)}</strong>
@@ -409,6 +450,8 @@ export function App() {
                   </div>
                   <ChevronRight size={18} />
                 </button>
+                {current?.id === item.id && recordDetail}
+                </div>
               ))}
             </div>
           ) : (
