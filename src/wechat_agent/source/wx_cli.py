@@ -19,12 +19,12 @@ class Account(BaseModel):
 
 class MetadataInfo(BaseModel):
     contract: Literal['wechat-agent-source-v1']
-    patch_id: Literal['wechat-agent.1']
+    patch_id: Literal['wechat-agent.1', 'wechat-agent.2']
     mode: Literal['sqlcipher', 'decrypted_cache']
     generation: StrictInt = Field(ge=0)
     resolver_generation: StrictInt = Field(ge=0)
     refreshed_at: AwareDatetime
-    refresh_state: Literal['ready', 'running', 'failed']
+    refresh_state: Literal['ready', 'running', 'failed', 'stale']
 
     @model_validator(mode='after')
     def consistent_resolver(self):
@@ -42,7 +42,7 @@ class Health(BaseModel):
 
 
 def verified_identity_patch(active):
-    return active.cli_version.split()[0] == '0.7.4+wechat-agent.1' and active.metadata is not None
+    return active.cli_version.split()[0] in {'0.7.4+wechat-agent.1', '0.7.4+wechat-agent.2'} and active.metadata is not None
 
 
 def supported_source_version(active):

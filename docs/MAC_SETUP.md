@@ -107,7 +107,7 @@ curl -fsS http://127.0.0.1:8766/api/health
 )
 ```
 
-新机器按下面两个来源步骤安装并启动；已有0.7.4+wechat-agent.1服务的机器跳过。然后在`.local/config/source.json`明确绑定health返回的canonical账号，格式见[来源配置](verification/source-capabilities.md#来源配置)。已有机器保留配置。继续回到第2步构建应用。
+新机器按下面两个来源步骤安装并启动；已有0.7.4+wechat-agent.2服务的机器跳过。然后在`.local/config/source.json`明确绑定health返回的canonical账号，格式见[来源配置](verification/source-capabilities.md#来源配置)。已有机器保留配置。继续回到第2步构建应用。
 
 <a id="install-source"></a>
 ## 首次来源安装：补丁版wx-cli
@@ -126,11 +126,11 @@ cc --version
   set -e
   test -f scripts/install-wx-cli.sh
   bash scripts/install-wx-cli.sh --transport ssh
-  .local/tools/wx-cli/0.7.4+wechat-agent.1/bin/wx-cli --version
+  .local/tools/wx-cli/0.7.4+wechat-agent.2/bin/wx-cli --version
 )
 ```
 
-通过标准：最后显示`wx-cli 0.7.4+wechat-agent.1`。安装器下载固定上游源码、应用已校验补丁并编译；首次会下载Rust依赖。不覆盖原`~/.local/bin/wx-cli`，不自动切换正在运行的服务。脚本不存在说明代码尚未更新完整。
+通过标准：最后显示`wx-cli 0.7.4+wechat-agent.2`。安装器下载固定上游源码、应用已校验补丁并编译；首次会下载Rust依赖。不覆盖原`~/.local/bin/wx-cli`，不自动切换正在运行的服务。脚本不存在说明代码尚未更新完整。
 
 <a id="switch-source"></a>
 ## 首次来源启动：确认版本
@@ -144,12 +144,12 @@ cc --version
 看到已停止后才启动项目版本：
 
 ```bash
-.local/tools/wx-cli/0.7.4+wechat-agent.1/bin/wx-cli server run \
+.local/tools/wx-cli/0.7.4+wechat-agent.2/bin/wx-cli server run \
   --host 127.0.0.1 --port 9100 --account wxid_your_account &&
 curl -fsS http://127.0.0.1:9100/api/v1/health
 ```
 
-通过标准：health中ready=true、cli_version包含`0.7.4+wechat-agent.1`；metadata中patch_id=wechat-agent.1、refresh_state=ready，generation与resolver_generation一致。若显示“server already running”且health仍是旧版，先处理未停止的旧worker，不进入下一步。启用Bearer鉴权时沿用本机凭据，不将token贴到聊天。
+通过标准：health中ready=true、cli_version包含`0.7.4+wechat-agent.2`；metadata中patch_id=wechat-agent.2、refresh_state=ready，generation与resolver_generation一致。若显示“server already running”且health仍是旧版，先处理未停止的旧worker，不进入下一步。启用Bearer鉴权时沿用本机凭据，不将token贴到聊天。
 
 
 回退来源时先用项目版本server stop停止，再用原~/.local/bin/wx-cli server run及原参数启动；应用会拒绝未修复的群消息归属。保留数据库，不清空或降级。模型与媒体实测按后续交付安排。
@@ -212,3 +212,26 @@ curl -fsS http://127.0.0.1:9100/api/v1/health
 可直接验证编辑货品／物流／沟通、两组人工补充、单号、来源查看、重启持久化和身份头像配色。单号不自动改成已走货，模型重跑不覆盖人工值；版本冲突保留输入，核对最新版本后再保存。再同步一次，无输入变化不会重复调用档案模型；来源仍会读取最新消息。
 
 首次实测按[单客户质量清单](verification/m2-profile-review.md)核对主体、单位、路线、旧／新批次和来源，先单客户再考虑全局，避免未确认质量时扩大付费调用。图片获取／解析、超窗分段及每日自动执行仍属于后续阶段。
+
+<a id="source-refresh-v2"></a>
+## 来源刷新失败修复：升级至 `.2`
+
+适用于启动ready、使用后反复`source_metadata_refresh_failed`的`.1`来源服务。本次需同时更新Python应用和来源工具；仅重启旧来源不能修复。保留账号配置、Keychain、应用归档及旧工具目录。先在项目目录更新并构建来源（不自动切换服务）：
+
+```bash
+git pull --ff-only
+bash scripts/install-wx-cli.sh
+```
+
+GitHub通过SSH访问时安装命令加`--transport ssh`。构建完成后停止`.1`，再启动`.2`；沿用自定义数据目录及鉴权参数：
+
+```bash
+.local/tools/wx-cli/0.7.4+wechat-agent.1/bin/wx-cli server stop
+.local/tools/wx-cli/0.7.4+wechat-agent.2/bin/wx-cli server run \
+  --host 127.0.0.1 --port 9100 --account wxid_aiy75c1qgjcl22
+curl --max-time 10 -sS http://127.0.0.1:9100/api/v1/health
+```
+
+其他账号替换上述已绑定账号。确认版本及patch_id为`.2`，并按本文第2步重启8766应用，使新的统一刷新入口生效。启动后微信有写入时可能显示stale；点击同步会先刷新，不需要反复重启。同步中途代次变化仍会停止，不能把不完整来源送给模型。若仍failed，查看stderr中的`metadata_version_read_failed`、`metadata_resolver_build_failed`或`metadata_changed_during_refresh`及原有连接错误；仅返回202不等于成功。
+
+详细审查和边界见[来源刷新审查](verification/source-refresh-review.md)。Mac恢复及模型真实质量仍需实机验证。

@@ -117,7 +117,7 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 
 ## 2026-11-12：来源名称与scope契约（schema5）
 
-- 固定来源补丁`0.7.4+wechat-agent.1`／`wechat-agent-source-v1`，manifest及安装器见patches/wx-cli。Health.metadata包含mode、generation、resolver_generation、refreshed_at及refresh_state；ready时resolver代次必须相同。分页代次与health不符停止，不混合写库；未知版本不静默接受。
+- 固定来源补丁`0.7.4+wechat-agent.2`／`wechat-agent-source-v1`，manifest及安装器见patches/wx-cli。Health.metadata包含mode、generation、resolver_generation、refreshed_at及refresh_state；ready时resolver代次必须相同。分页代次与health不符停止，不混合写库；未知版本不静默接受。
 - ContactRecord增加remark_state／nickname_state（known／empty／unreadable／unknown）。内部旧格式记录按显式提供的值推导known／empty；原版wx-cli无法证明空值状态，adapter显式设unknown，只允许诊断。完整同步在任何归档前拒绝缺少补丁能力的原版。
 - ConversationRecord增加origin（session／metadata_candidate／group_directory／unknown）、membership_state、title_state和name_evidence。NameEvidence以contact_id、conversation_id和origin（group_member／session_sender）限定，含value、state、observed_at；必须与父会话范围一致。
 - schema5保存contacts字段状态与最后观察、contact_names作用域证据、source_metadata_status及source_group_members。完整群目录单独保存，不把未出现／未观察的所有群成员自动建成联系人；已知人物仍可按目录定位和补名。旧原文、修订、成员历史和人工角色保留。

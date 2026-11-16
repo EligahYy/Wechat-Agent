@@ -70,7 +70,7 @@
 
 ## R1—R4已交付的项目补丁契约
 
-固定基线仍为7bed9e7，应用归档要求`0.7.4+wechat-agent.1`和`wechat-agent-source-v1`。补丁、SHA256及安装器见[patch说明](../../patches/wx-cli/README.md)。原版仅允许有限只读诊断，消息归档显式返回source_patch_required，不能静默信任旧前缀拆分。
+固定基线仍为7bed9e7，应用归档要求`0.7.4+wechat-agent.2`和`wechat-agent-source-v1`。补丁、SHA256及安装器见[patch说明](../../patches/wx-cli/README.md)。原版仅允许有限只读诊断，消息归档显式返回source_patch_required，不能静默信任旧前缀拆分。
 
 - GET identity/contacts提供known／empty／unreadable的原始备注和昵称；GET identity/groups提供成员目录与解码状态。路径均在`/api/v1/`下，分页带generation，要求show_hidden=1并沿用鉴权。
 - POST identity/refresh只发起来源缓存／连接／resolver刷新；202不代表完成。应用等待新generation和ready，失败或超时保留缺口。

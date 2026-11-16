@@ -140,7 +140,7 @@ async def test_metadata_epoch_change_after_initial_health_stops_before_archive(d
     class ChangedAfterCheck(NativeServer):
         def respond(self, request):
             response = super().respond(request)
-            if request.url.path.endswith('/health') and len(self.requests) == 1:
+            if request.url.path.endswith('/health') and sum(r.url.path.endswith('/health') for r in self.requests) == 3:
                 self.generation += 1
             return response
     before = db.total_changes
@@ -193,3 +193,26 @@ async def test_failed_group_name_read_keeps_last_title_but_explicit_empty_clears
     server.people[-1].update(remark={'value':None,'state':'empty'},nickname={'value':None,'state':'empty'})
     assert not (await refresh()).gaps
     assert db.execute("SELECT title FROM conversations WHERE conversation_id='room@chatroom'").fetchone()[0] is None
+
+
+@pytest.mark.asyncio
+async def test_v2_stale_metadata_can_refresh_but_cannot_be_read_as_current():
+    import httpx
+    class V2(NativeServer):
+        def metadata(self):
+            return {**super().metadata(), 'patch_id':'wechat-agent.2'}
+        def respond(self, request):
+            if request.url.path.endswith('/identity/refresh'):
+                self.refresh_state = 'ready'
+            response = super().respond(request)
+            if request.url.path.endswith('/health'):
+                data = response.json()
+                data['cli_version'] = '0.7.4+wechat-agent.2'
+                data['ready'] = self.refresh_state == 'ready'
+                return httpx.Response(200, json=data)
+            return response
+    server = V2(); server.refresh_state = 'stale'
+    async with adapter(server) as source:
+        assert (await source.check()).gaps == ['source_metadata_changed']
+        await source.refresh_metadata()
+        assert (await source.check()).status == 'passed'

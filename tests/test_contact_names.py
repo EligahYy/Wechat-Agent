@@ -199,3 +199,15 @@ def test_search_does_not_use_an_unreadable_old_remark_hidden_by_a_current_name(d
     assert list_contacts(db,'acct-1')['items'][0]['display_name']=='当前姓名'
     assert list_contacts(db,'acct-1',q='当前姓名')['total']==1
     assert list_contacts(db,'acct-1',q='旧备注')['total']==0
+
+
+def test_v2_source_metadata_status_preserves_verified_patch_version(db):
+    from wechat_agent.contacts.names import metadata_status
+    archive_metadata(db, 'acct-1', [person()], [], metadata={
+        'mode':'sqlcipher', 'generation':1, 'resolver_generation':1,
+        'refreshed_at':'2026-11-16T00:00:00Z', 'patch_id':'wechat-agent.2',
+        'source_version':'0.7.4+wechat-agent.2 (test)',
+    })
+    status = metadata_status(db, 'acct-1')
+    assert status['patch_id'] == 'wechat-agent.2'
+    assert status['source_version'] == '0.7.4+wechat-agent.2'

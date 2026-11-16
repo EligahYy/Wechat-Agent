@@ -86,6 +86,11 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
         result.stopped = True
         return result
     try:
+        refresh = getattr(source, 'refresh_metadata', None)
+        if callable(refresh):
+            await refresh()
+        elif metadata_only:
+            raise SourceError('source_metadata_refresh_unsupported')
         report = await source.check()
         if report.status != "passed":
             result.gaps = report.gaps or ["source_not_ready"]

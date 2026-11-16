@@ -282,10 +282,10 @@ index 5016ef7..19a3218 100644
      let offset = params.offset;
 diff --git a/crates/wx-cli/src/cmd/serve/identity.rs b/crates/wx-cli/src/cmd/serve/identity.rs
 new file mode 100644
-index 0000000..2eada11
+index 0000000..b6b0536
 --- /dev/null
 +++ b/crates/wx-cli/src/cmd/serve/identity.rs
-@@ -0,0 +1,459 @@
+@@ -0,0 +1,514 @@
 +//! Versioned read-only identity metadata and explicit cache refresh.
 +
 +use super::{error::ServeError, state::AppState};
@@ -321,7 +321,7 @@ index 0000000..2eada11
 +    pub fn new(resolver: ContactResolver, mode: &'static str, versions: (i64, i64)) -> Self {
 +        Self(RwLock::new(IdentitySnapshot {
 +            contract: "wechat-agent-source-v1",
-+            patch_id: "wechat-agent.1",
++            patch_id: "wechat-agent.2",
 +            mode,
 +            generation: 0,
 +            resolver_generation: 0,
@@ -340,13 +340,23 @@ index 0000000..2eada11
 +    pub fn refreshing(&self) {
 +        self.0.write().unwrap().refresh_state = "running";
 +    }
++    pub fn request_refresh(&self) -> bool {
++        let mut value = self.0.write().unwrap();
++        if value.refresh_state == "running" {
++            return false;
++        }
++        value.refresh_state = "running";
++        true
++    }
 +    pub fn failed(&self) {
 +        self.0.write().unwrap().refresh_state = "failed";
 +    }
 +    pub fn validate(&self, db: &wx_db::WechatDb) -> Result<(), ServeError> {
 +        let mut value = self.0.write().unwrap();
 +        if db.metadata_versions().ok() != Some(value.versions) {
-+            value.refresh_state = "failed";
++            if value.refresh_state == "ready" {
++                value.refresh_state = "stale";
++            }
 +            return Err(ServeError::Conflict("metadata_generation_changed".into()));
 +        }
 +        Ok(())
@@ -455,11 +465,15 @@ index 0000000..2eada11
 +}
 +pub async fn refresh(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ServeError> {
 +    let generation = state.identity.snapshot().generation;
-+    state
++    let permit = state
 +        .refresh_tx
-+        .send(super::refresh::RefreshTrigger::Refresh)
++        .reserve()
 +        .await
 +        .map_err(|_| ServeError::Internal("metadata_refresh_unavailable".into()))?;
++    // Publish the accepted attempt before the caller can poll health.
++    if state.identity.request_refresh() {
++        permit.send(super::refresh::RefreshTrigger::Refresh);
++    }
 +    Ok((
 +        StatusCode::ACCEPTED,
 +        Json(serde_json::json!({"generation":generation, "refresh_state":"queued"})),
@@ -546,7 +560,7 @@ index 0000000..2eada11
 +                name: "Self".into(),
 +            },
 +            worker_id: "synthetic-worker".into(),
-+            cli_version: "0.7.4+wechat-agent.1".into(),
++            cli_version: "0.7.4+wechat-agent.2".into(),
 +            identity: Arc::new(IdentityRuntime::new(resolver, "decrypted_cache", versions)),
 +            visibility: Arc::new(VisibilityIndex::empty()),
 +            broadcast_tx: tx,
@@ -686,7 +700,7 @@ index 0000000..2eada11
 +        let (_, health) = get(state.clone(), "/api/v1/health").await;
 +        assert_eq!(health["metadata"]["generation"], 1);
 +        assert_eq!(health["metadata"]["resolver_generation"], 1);
-+        assert_eq!(health["metadata"]["patch_id"], "wechat-agent.1");
++        assert_eq!(health["metadata"]["patch_id"], "wechat-agent.2");
 +        state.identity.failed();
 +        let (_, health) = get(state, "/api/v1/health").await;
 +        assert_eq!(health["metadata"]["refresh_state"], "failed");
@@ -714,6 +728,47 @@ index 0000000..2eada11
 +        assert_eq!(code, 409);
 +        let (_, health) = get(state, "/api/v1/health").await;
 +        assert_eq!(health["ready"], false);
++        assert_eq!(health["metadata"]["refresh_state"], "stale");
++    }
++
++    #[tokio::test]
++    async fn accepted_refresh_clears_previous_failure_before_polling_health() {
++        let (state, _dir, mut rx) = fixture();
++        state.identity.failed();
++        let response = super::super::routes::build_router(state.clone())
++            .oneshot(
++                Request::builder()
++                    .method("POST")
++                    .uri("/api/v1/identity/refresh")
++                    .header("Authorization", "Bearer test-token")
++                    .body(Body::empty())
++                    .unwrap(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(response.status().as_u16(), 202);
++        assert!(rx.recv().await.is_some());
++        let (_, health) = get(state, "/api/v1/health").await;
++        assert_eq!(health["metadata"]["refresh_state"], "running");
++    }
++
++    #[tokio::test]
++    async fn accepted_refresh_joins_an_already_running_attempt_without_queueing_another() {
++        let (state, _dir, mut rx) = fixture();
++        state.identity.refreshing();
++        let response = super::super::routes::build_router(state.clone())
++            .oneshot(
++                Request::builder()
++                    .method("POST")
++                    .uri("/api/v1/identity/refresh")
++                    .header("Authorization", "Bearer test-token")
++                    .body(Body::empty())
++                    .unwrap(),
++            )
++            .await
++            .unwrap();
++        assert_eq!(response.status().as_u16(), 202);
++        assert!(rx.try_recv().is_err());
 +    }
 +
 +    #[test]
@@ -795,7 +850,7 @@ index 542d5cb..2b5fc95 100644
          .with_caches(
              Some(Arc::clone(&bg_state.name2id_cache)),
 diff --git a/crates/wx-cli/src/cmd/serve/refresh.rs b/crates/wx-cli/src/cmd/serve/refresh.rs
-index 92aab45..15dc3b3 100644
+index 92aab45..b206c81 100644
 --- a/crates/wx-cli/src/cmd/serve/refresh.rs
 +++ b/crates/wx-cli/src/cmd/serve/refresh.rs
 @@ -28,6 +28,7 @@ pub enum RefreshTrigger {
@@ -845,16 +900,29 @@ index 92aab45..15dc3b3 100644
                  Ok(v) => v,
                  Err(e) => {
                      eprintln!("warn: refresh task panicked: {e}");
-@@ -288,6 +298,23 @@ impl RefreshTask {
+@@ -288,6 +298,36 @@ impl RefreshTask {
                  }
              };
  
 +            if let Some(identity) = &self.identity {
 +                if ok {
 +                    let rebuilt = self.db.lock().ok().and_then(|db| {
-+                        let versions = db.metadata_versions().ok()?;
-+                        let resolver = wx_context::ContactResolver::build(&db).ok()?;
-+                        (db.metadata_versions().ok()? == versions).then_some((resolver, versions))
++                        let versions = db
++                            .metadata_versions()
++                            .map_err(|_| eprintln!("warn: metadata_version_read_failed"))
++                            .ok()?;
++                        let resolver = wx_context::ContactResolver::build(&db)
++                            .map_err(|_| eprintln!("warn: metadata_resolver_build_failed"))
++                            .ok()?;
++                        let after = db
++                            .metadata_versions()
++                            .map_err(|_| eprintln!("warn: metadata_version_read_failed"))
++                            .ok()?;
++                        if after != versions {
++                            eprintln!("warn: metadata_changed_during_refresh");
++                            return None;
++                        }
++                        Some((resolver, versions))
 +                    });
 +                    if let Some((resolver, versions)) = rebuilt {
 +                        identity.publish(resolver, versions);
@@ -869,7 +937,7 @@ index 92aab45..15dc3b3 100644
              // Only advance epoch on successful refresh
              if ok {
                  epoch += 1;
-@@ -330,6 +357,29 @@ fn is_message_shard_path(rel_path: &str) -> bool {
+@@ -330,6 +370,29 @@ fn is_message_shard_path(rel_path: &str) -> bool {
  mod tests {
      use super::*;
  
@@ -1059,7 +1127,7 @@ index 412c93b..bdbb94a 100644
              sender_display_name: sender.to_string(),
              direction: Direction::Incoming,
 diff --git a/crates/wx-cli/src/version.rs b/crates/wx-cli/src/version.rs
-index ef4644b..c9a32fc 100644
+index ef4644b..5ab9bf9 100644
 --- a/crates/wx-cli/src/version.rs
 +++ b/crates/wx-cli/src/version.rs
 @@ -8,7 +8,7 @@ pub(crate) fn cli_version_long() -> &'static str {
@@ -1067,7 +1135,7 @@ index ef4644b..c9a32fc 100644
              let sha_short = if sha.len() >= 7 { &sha[..7] } else { sha };
              let date = option_env!("VERGEN_BUILD_DATE").unwrap_or("unknown");
 -            format!("{version} ({sha_short} {date})")
-+            format!("{version}+wechat-agent.1 ({sha_short} {date})")
++            format!("{version}+wechat-agent.2 ({sha_short} {date})")
          })
          .as_str()
  }

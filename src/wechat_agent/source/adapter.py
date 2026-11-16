@@ -81,6 +81,8 @@ class WXCLIAdapter:
             raise SourceError("source_contract_invalid") from None
         if active.current_account.wxid != self.account_id:
             raise SourceError("source_account_mismatch")
+        if active.metadata and not allow_refresh and active.metadata.refresh_state == 'stale':
+            raise SourceError('source_metadata_changed')
         if active.metadata and not allow_refresh and active.metadata.refresh_state != 'ready':
             raise SourceError('source_metadata_refresh_failed' if active.metadata.refresh_state == 'failed' else 'source_metadata_refreshing')
         if not active.ready and not (allow_refresh and active.metadata and active.metadata.refresh_state != 'ready'):

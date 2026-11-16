@@ -146,3 +146,36 @@ async def test_unfinished_metadata_read_does_not_invent_an_archive_snapshot(db):
     result=await run_next(db,Services(source=Unavailable()))
     assert result.state=='failed'
     assert all(key not in result.counts for key in ('contacts_total','contacts_current','contacts_retained'))
+
+
+@pytest.mark.asyncio
+async def test_organize_refreshes_failed_source_before_health_and_message_reads(db):
+    from wechat_agent.source.contracts import CapabilityReport
+    class Recovering(FakeSource):
+        refreshed = False
+        async def refresh_metadata(self):
+            self.refreshed = True
+        async def check(self):
+            if not self.refreshed:
+                return CapabilityReport(component='source', status='failed', gaps=['source_metadata_refresh_failed'])
+            return await super().check()
+    seed_case(db)
+    source = Recovering()
+    create_operation(db, 'sync_and_organize', OperationScope(account_id='acct-1'), 'recover')
+    result = await run_next(db, Services(source=source))
+    assert result.source_state == 'succeeded'
+    assert source.refreshed and source.calls
+
+
+@pytest.mark.asyncio
+async def test_failed_refresh_never_reads_messages_or_runs_analysis(db):
+    from wechat_agent.source.adapter import SourceError
+    class Broken(FakeSource):
+        async def refresh_metadata(self):
+            raise SourceError('source_metadata_refresh_failed')
+    seed_case(db)
+    source = Broken()
+    create_operation(db, 'sync_and_organize', OperationScope(account_id='acct-1'), 'failed-refresh')
+    result = await run_next(db, Services(source=source))
+    assert result.source_state == 'failed'
+    assert not source.calls

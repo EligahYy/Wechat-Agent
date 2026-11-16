@@ -179,11 +179,6 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
             _fail_source(conn, operation, owner, "invalid_operation_request", ["invalid_operation_request"])
             return get_operation(conn, operation.scope.account_id, operation.id)
         async with _source(services, operation.scope.account_id) as source:
-            if operation.action == 'refresh_contacts':
-                refresh = getattr(source, 'refresh_metadata', None)
-                if not callable(refresh):
-                    raise SourceError('source_metadata_refresh_unsupported')
-                await refresh()
             result = await sync_scope(conn, source, operation.scope,
                 CancellationToken(operation_id=operation.id, generation=operation.generation),
                 **options.model_dump(), metadata_only=operation.action == 'refresh_contacts',

@@ -117,8 +117,8 @@ def metadata_status(conn, account_id):
     version = (row['source_version'] or '').split(' ')[0]
     return {
         'mode': row['source_mode'] if row['source_mode'] in ('sqlcipher','decrypted_cache') else 'unknown',
-        'patch_id': 'wechat-agent.1' if row['patch_id'] == 'wechat-agent.1' else None,
-        'source_version': version if version in ('0.7.4','0.7.4+wechat-agent.1') else None,
+        'patch_id': row['patch_id'] if row['patch_id'] in ('wechat-agent.1','wechat-agent.2') else None,
+        'source_version': version if version in ('0.7.4','0.7.4+wechat-agent.1','0.7.4+wechat-agent.2') else None,
         'observed_at': date(row['observed_at']), 'refreshed_at': date(row['source_refreshed_at']),
         **{field: row[field] if type(row[field]) is int and row[field] >= 0 else None
            for field in ('generation','resolver_generation','people_seen','name_read_errors','groups_unreadable')},
