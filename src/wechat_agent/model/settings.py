@@ -47,10 +47,23 @@ def public_settings(conn,account):
             result['connection'].update(state='interrupted' if expired else check['state'],code='check_interrupted' if expired else check['code'],checked_at=check['finished_at'])
     result['runtime_ready']=False
     result['budget_review']=None
+    result['budget_reference']=None
     review=conn.execute('SELECT reference,reviewed_at FROM model_budget_reviews WHERE account_id=? AND config_version=?',(account,version)).fetchone()
     if review:
         result['budget_review']={'method':'operator_document_review','reference':review['reference'],'reviewed_at':review['reviewed_at']}
         result['runtime_ready']=result['connection']['state']=='passed'
+        result['budget_reference']=review['reference']
+    elif saved:
+        # Reuse documentation as an input suggestion, never as approval for a
+        # different config version. Keep it scoped to this account and model.
+        previous=conn.execute('''SELECT r.reference FROM model_budget_reviews r
+            JOIN model_config_versions v ON v.account_id=r.account_id AND v.version=r.config_version
+            WHERE r.account_id=? AND r.config_version<?
+              AND json_extract(v.value_json,'$.endpoint')=?
+              AND json_extract(v.value_json,'$.model_id')=?
+            ORDER BY r.config_version DESC LIMIT 1''',
+            (account,version,saved['endpoint'],saved['model_id'])).fetchone()
+        if previous:result['budget_reference']=previous['reference']
     return result
 
 def save_settings(conn,body,credentials):

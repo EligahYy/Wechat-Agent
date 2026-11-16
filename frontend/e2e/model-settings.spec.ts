@@ -71,3 +71,34 @@ for(const theme of ['light','dark'] as const){
   await expect(row.locator('.connection-status-indicator')).toHaveCSS('background-color',theme==='light'?'rgb(21, 128, 61)':'rgb(115, 220, 162)');
  });
 }
+
+test('capacity edits retain the last document link after saving and reopening but reset confirmation',async({page})=>{
+ await page.getByRole('button',{name:'设置',exact:true}).click();
+ await page.getByRole('button',{name:'配置模型',exact:true}).click();
+ const dialog=page.getByRole('dialog',{name:'模型配置'});
+ await dialog.getByLabel('服务地址',{exact:true}).fill('https://synthetic.example/chat/completions');
+ await dialog.getByLabel('模型 ID',{exact:true}).fill('synthetic');
+ await dialog.getByLabel('API 密钥',{exact:true}).fill('test-key');
+ await dialog.getByLabel('上下文上限',{exact:true}).fill('128000');
+ await dialog.getByLabel('最大输出',{exact:true}).fill('8192');
+ await dialog.getByRole('button',{name:'保存配置',exact:true}).click();
+ await dialog.getByRole('button',{name:'检查连接',exact:true}).click();
+ const link=dialog.getByLabel('预算依据（供应商文档HTTPS地址）');
+ const ack=dialog.getByLabel('我已核对供应商文档，支持以上文本上下文和最大输出预算');
+ await link.fill('https://docs.example/model-budget');await ack.check();
+ await dialog.getByRole('button',{name:'确认文本预算',exact:true}).click();
+ for(const [field,value] of [['上下文上限','256000'],['最大输出','4096']]){
+   await dialog.getByLabel(field,{exact:true}).fill(value);
+   await dialog.getByRole('button',{name:'保存配置',exact:true}).click();
+   await dialog.getByRole('button',{name:'检查连接',exact:true}).click();
+   await expect(link).toHaveValue('https://docs.example/model-budget');
+   await expect(ack).not.toBeChecked();
+   await expect(dialog.getByRole('button',{name:'确认文本预算',exact:true})).toBeDisabled();
+   await dialog.getByRole('button',{name:'完成',exact:true}).click();
+   await page.getByRole('button',{name:'配置模型',exact:true}).click();
+   await expect(link).toHaveValue('https://docs.example/model-budget');
+   await expect(ack).not.toBeChecked();
+   await ack.check();await dialog.getByRole('button',{name:'确认文本预算',exact:true}).click();
+   await expect(dialog.getByText('文本预算已核对，可整理文本资料',{exact:true})).toBeVisible();
+ }
+});

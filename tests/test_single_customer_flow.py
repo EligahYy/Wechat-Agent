@@ -192,3 +192,46 @@ async def test_model_session_setup_failure_does_not_relabel_source_as_failed(flo
     assert result.error_code=='analysis_failed' and not calls
     assert result.report.analysis_outcome=='failed'
     assert result.report.source_outcome=='completed'
+
+@pytest.mark.parametrize('changes', [{'context_tokens':256000},{'max_output_tokens':4096}])
+def test_capacity_changes_keep_document_link_but_require_new_review(flow, changes):
+    client,calls,_=flow;review(client)
+    old=client.get('/api/model?account_id=acct-1').json()
+    body={key:old[key] for key in ('account_id','endpoint','model_id','response_mode','context_tokens','max_output_tokens')}
+    response=client.put('/api/model',json={**body,'expected_version':1,**changes})
+    assert response.status_code==200
+    new=response.json()
+    assert new['budget_reference']=='https://docs.example/model-budget'
+    assert new['budget_review'] is None and new['runtime_ready'] is False
+    assert client.post('/api/model/check',json={'account_id':'acct-1','expected_version':2}).status_code==200
+    reopened=client.get('/api/model?account_id=acct-1').json()
+    assert reopened['budget_reference']==new['budget_reference']
+    assert reopened['runtime_ready'] is False
+    confirmation={'account_id':'acct-1','expected_version':2,'reference':reopened['budget_reference']}
+    assert client.post('/api/model/budget-review',json={**confirmation,'acknowledged':False}).status_code==422
+    assert client.post('/api/model/budget-review',json={**confirmation,'acknowledged':True}).json()['runtime_ready'] is True
+    # A later confirmed link replaces the suggestion on subsequent capacity edits.
+    assert client.post('/api/model/budget-review',json={**confirmation,'reference':'https://docs.example/updated','acknowledged':True}).status_code==200
+    result=client.put('/api/model',json={**body,'expected_version':2,'context_tokens':512000}).json()
+    assert result['budget_reference']=='https://docs.example/updated'
+    assert result['budget_review'] is None and not result['runtime_ready']
+    assert not calls
+
+@pytest.mark.parametrize('changes',[{'model_id':'other-model'},{'endpoint':'https://other.example/chat/completions','api_key':'new-test-key'}])
+def test_document_link_does_not_cross_model_or_endpoint(flow,changes):
+    client,_,_=flow;review(client)
+    old=client.get('/api/model?account_id=acct-1').json()
+    body={key:old[key] for key in ('account_id','endpoint','model_id','response_mode','context_tokens','max_output_tokens')}
+    result=client.put('/api/model',json={**body,'expected_version':1,**changes}).json()
+    assert result['budget_reference'] is None
+    assert result['budget_review'] is None and not result['runtime_ready']
+
+def test_document_link_does_not_cross_accounts(flow):
+    from wechat_agent.model.settings import ModelSettingsUpdate,save_settings
+    client,_,_=flow;review(client)
+    with closing(open_existing_db(client.app.state.database_path)) as db:
+        saved=save_settings(db,ModelSettingsUpdate(account_id='another-account',expected_version=0,
+            endpoint='https://synthetic.example/chat/completions',model_id='synthetic',context_tokens=128000,
+            max_output_tokens=8192,api_key='test-key'),client.app.state.services.credential_store)
+        assert saved['budget_reference'] is None
+        assert saved['budget_review'] is None and not saved['runtime_ready']

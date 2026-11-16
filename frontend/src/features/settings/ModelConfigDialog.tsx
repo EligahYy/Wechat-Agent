@@ -5,14 +5,14 @@ import {Dialog} from '../../components/Dialog';
 import {FormField} from '../../components/FormField';
 import {SelectField} from '../../components/SelectField';
 import {request,messageFor} from '../../api/client';
-export type ModelSettings={account_id:string;version:number;configured:boolean;endpoint?:string;model_id?:string;response_mode?:string;context_tokens?:number;max_output_tokens?:number;runtime_ready?:boolean;budget_review?:{method:string;reference:string}|null;connection:{state:string;code?:string|null;capacity_verified:boolean;vision_verified:boolean}};
+export type ModelSettings={account_id:string;version:number;configured:boolean;endpoint?:string;model_id?:string;response_mode?:string;context_tokens?:number;max_output_tokens?:number;runtime_ready?:boolean;budget_reference?:string|null;budget_review?:{method:string;reference:string}|null;connection:{state:string;code?:string|null;capacity_verified:boolean;vision_verified:boolean}};
 export function ModelConfigDialog({accountId,onClose,onChanged}:{accountId:string;onClose:()=>void;onChanged:()=>void}){
   const [saved,setSaved]=useState<ModelSettings|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState('loading');
   const [endpoint,setEndpoint]=useState(''),[model,setModel]=useState(''),[secret,setSecret]=useState(''),[mode,setMode]=useState('json_object');
   const [context,setContext]=useState(''),[output,setOutput]=useState('');
   const [budgetReference,setBudgetReference]=useState(''),[budgetAck,setBudgetAck]=useState(false),[schemaAck,setSchemaAck]=useState(false);
   const mounted=useRef(true);
-  const apply=(value:ModelSettings)=>{setSaved(value);setEndpoint(value.endpoint||'');setModel(value.model_id||'');setMode(value.response_mode||'json_object');setContext(value.context_tokens?String(value.context_tokens):'');setOutput(value.max_output_tokens?String(value.max_output_tokens):'');setSecret('');setBudgetReference(value.budget_review?.reference||'');setBudgetAck(false);setSchemaAck(false);};
+  const apply=(value:ModelSettings)=>{setSaved(value);setEndpoint(value.endpoint||'');setModel(value.model_id||'');setMode(value.response_mode||'json_object');setContext(value.context_tokens?String(value.context_tokens):'');setOutput(value.max_output_tokens?String(value.max_output_tokens):'');setSecret('');setBudgetReference(value.budget_review?.reference||value.budget_reference||'');setBudgetAck(false);setSchemaAck(false);};
   useEffect(()=>{mounted.current=true;const controller=new AbortController();
     request<ModelSettings>(`/api/model?${new URLSearchParams({account_id:accountId})}`,{signal:controller.signal}).then(value=>{if(mounted.current&&!controller.signal.aborted){apply(value);if(value.configured&&value.connection.state!=='running')onChanged();}}).catch(reason=>{if(!controller.signal.aborted)setError(messageFor(reason));}).finally(()=>{if(mounted.current)setBusy('');});
     return()=>{mounted.current=false;controller.abort();};
@@ -66,7 +66,7 @@ export function ModelConfigDialog({accountId,onClose,onChanged}:{accountId:strin
       </section>}
       {saved?.configured&&state==='passed'&&<section className="import-preview"><h3>文本整理预算</h3>
         {saved.runtime_ready&&!dirty?<><p className="model-connection-status" data-state="passed"><span className="connection-status-indicator" aria-hidden="true"/>文本预算已核对，可整理文本资料</p><p className="field-hint">依据：{saved.budget_review?.reference}。配置变更后需重新核对。</p></>:<>
-          <p className="field-hint">请对照供应商文档核对上方上下文与最大输出预算。本步骤只保存人工文档核对记录，不发送模型请求，不代表容量实测或视觉验证。</p>
+          <p className="field-hint">同一模型的文档链接会保留；调整上下文或输出上限后需重新勾选确认。请对照供应商文档核对上方预算。本步骤只保存人工文档核对记录，不发送模型请求，不代表容量实测或视觉验证。</p>
           <FormField label="预算依据（供应商文档HTTPS地址）" value={budgetReference} disabled={!!busy||dirty} onChange={event=>setBudgetReference(event.target.value)}/>
           <label className="budget-confirm"><input type="checkbox" checked={budgetAck} disabled={!!busy||dirty} onChange={event=>setBudgetAck(event.target.checked)}/>我已核对供应商文档，支持以上文本上下文和最大输出预算</label>
           {mode==='json_schema'&&<label className="budget-confirm"><input type="checkbox" checked={schemaAck} disabled={!!busy||dirty} onChange={event=>setSchemaAck(event.target.checked)}/>我已核对服务支持JSON Schema响应格式</label>}
