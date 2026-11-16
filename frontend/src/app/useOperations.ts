@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request, ApiError, messageFor } from "../api/client";
 import type { ContactKey, Operation } from "../api/types";
+import {reportTitle} from './operationOutcome';
 export const active = (job: Operation | null) =>
   !!job && ["queued", "running", "stop_requested"].includes(job.state);
 export const operationTitle = (job: Operation | null) => {
   if (!job) return "尚无整理记录";
+  const title=reportTitle(job);if(title)return title;
   if (job.action === "refresh_contacts")
     return {queued:"联系人刷新已排队", running:"正在刷新联系人资料", stop_requested:"正在停止联系人刷新", stopped:"联系人刷新已停止", failed:"联系人资料刷新未完成", succeeded:"联系人资料已刷新"}[job.state];
   if (job.state === "queued") return "任务已排队";

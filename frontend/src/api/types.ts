@@ -56,7 +56,12 @@ export type RoleUpdate = {
   updated: { key: ContactKey; role: Role; role_version: number }[];
   failed: { key: ContactKey; code: string; current_version: number | null }[];
 };
+export type OperationIssue = {code:string;field_path?:string|null;stage:string;severity:'warning'|'blocker';scope:string;contact_id?:string|null;conversation_id?:string|null;suggested_action:string};
+export type OperationReport={version:1;scope_label:string;source_outcome:string;analysis_outcome:string;started_at?:string|null;finished_at?:string|null;contacts:{contact_id:string;name_snapshot?:string|null;analysis_outcome:string;reason:string|null;issues:OperationIssue[]}[];issues:OperationIssue[]};
 export type Operation = {
+  contact_name_snapshot?:string|null;
+  report?:OperationReport|null;
+  created_at?:string;
   id: string;
   scope: { account_id: string; contact_id: string | null };
   action: string;

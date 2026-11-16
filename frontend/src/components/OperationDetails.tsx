@@ -1,3 +1,4 @@
+import {scopeLabel,reasonLabels,presentOperation} from '../app/operationOutcome';
 import { metadataTotals } from "../app/operationPresentation";
 import type { Operation } from "../api/types";
 import { operationTitle } from "../app/useOperations";
@@ -42,7 +43,22 @@ const gapLabels: Record<string, string> = {
   archive_write_failed: "原文归档写入失败。",
 };
 
-export function OperationDetails({ operation }: { operation: Operation }) {
+export function OperationDetails({ operation,onAction,label }: { operation: Operation;label?:string;onAction?:(action:string)=>void }) {
+  if(operation.action!=='refresh_contacts' && operation.report && !['queued','running','stop_requested'].includes(operation.state)) {
+    const report=operation.report;
+    const presentation=presentOperation(operation);
+    const unique=presentation.issues;
+    return <section className="operation-detail"><h3>{label||scopeLabel(operation)} · {operationTitle(operation)}</h3>
+      <p>消息同步：{{completed:'已完成（已知范围）',partial:(operation.counts.conversations_total>0&&operation.counts.completed_conversations>=operation.counts.conversations_total)?'会话已读取，仍有消息异常':'部分完成',failed:'未完成',stopped:'已停止',not_started:'未开始'}[report.source_outcome]||'处理中'} · {operation.counts.completed_conversations||0}/{operation.counts.conversations_total||0} 个会话</p>
+      <p>资料整理：{operationTitle(operation)}</p>
+      {report.contacts.filter(c=>c.analysis_outcome==='not_applicable'&&c.reason&&reasonLabels[c.reason]).map(c=><p key={c.contact_id}>{reasonLabels[c.reason!]}</p>)}
+      {[...new Map(unique.map(i=>[i.code,i])).values()].slice(0,2).map((i,n)=><p key={n}>{i.severity==='warning'?(i.stage==='publication'?'待核对':'范围提示'):'原因'}：{reasonLabels[i.code]||gapLabels[i.code]||'本次处理遇到异常，可展开诊断详情查看。'}</p>)}
+      {report.analysis_outcome==='failed'&&<p>本次未更新的客户保留已有资料，可根据原因重新同步或检查模型设置。</p>}
+      {presentation.action&&onAction&&<button className="text-button" onClick={()=>onAction(presentation.action!)}>{presentation.action==='open_model_settings'?'检查模型设置':presentation.action==='review_contact'?'检查联系人':'重新同步'}</button>}
+      {report.contacts.length>1&&<ul>{report.contacts.map(c=><li key={c.contact_id}>{c.name_snapshot||c.contact_id} · {c.analysis_outcome==='failed'?'未完成':c.analysis_outcome==='partial'?'已更新，需核对':c.analysis_outcome==='updated'?'已更新':c.analysis_outcome==='unchanged'?'无需更新':'未执行'}</li>)}</ul>}
+      <details><summary>诊断详情</summary><p>新增 {operation.counts.inserted||0} · 修订 {operation.counts.revised||0} · 不变 {operation.counts.unchanged||0}</p>{unique.map((i,n)=><p key={n}>{i.stage} · <code>{i.code}</code> {i.field_path} {i.conversation_id}</p>)}{report.contacts.map(c=><p key={c.contact_id}>{c.contact_id} · {c.analysis_outcome} {c.reason}</p>)}</details>
+    </section>;
+  }
   const metadataOnly = operation.action === "refresh_contacts";
   const counts = operation.counts;
   const archive = metadataTotals(counts);

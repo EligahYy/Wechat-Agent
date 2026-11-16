@@ -1,3 +1,5 @@
+import {historyScopeLabel} from './operationOutcome';
+import {OperationHistory} from '../components/OperationHistory';
 import {Toast} from "../components/Toast";
 import { ContactManager } from "../features/settings/ContactManager";
 import { metadataSummary } from "./operationPresentation";
@@ -206,7 +208,7 @@ export function App() {
       {recordDetailLoading ? <p className="muted" role="status">正在读取记录详情…</p> : recordDetailError ? (
         <div className="error-banner" role="alert"><span>{recordDetailError}</span><button className="text-button" onClick={() => void selectRecord(current, true)}>重试</button></div>
       ) : <>
-        <OperationDetails operation={current} />
+        <OperationDetails operation={current} label={historyScopeLabel(current,operations.history)} onAction={(action)=>{if(action==='open_model_settings'){setRecordsOpen(false);setManageContacts(false);setPage('settings');}else if(action==='review_contact'){setRecordsOpen(false);setManageContacts(true);setPage('settings');}else if(action==='retry_sync'){void operations.start(current.scope.contact_id||undefined);}}} />
         {current.available_actions.includes("stop") && current.id === job?.id && (
           <button className="button secondary" disabled={operations.submitting} onClick={() => void operations.stop()}>停止本次</button>
         )}
@@ -428,32 +430,7 @@ export function App() {
               正在读取记录…
             </p>
           ) : operations.history.length ? (
-            <div className="history-list">
-              {operations.history.map((item) => (
-                <div className="history-record" key={item.id}>
-                <button
-                  className="history-entry"
-                  aria-expanded={current?.id === item.id}
-                  aria-controls={current?.id === item.id ? `record-${item.id}` : undefined}
-                  onClick={() => void selectRecord(item)}
-                >
-                  <div>
-                    <strong>{operationTitle(item)}</strong>
-                    <p>
-                      {new Intl.DateTimeFormat("zh-CN", {
-                        timeZone: "Asia/Shanghai",
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      }).format(new Date(item.updated_at))}{" "}
-                      · {item.scope.contact_id ? "单客户" : "全部范围"}
-                    </p>
-                  </div>
-                  <ChevronRight size={18} />
-                </button>
-                {current?.id === item.id && recordDetail}
-                </div>
-              ))}
-            </div>
+            <OperationHistory operations={operations.history} selectedId={current?.id} onSelect={item=>void selectRecord(item)} detail={recordDetail}/>
           ) : (
             <div className="empty-state">
               <Inbox size={28} />

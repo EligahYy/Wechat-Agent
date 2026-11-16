@@ -73,3 +73,9 @@ it("explains the persisted archive partition rather than subtracting source rows
   expect(screen.getByText("其他归档 3 人")).toBeVisible();
   expect(screen.getByText(/待识别.*身份/)).toBeVisible();
 });
+
+it('retains metadata refresh statistics when a new report is present',()=>{
+ render(<OperationDetails operation={{...operation,action:'refresh_contacts',state:'succeeded',source_state:'succeeded',counts:{metadata_people:10,metadata_groups:2,names_missing:1},report:{version:1,scope_label:'全部范围',source_outcome:'completed',analysis_outcome:'not_applicable',contacts:[],issues:[]}}}/>);
+ expect(screen.getByText('来源资料 10 条')).toBeVisible();
+ expect(screen.queryByText(/0\/0 个会话/)).not.toBeInTheDocument();
+});

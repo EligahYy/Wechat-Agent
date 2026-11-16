@@ -18,7 +18,7 @@ test('customer sees scoped progress and result without closing or scrolling up',
   const submitted=page.waitForRequest(request=>request.method()==='POST'&&request.url().endsWith('/api/operations'));
   await page.route('**/api/operations/*?**',async route=>{
     const response=await route.fetch();const operation=await response.json();
-    await route.fulfill({json:{...operation,state:finished?'failed':'running',phase:finished?'completed':'source',
+    await route.fulfill({json:{...operation,report:null,state:finished?'failed':'running',phase:finished?'completed':'source',
       source_state:finished?'failed':'running',error_code:finished?'capability_not_ready':null,available_actions:finished?[]:['stop'],
       counts:{...operation.counts,conversations_total:3,completed_conversations:finished?3:1,pages_processed:finished?4:1,inserted:2}}});
   });
@@ -91,7 +91,7 @@ test('submission errors are shown in this customer and retry can complete the so
   await expect(status.getByRole('alert')).toBeVisible();
   await page.unroute('**/api/operations');
   await dialog.getByRole('button',{name:'同步并整理此客户',exact:true}).click();
-  await expect(status.getByText('原文已同步，档案整理尚未接入',{exact:true})).toBeVisible();
+  await expect(status.getByText('消息已同步，整理未完成',{exact:true})).toBeVisible();
   await expect(status.getByRole('alert')).toHaveCount(0);
 });
 test('an open source menu follows the dialog while search changes its height',async({page})=>{

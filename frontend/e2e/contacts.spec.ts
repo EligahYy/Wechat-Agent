@@ -198,13 +198,13 @@ test("actual operation separates source success and unavailable analysis", async
 }) => {
   await page.getByRole("button", { name: "同步并整理", exact: true }).click();
   await expect(
-    page.getByText("原文已同步，档案整理尚未接入", { exact: true }).first(),
+    page.getByText("消息已同步，整理未完成", { exact: true }).first(),
   ).toBeVisible();
   await page.getByRole("button", { name: "整理记录", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "整理记录" });
-  await dialog.getByRole("button", { name: /原文已同步/ }).click();
-  await expect(dialog.getByText(/来源阶段：已完成/)).toBeVisible();
-  await expect(dialog.getByText(/分析能力尚未接入/)).toBeVisible();
+  await dialog.getByRole("button", { name: /消息已同步/ }).click();
+  await expect(dialog.getByText(/消息同步：已完成/)).toBeVisible();
+  await expect(dialog.getByText(/尚未配置可用模型/)).toBeVisible();
 });
 test("source list errors retain archive rows and offer retry", async ({
   page,
@@ -353,6 +353,7 @@ test("customer sync belongs to header and incomplete history discloses reasons",
   ).json();
   const record = {
     ...detail,
+    report: null,
     state: "failed",
     source_state: "failed",
     error_code: "source_incomplete",
@@ -395,7 +396,7 @@ test("unified sync refreshes metadata and reads messages without a second refres
   const sent:string[]=[];
   page.on('request',request=>{if(request.method()==='POST'&&request.url().endsWith('/api/operations'))sent.push(request.postDataJSON().action);});
   await page.getByRole('button',{name:'同步并整理',exact:true}).click();
-  await expect(page.getByText('原文已同步，档案整理尚未接入',{exact:true})).toBeVisible();
+  await expect(page.getByText('消息已同步，整理未完成',{exact:true})).toBeVisible();
   expect(sent).toEqual(['sync_and_organize']);
   const history=await(await request.get('/api/operations?account_id=acct-1')).json();
   const counts=history.items[0].counts;
