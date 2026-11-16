@@ -95,7 +95,7 @@ M2 Task 3 的测试网关 fixture 为 gateway；model_transport 提供 `response
 
 ## M3–M5 增量扩展
 
-- M3 `context/chunks.py: plan_chunks(snapshot, capabilities) -> list[ContextChunk]`；段标识稳定、包含来源及重叠；`attachments/parser.py: parse_attachment(path: Path, mime: str) -> ParseResult`，返回 `state, fragments, gaps, parser_version`，片段含 text、locator。
+- M3 `context/chunks.py: plan_chunks(messages, request_factory, config) -> list[ContextChunk]`（纯函数，可在线程规划；request_factory生成真实ModelRequest，预算与网关共用）；段标识稳定、包含来源及重叠；`attachments/parser.py: parse_attachment(path: Path, mime: str) -> ParseResult`，返回 `state, fragments, gaps, parser_version`，片段含 text、locator。
 - M3 `analysis/coverage.py: compute_coverage(conn, snapshot_id: str) -> Coverage`，列出 processed／failed／pending 的来源和段；`analysis/checkpoints.py: load_checkpoint(conn, snapshot_id: str, unit_id: str, cache_key: str) -> dict | None`。
 - `Coverage(processed: list[str], failed: list[str], pending: list[str], complete: bool)`；ContextChunk.input_tokens 包括规则／模板／人工约束／材料，output_tokens 单列，二者加安全余量核算。
 - M4扩展现有`control_operation(conn, account_id, operation_id, action)`，保留账号校验并增加受条件限制的继续／重试；`settings/repository.py: save_schedule(conn, account_id: str, enabled: bool, time: str, timezone: str) -> Schedule`；`operations/scheduler.py: tick(conn, now: datetime) -> list[str]`，返回本次创建的操作ID列表（每账号每日最多一个）。

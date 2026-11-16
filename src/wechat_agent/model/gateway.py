@@ -10,6 +10,7 @@ from referencing.exceptions import NoSuchResource,Unresolvable
 from jsonschema import Draft202012Validator,ValidationError as SchemaError,SchemaError as InvalidSchema
 from .contracts import ModelConfig,ModelRequest,ModelResponse,ModelCallError
 from ..source.repository import transaction,cancellation_requested
+from ..context.tokens import request_budget,wire_payload
 
 class ModelGateway:
     def __init__(self,conn,config,client,credentials,*,sleep=asyncio.sleep):
@@ -77,10 +78,8 @@ class ModelGateway:
             local_refs(request.output_schema)
         except (InvalidSchema,ValueError,TypeError,KeyError,IndexError,AttributeError,RecursionError):
             raise ModelCallError('output_schema_invalid') from None
-        # UTF-8 bytes deliberately overestimate token use; never truncate history.
-        estimate=len(json.dumps([item.model_dump() for item in request.messages],ensure_ascii=False).encode())+2*len(json.dumps(request.output_schema).encode())+256
-        caps=self.config.capabilities
-        if request.output_tokens>caps.max_output_tokens or estimate+request.output_tokens+int(caps.context_tokens*.1)>caps.context_tokens:
+        budget=request_budget(request,self.config)
+        if request.output_tokens>self.config.capabilities.max_output_tokens or not budget.fits:
             raise ModelCallError('context_requires_chunking')
         try:
             async with asyncio.timeout(300):
@@ -99,10 +98,7 @@ class ModelGateway:
                 if sent>=3:raise ModelCallError('call_request_limit')
                 attempt=self._reserve(request,token,account,contact)
                 sent+=1
-                payload={'model':self.config.model_id,'messages':messages,'stream':False,'max_tokens':request.output_tokens}
-                if self.config.response_mode=='json_schema':
-                    payload['response_format']={'type':'json_schema','json_schema':{'name':'profile','strict':True,'schema':request.output_schema}}
-                elif self.config.response_mode=='json_object':payload['response_format']={'type':'json_object'}
+                payload=wire_payload(request,self.config,messages=messages)
                 response=None;reason=None;usage={};status='model_failed'
                 try:
                     response=await self.client.post(self.config.endpoint,json=payload,
