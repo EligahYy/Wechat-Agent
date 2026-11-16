@@ -49,10 +49,10 @@
 
 ## Task 4: 整体验收、CR与架构文档
 
-- [ ] Step1 完整Python、前端unit/build、相关浏览器回归；独立小窗口大历史合成输入，核对所有修订与片段覆盖、原文证据、缓存及安全边界。
-- [ ] Step2 一次最终独立只读CR：容量与实际HTTP一致、成功缓存不越权、失败恢复预算不重置、空／无效模型输出不误报成功、最后发布保护、计划性能与SQL事务。
-- [ ] Step3 重要问题一次修复，失败回归→绿灯；不重复派CR。
-- [ ] Step4 更新STATUS、计划索引、MODEL_EXECUTION、MAC_SETUP与验收报告；wheel资源、迁移、静态服务及diff检查，非强制推main。
+- [x] Step1 完整Python、前端unit/build、相关浏览器回归；独立小窗口大历史合成输入，核对所有修订与片段覆盖、原文证据、缓存及安全边界。
+- [x] Step2 一次最终独立只读CR：容量与实际HTTP一致、成功缓存不越权、失败恢复预算不重置、空／无效模型输出不误报成功、最后发布保护、计划性能与SQL事务。
+- [x] Step3 重要问题一次修复，失败回归→绿灯；不重复派CR。
+- [x] Step4 更新STATUS、计划索引、MODEL_EXECUTION、MAC_SETUP与验收报告；wheel资源、迁移、静态服务及diff检查，非强制推main。
 
 ## Pre-flight
 

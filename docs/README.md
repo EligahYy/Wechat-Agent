@@ -1,6 +1,6 @@
 # 文档索引
 
-更新：2026-11-16（北京时间）。当前M2任务1—7云端代码及审查修复完成；真实商家质量待Mac核对，下一主开发阶段M3。当前实现、目标方案和历史证据分开；只使用仓库重建后讨论及用户最新确认的方案。
+更新：2026-11-16（北京时间）。当前M2与M3文本长历史／恢复子阶段云端完成；真实商家质量待Mac核对，下一步为M3附件。当前实现、目标方案和历史证据分开；只使用仓库重建后讨论及用户最新确认的方案。
 
 | 阅读目的 | 入口 |
 | --- | --- |
@@ -12,6 +12,8 @@
 | Mac更新、启动与验证 | [Mac指南](MAC_SETUP.md) |
 | 云端开发与技能恢复 | [开发工作流](DEVELOPMENT_WORKFLOW.md) |
 | M2验收与M3后续阶段 | [开发计划索引](superpowers/plans/README.md) |
+
+最新M3文本交付：[分段、归纳与恢复验收](verification/m3-text-history.md)、[实施计划](superpowers/plans/2026-11-16-m3-text-history.md)。
 
 最新界面维护：[整理记录缓存与结果卡片](verification/operation-history-cache-report.md)。
 
