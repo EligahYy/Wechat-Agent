@@ -75,12 +75,13 @@ async def test_worker_archives_source_and_reports_actual_counts(db):
 
 
 @pytest.mark.asyncio
-async def test_sync_and_organize_without_merchants_only_finishes_source(db):
+async def test_unconfigured_identity_discovery_preserves_source_success(db):
     from wechat_agent.operations.service import create_operation
     from wechat_agent.operations.worker import run_next
     create_operation(db, "sync_and_organize", scope(), "click-1")
     result = await run_next(db, Services(source=FakeSource()))
-    assert result.state == "succeeded"
+    assert result.source_state == 'succeeded' and result.state=='failed'
+    assert result.report.analysis_outcome=='failed'
     assert result.counts["analysis_required"] == 0
     assert [item.phase for item in result.items] == ["source"]
 
@@ -405,3 +406,16 @@ def test_shutdown_stops_active_operation_and_keeps_database_usable(tmp_path):
         assert result.state == "stopped"
         assert result.error_code == "operation_interrupted"
         assert conn.execute("SELECT COUNT(*) FROM sync_leases").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_directory_only_unknown_contacts_do_not_require_a_model(db):
+    from wechat_agent.operations.service import create_operation
+    from wechat_agent.operations.worker import run_next
+    source=FakeSource()
+    source.pages={room.conversation_id:[make_page([],conversation_id=room.conversation_id,conversation_kind=room.kind)] for room in source.rooms}
+    create_operation(db,'sync_and_organize',scope(),'directory-only')
+    result=await run_next(db,Services(source=source))
+    assert result.state=='succeeded' and result.source_state=='succeeded'
+    assert result.report.analysis_outcome=='not_applicable'
+    assert not result.report.contacts

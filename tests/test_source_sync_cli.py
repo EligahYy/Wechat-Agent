@@ -66,3 +66,15 @@ def test_cli_attribution_gap_reports_safe_types_and_keeps_private_raw_in_databas
                                       "conversation_kind": "group", "count": 1}]
     assert "private-chat" not in output
     assert "group-1" not in output
+
+
+def test_cli_known_scope_warning_is_not_a_failed_read(tmp_path,monkeypatch,capsys):
+    from wechat_agent.source import sync
+    async def replay(*args):
+        return sync.SyncResult(successful_conversations=['group-1'],gaps=['source_group_membership_unverified']),0,[],False
+    monkeypatch.setenv('WECHAT_AGENT_DATA_DIR',str(tmp_path))
+    monkeypatch.setattr(sync,'_run_cli',replay)
+    assert sync.main(['--source-account','acct-1','--conversation','group-1'])==0
+    report=json.loads(capsys.readouterr().out)
+    assert report['status']=='passed' and report['history_complete'] is False
+    assert report['warnings']==['source_group_membership_unverified']

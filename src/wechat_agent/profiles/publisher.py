@@ -41,7 +41,14 @@ def check_inputs(conn,snapshot,cancellation):
     return reader,head,None
 
 
+class RetentionError(Exception):
+    pass
+
 def publish(conn,snapshot,result,cancellation):
+    try:return _publish(conn,snapshot,result,cancellation)
+    except RetentionError:return PublishResult(reason='retained_evidence_unavailable')
+
+def _publish(conn,snapshot,result,cancellation):
     with transaction(conn):
         reader,head,reason=check_inputs(conn,snapshot,cancellation)
         if reason:return PublishResult(reason=reason)
@@ -55,7 +62,21 @@ def publish(conn,snapshot,result,cancellation):
         if head and head['version']:
             old=AnalysisResult.model_validate_json(conn.execute('SELECT result_json FROM profile_versions WHERE account_id=? AND contact_id=? AND version=?',(account,contact,head['version'])).fetchone()[0])
             prior=validate_result(conn,snapshot,old)
+            original_old=old
             old=prior.result
+            if snapshot.coverage is not None:
+                for group in ('goods','logistics'):
+                    for name in type(getattr(candidate,group)).model_fields:
+                        current=getattr(getattr(candidate,group),name)
+                        previous=getattr(getattr(original_old,group),name)
+                        if not current.value and previous.value:
+                            retained=getattr(getattr(old,group),name) if old else None
+                            if retained is None or not retained.value:
+                                return PublishResult(reason='retained_evidence_unavailable')
+                            setattr(getattr(candidate,group),name,retained)
+                if not candidate.communication.summary.value and original_old.communication.summary.value:
+                    if not old or not old.communication.summary.value:return PublishResult(reason='retained_evidence_unavailable')
+                    candidate.communication=old.communication
             # Restore only prior fields still authorized by this input snapshot.
             for path in issues if old is not None else []:
                 name=path.split(':')[0];parts=name.split('.')
@@ -66,6 +87,14 @@ def publish(conn,snapshot,result,cancellation):
         for i,batch in enumerate(original.shipments):indices.setdefault(batch.candidate_key,i)
         def restore_batch(payload,batch):
             prior=validate_result(conn,snapshot,AnalysisResult(contact_id=contact,shipments=[ShipmentCandidate.model_validate_json(payload)]))
+            previous_batch=ShipmentCandidate.model_validate_json(payload)
+            if snapshot.coverage is not None:
+                restored=prior.result.shipments[0] if prior.result and prior.result.shipments else None
+                for group in ('goods','logistics'):
+                    if not getattr(batch,group) and getattr(previous_batch,group):
+                        if not restored or len(getattr(restored,group)) != len(getattr(previous_batch,group)):
+                            raise RetentionError()
+                        setattr(batch,group,getattr(restored,group))
             if prior.result and prior.result.shipments:
                 old=prior.result.shipments[0]
                 for group in ('goods','logistics'):

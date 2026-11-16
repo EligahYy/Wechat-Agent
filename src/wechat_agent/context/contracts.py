@@ -1,11 +1,24 @@
-from pydantic import AwareDatetime,BaseModel,ConfigDict,Field
+from typing import Literal
+from pydantic import AwareDatetime,BaseModel,ConfigDict,Field,field_validator
 from ..source.contracts import ContactKey
 from ..profiles.contracts import SourceRef
 
 class SnapshotError(ValueError):
     """Explicit missing, unauthorized or invalid snapshot material."""
 
+class ContextCoverage(BaseModel):
+    model_config=ConfigDict(extra="forbid",frozen=True)
+    required_conversation_ids:tuple[str,...]=()
+    completed_conversation_ids:tuple[str,...]=()
+    warning_codes:tuple[str,...]=()
+    policy_version:Literal['known-scope-v1']='known-scope-v1'
+
+    @field_validator('required_conversation_ids','completed_conversation_ids','warning_codes')
+    @classmethod
+    def canonical(cls,value):return tuple(sorted(set(value)))
+
 class ContextSnapshot(BaseModel):
+    coverage:ContextCoverage|None=None
     model_config=ConfigDict(extra='forbid',frozen=True)
     id:str
     key:ContactKey

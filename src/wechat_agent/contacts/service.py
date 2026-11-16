@@ -1,3 +1,4 @@
+from .conversations import CONTACT_CONVERSATIONS_SQL,conversation_params
 """Account-scoped contact reads and optimistic manual role changes."""
 
 import json
@@ -58,8 +59,8 @@ def _filters(account_id, q, role=None, *, matching_rowids=None):
 
 def _source_gaps(conn, account_id, contact_id):
     gaps = set()
-    scopes = """SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?"""
-    params = (account_id, account_id, contact_id)
+    scopes = CONTACT_CONVERSATIONS_SQL
+    params = (account_id,*conversation_params(ContactKey(account_id=account_id,contact_id=contact_id)))
     for row in conn.execute(f"SELECT complete,gaps_json FROM sync_cursors WHERE account_id=? AND conversation_id IN ({scopes})", params):
         gaps.update(json.loads(row[1]))
         if not row[0]:

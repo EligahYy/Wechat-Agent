@@ -2,14 +2,14 @@
 from datetime import datetime,timezone
 import json
 from uuid import uuid4
-from .contracts import ContextSnapshot,SnapshotError
+from .contracts import ContextSnapshot,SnapshotError,ContextCoverage
 from ..profiles.contracts import SourceRef
 from ..profiles.manual import read_manual
 from ..source.contracts import ContactKey
 from ..source.repository import transaction
 
 
-def build_snapshot(conn,key:ContactKey,cutoff:datetime,*,versions:dict[str,str]|None=None)->ContextSnapshot:
+def build_snapshot(conn,key:ContactKey,cutoff:datetime,*,versions:dict[str,str]|None=None,coverage:ContextCoverage|None=None)->ContextSnapshot:
     key=ContactKey.model_validate(key)
     if not isinstance(cutoff,datetime) or cutoff.utcoffset() is None:raise ValueError('snapshot_cutoff_timezone_required')
     cutoff=cutoff.astimezone(timezone.utc)
@@ -25,12 +25,12 @@ def build_snapshot(conn,key:ContactKey,cutoff:datetime,*,versions:dict[str,str]|
         rooms={row['conversation_id']:dict(row) for row in conn.execute('''SELECT conversation_id,kind,title FROM conversations WHERE account_id=? AND (
             conversation_id IN (SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?) OR
             conversation_id IN (SELECT conversation_id FROM messages WHERE account_id=? AND sender_id=?))''',(account,account,contact,account,contact))}
-        rows=conn.execute('''SELECT r.*,m.conversation_id FROM message_revisions r JOIN messages m
-            ON r.account_id=m.account_id AND r.message_id=m.message_id AND r.revision=m.revision
-            WHERE m.account_id=? AND (m.sender_id=? OR m.conversation_id IN (
-                SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?))
-            ORDER BY r.message_id''',
-            (account,contact,account,contact)).fetchall()
+        from ..contacts.conversations import resolve_contact_conversations
+        linked=resolve_contact_conversations(conn,key)
+        rooms={room:dict(conn.execute('SELECT conversation_id,kind,title FROM conversations WHERE account_id=? AND conversation_id=?',(account,room)).fetchone()) for room in sorted(linked)}
+        rows=[]
+        for room in sorted(linked):
+            rows.extend(conn.execute('''SELECT r.*,m.conversation_id FROM message_revisions r JOIN messages m ON r.account_id=m.account_id AND r.message_id=m.message_id AND r.revision=m.revision WHERE m.account_id=? AND m.conversation_id=?''',(account,room)).fetchall())
         gaps={'history_complete_unverified'};messages=[];actors={}
         dated=[]
         for row in rows:
@@ -72,7 +72,7 @@ def build_snapshot(conn,key:ContactKey,cutoff:datetime,*,versions:dict[str,str]|
                 gaps.add('source_issue:'+room+':'+issue['code'])
         head=conn.execute('SELECT version,manual_version FROM profile_heads WHERE account_id=? AND contact_id=?',(account,contact)).fetchone()
         override=conn.execute('SELECT version FROM business_scope_overrides WHERE account_id=? AND contact_id=?',(account,contact)).fetchone()
-        snapshot=ContextSnapshot(id=str(uuid4()),key=key,cutoff=cutoff,
+        snapshot=ContextSnapshot(coverage=coverage,id=str(uuid4()),key=key,cutoff=cutoff,
             material_refs=tuple(SourceRef(message_id=row['message_id'],revision=row['revision']) for row in messages),
             role_version=person['role_version'],manual_version=head[1] if head else 0,profile_version=head[0] if head else 0,scope_version=override[0] if override else 0,versions=selected_versions,gaps=tuple(sorted(gaps)))
         payload={'messages':messages,'actors':actors,'conversations':rooms,'manual':read_manual(conn,key)}

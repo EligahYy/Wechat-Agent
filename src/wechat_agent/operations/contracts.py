@@ -70,7 +70,12 @@ class OperationItem(BaseModel):
     role_version: int | None = None
 
 
+from .reports import OperationReport
+
+
 class Operation(BaseModel):
+    contact_name_snapshot: str | None = None
+    report: OperationReport | None = None
     id: str
     scope: OperationScope
     action: str

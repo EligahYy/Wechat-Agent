@@ -33,6 +33,8 @@ class SyncResult(BaseModel):
     failed_conversations: list[str] = Field(default_factory=list)
     incomplete_conversations: list[str] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+    conversation_gaps: dict[str,list[str]] = Field(default_factory=dict)
+    missing_conversations: list[str] = Field(default_factory=list)
     history_complete: bool = False
     stopped: bool = False
     metadata_people: int = 0
@@ -135,12 +137,15 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
         if not conn.execute("SELECT 1 FROM contacts WHERE account_id=? AND contact_id=? AND identity_state='active'",
                             (scope.account_id, scope.contact_id)).fetchone():
             raise SourceError("source_contact_unavailable")
-        linked = {row[0] for row in conn.execute("SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?",
-                                               (scope.account_id, scope.contact_id))}
-        linked.add(scope.contact_id)
+        from ..contacts.conversations import resolve_contact_conversations
+        from .contracts import ContactKey
+        linked = resolve_contact_conversations(conn,ContactKey(account_id=scope.account_id,contact_id=scope.contact_id))
+        result.missing_conversations = sorted(linked - targets)
+        if result.missing_conversations:
+            result.gaps.append('source_conversation_unavailable')
         targets &= linked
-        if any(room.kind == 'group' and (room.membership_state != 'known' or not room.member_ids) for room in rooms):
-            result.gaps.append("source_group_membership_unverified")
+    if any(room.kind == 'group' and (room.membership_state != 'known' or not room.member_ids) for room in rooms):
+        result.gaps.append("source_group_membership_unverified")
     if conversation_ids is not None:
         requested = set(conversation_ids)
         if not requested <= targets:
@@ -156,7 +161,7 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
             else:
                 selected.add(target)
         targets = selected
-    result.total_conversations = len(targets)
+    result.total_conversations = len(targets)+len(result.missing_conversations)
     if on_progress:
         on_progress(result, None)
     for conversation_id in sorted(targets):
@@ -235,7 +240,11 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
             result.incomplete_conversations.append(conversation_id)
         else:
             result.failed_conversations.append(conversation_id)
+        result.conversation_gaps[conversation_id]=sorted(set(gaps))
         result.gaps.extend(gaps)
+        from .coverage import GLOBAL,LOCAL,WARNINGS
+        if any(g in GLOBAL or g not in LOCAL|WARNINGS|{'source_sync_stopped'} for g in gaps):
+            break
         if on_progress:
             on_progress(result, conversation_id)
         if result.stopped:
@@ -304,11 +313,13 @@ def main(argv=None):
         result, unresolved, issue_types, truncated = SyncResult(gaps=[str(error)]), None, [], False
     except (OSError, ValueError, sqlite3.Error):
         result, unresolved, issue_types, truncated = SyncResult(gaps=["source_sync_failed"]), None, [], False
+    from .coverage import WARNINGS
     report = {
+        "warnings": sorted(set(result.gaps)&WARNINGS),
         "schema_version": 1, "database_schema_version": SCHEMA_VERSION, "checked_at": _now(),
         "scope": "sample" if args.sample else "selected", "history_complete": False,
         "account_fingerprint": hashlib.sha256(args.source_account.encode()).hexdigest()[:12],
-        "status": "partial" if result.gaps else "passed",
+        "status": "partial" if set(result.gaps)-WARNINGS else "passed",
         "counts": {"inserted": result.inserted, "revised": result.revised, "unchanged": result.unchanged,
                    "pages_processed": result.pages_processed, "completed_conversations": len(result.successful_conversations),
                    "incomplete_conversations": len(result.incomplete_conversations),
@@ -321,7 +332,7 @@ def main(argv=None):
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered + "\n", encoding="utf-8")
     print(rendered)
-    return 1 if set(result.gaps) - {"source_page_limit_reached"} else 0
+    return 1 if set(result.gaps) - WARNINGS - {"source_page_limit_reached"} else 0
 
 
 if __name__ == "__main__":

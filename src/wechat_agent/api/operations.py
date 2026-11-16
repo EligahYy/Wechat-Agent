@@ -1,3 +1,4 @@
+from ..operations.service import OPERATION_QUERY
 """Fast HTTP intentions; execution runs in the lifespan-owned worker."""
 
 from contextlib import closing
@@ -61,9 +62,9 @@ def history(request: Request, account_id: str = Query(min_length=1, max_length=5
             conn.execute("BEGIN")
             authorize_account(request, conn, account_id)
             total = conn.execute("SELECT COUNT(*) FROM operations WHERE account_id=?", (account_id,)).fetchone()[0]
-            ids = conn.execute("SELECT id FROM operations WHERE account_id=? ORDER BY created_at DESC,rowid DESC LIMIT ? OFFSET ?",
+            ids = conn.execute(OPERATION_QUERY+" WHERE o.account_id=? ORDER BY o.created_at DESC,o.rowid DESC LIMIT ? OFFSET ?",
                                (account_id, page_size, (page - 1) * page_size)).fetchall()
-            items = [get_operation(conn, account_id, row[0], include_items=False).model_dump(mode="json", exclude={"items"}) for row in ids]
+            items = [get_operation(conn, account_id, row["id"], include_items=False, _row=row).model_dump(mode="json", exclude={"items"}) for row in ids]
     except sqlite3.Error:
         raise OperationError("database_unavailable", 503) from None
     return {"items": items, "total": total, "page": page, "page_size": page_size}

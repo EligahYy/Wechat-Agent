@@ -190,3 +190,5 @@ async def test_model_session_setup_failure_does_not_relabel_source_as_failed(flo
     result=await sync(client)
     assert result.source_state=='succeeded' and result.phase=='analysis'
     assert result.error_code=='analysis_failed' and not calls
+    assert result.report.analysis_outcome=='failed'
+    assert result.report.source_outcome=='completed'

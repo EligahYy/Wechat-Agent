@@ -88,6 +88,8 @@ def archive_metadata(conn, account_id, contacts, conversations, *, metadata=None
                             title=CASE WHEN excluded.title_state IN ('known','empty') THEN excluded.title ELSE conversations.title END,
                             provenance=excluded.provenance,title_state=excluded.title_state""",
                          (account_id, room.conversation_id, room.kind, room.title, room.origin, room.title_state))
+            if room.kind=='group' and room.membership_state in ('known','empty'):
+                conn.execute("DELETE FROM members WHERE account_id=? AND conversation_id=? AND provenance='source_membership'",(account_id,room.conversation_id))
             for member in room.member_ids:
                 if not is_person_identifier(member):
                     invalid.add(member)

@@ -3,7 +3,6 @@
 import asyncio
 from contextlib import asynccontextmanager, closing
 import json
-import logging
 import os
 import sqlite3
 from uuid import uuid4
@@ -13,6 +12,7 @@ from pydantic import ValidationError
 from .contracts import CancellationToken, SyncOptions
 from .service import get_operation, initial_counts, now
 from ..source.adapter import SourceError
+from ..source.coverage import assess_sync
 from ..source.repository import transaction
 from ..source.sync import sync_scope
 from ..storage.db import open_existing_db
@@ -139,20 +139,58 @@ def _complete_source(conn, operation, owner, result, *, ready=False, error_code=
         from ..contacts.scope import decisions
         included=decisions(conn,operation.scope.account_id)
         targets=[target for target in targets if included[target['contact_id']].included]
+        from ..source.coverage import assess_sync,OperationIssue
+        from .reports import OperationReport,ContactOutcome,save_report,load_report
+        pending_identity=set()
+        if not ready and operation.action=='sync_and_organize':
+            unknown={r[0] for r in conn.execute("SELECT contact_id FROM contacts WHERE account_id=? AND role='unknown' AND is_self=0 AND identity_state='active'",(operation.scope.account_id,))}
+            pending_identity={c for c,d in included.items() if c in unknown and d.included and d.provisional and operation.scope.contact_id in (None,c)}
+        assessment=assess_sync(conn,operation.scope.account_id,{t['contact_id'] for t in targets}|pending_identity,result)
+        missing={room for c in assessment.contacts.values() for room in c.failed_conversation_ids} - set(result.failed_conversations) - set(result.incomplete_conversations) - set(result.missing_conversations) - set(result.successful_conversations)
+        if missing:
+            result.total_conversations+=len(missing)
+            result.missing_conversations.extend(sorted(missing))
+            result.gaps.append('source_conversation_unavailable')
+            for coverage in assessment.contacts.values():
+                coverage.issues=[issue.model_copy(update={'code':'source_conversation_unavailable'}) if issue.conversation_id in missing and issue.code=='source_not_complete' else issue for issue in coverage.issues]
+            for room in sorted(missing):
+                assessment.issues.append(OperationIssue(code='source_conversation_unavailable',stage='messages',severity='blocker',scope='conversation',conversation_id=room,suggested_action='retry_sync'))
+        report=OperationReport(scope_label=operation.contact_name_snapshot or '全部范围',started_at=operation.updated_at,source_outcome='completed',issues=assessment.issues,
+            contacts=[ContactOutcome(**c.model_dump(),reason=None if c.can_analyze else 'source_not_complete') for c in assessment.contacts.values()])
+        for outcome in report.contacts:
+            if outcome.contact_id in pending_identity:
+                outcome.analysis_outcome='failed' if outcome.can_analyze else 'not_started'
+                outcome.reason=error_code if outcome.can_analyze else 'source_not_complete'
+                if outcome.can_analyze:outcome.issues.append(OperationIssue(code=error_code,stage='model',severity='blocker',scope='contact',contact_id=outcome.contact_id,suggested_action='open_model_settings'))
+        pending_model=any(c.contact_id in pending_identity and c.can_analyze for c in report.contacts)
+        if operation.scope.contact_id and not report.contacts:
+            person=conn.execute('SELECT role FROM contacts WHERE account_id=? AND contact_id=?',(operation.scope.account_id,operation.scope.contact_id)).fetchone()
+            report.contacts.append(ContactOutcome(contact_id=operation.scope.contact_id,reason='identity_pending' if person and person[0]=='unknown' else 'role_not_merchant' if person and person[0]!='merchant' else 'no_material',analysis_outcome='not_applicable'))
+        previous=load_report(conn,operation.scope.account_id,operation.id)
+        if previous:
+            report.contacts.extend(c for c in previous.contacts if c.contact_id not in assessment.contacts)
+            report.issues.extend(previous.issues)
+        names={r['contact_id']:r['name'] for r in conn.execute("SELECT contact_id,COALESCE(NULLIF(remark,''),NULLIF(nickname,''),contact_id) AS name FROM contacts WHERE account_id=?",(operation.scope.account_id,))}
+        for c in report.contacts:c.name_snapshot=names.get(c.contact_id)
+        save_report(conn,operation.scope.account_id,operation.id,report)
+        blocked=[t for t in targets if not assessment.contacts[t['contact_id']].can_analyze]
+        targets=[t for t in targets if assessment.contacts[t['contact_id']].can_analyze]
+        for target in blocked:
+            conn.execute("INSERT INTO operation_items(account_id,operation_id,item_id,contact_id,state,phase,generation,role_version,error_code) VALUES(?,?,?,?,'failed','analysis',?,?,?)",(operation.scope.account_id,operation.id,'analysis:'+target[0],target[0],operation.generation,target[1],'source_not_complete'))
         counts = _counts(result)
-        counts["analysis_required"] = len(targets)
+        counts["analysis_required"] = len(targets)+len(blocked)
         counts.update(analysis_completed=0,analysis_skipped=0,analysis_failed=len(targets) if not ready else 0,analysis_incomplete=0)
-        conn.execute("""UPDATE operation_items SET state='succeeded',error_code=NULL,gaps_json='[]',counts_json=?
+        conn.execute("""UPDATE operation_items SET state=?,error_code=NULL,gaps_json=?,counts_json=?
                         WHERE account_id=? AND operation_id=? AND item_id='source'""",
-                     (json.dumps(_counts(result)), operation.scope.account_id, operation.id))
+                     ('failed' if result.failed_conversations or result.incomplete_conversations or result.missing_conversations else 'succeeded',json.dumps(result.gaps),json.dumps(_counts(result)), operation.scope.account_id, operation.id))
         for target in targets:
             conn.execute("""INSERT INTO operation_items(account_id,operation_id,item_id,contact_id,state,phase,
                             generation,role_version,error_code) VALUES (?,?,?,?,?,'analysis',?,?,?)""",
                          (operation.scope.account_id, operation.id, "analysis:" + target[0], target[0], 'queued' if ready else 'failed', operation.generation, target[1],None if ready else error_code))
         conn.execute("""UPDATE operations SET state=?,phase=?,remaining=?,counts_json=?,error_code=?,worker_id=NULL,
                         updated_at=? WHERE account_id=? AND id=?""",
-                     ("running" if ready and targets else "failed" if targets else "succeeded", "analysis" if targets else "completed", len(targets),
-                      json.dumps(counts), error_code if targets and not ready else None, now(), operation.scope.account_id, operation.id))
+                     ("running" if ready and targets else "failed" if targets or pending_model else "succeeded", "analysis" if targets or pending_model else "completed", len(targets),
+                      json.dumps(counts), error_code if (targets or pending_model) and not ready else None, now(), operation.scope.account_id, operation.id))
         if ready and targets:conn.execute('UPDATE operations SET worker_id=? WHERE account_id=? AND id=?',(owner,operation.scope.account_id,operation.id))
     return [row[0] for row in targets]
 
@@ -185,30 +223,10 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
                 on_progress=lambda value, target: _save_progress(conn, operation, owner, value, target))
         from ..contacts.activity import refresh_activity
         with transaction(conn):refresh_activity(conn,operation.scope.account_id)
-        if not result.stopped and not result.gaps and operation.action == 'sync_and_organize' and services.discovery_factory is not None and runtime is None:
-            from ..contacts.scope import decisions
-            from ..discovery.context import build_discovery_snapshot
-            from ..discovery.repository import publish_discovery
-            from datetime import datetime,timezone
-            from ..source.contracts import ContactKey
-            strategy=services.discovery_factory(conn)
-            for contact,decision in decisions(conn,operation.scope.account_id).items():
-                if not _owned(conn,operation,owner):break
-                if not decision.provisional:continue
-                if operation.scope.contact_id is not None and contact!=operation.scope.contact_id:continue
-                snapshot=build_discovery_snapshot(conn,ContactKey(account_id=operation.scope.account_id,contact_id=contact),datetime.now(timezone.utc),versions={'model_config':strategy.gateway.config.version})
-                try:
-                    token=CancellationToken(operation_id=operation.id,generation=operation.generation)
-                    classification=await strategy.classify(snapshot,token)
-                    publish_discovery(conn,snapshot,classification,token)
-                except asyncio.CancelledError:raise
-                except Exception:
-                    # Failed/unconfigured/oversized windows remain provisional.
-                    logging.getLogger(__name__).warning('discovery_pending')
         _save_progress(conn, operation, owner, result, None)
         if result.stopped:
             _stop(conn, operation, owner)
-        elif result.gaps:
+        elif (result.gaps and operation.action != 'sync_and_organize') or assess_sync(conn,operation.scope.account_id,set(),result).global_blocked:
             unavailable = {"source_unavailable", "source_unreachable", "source_timeout", "source_not_ready",
                            "source_authentication_failed", "source_server_error", "source_account_mismatch"}
             code = "source_unavailable" if unavailable.intersection(result.gaps) else "source_incomplete"
@@ -222,7 +240,7 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
                         conn.execute("UPDATE operation_items SET state='succeeded',error_code=NULL,gaps_json='[]' WHERE account_id=? AND operation_id=? AND item_id='source'",(operation.scope.account_id,operation.id))
                         conn.execute("UPDATE operations SET phase='analysis',updated_at=? WHERE account_id=? AND id=?",(now(),operation.scope.account_id,operation.id))
                 async with runtime as session:
-                    await discover(conn,operation,owner,session.discovery)
+                    await discover(conn,operation,owner,session.discovery,sync_result=result)
                     targets=_complete_source(conn,operation,owner,result,ready=True)
                     if targets:await analyze(conn,operation,owner,session,targets)
                     elif targets is False:_stop(conn,operation,owner)
@@ -240,6 +258,8 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
             if not _fail_analysis(conn,operation,owner,'analysis_failed'):_stop(conn,operation,owner)
         elif not _fail_source(conn, operation, owner, "source_unavailable", ["source_unavailable"]):
             _stop(conn, operation, owner)
+    from .reports import finalize_report
+    with transaction(conn):finalize_report(conn,operation.scope.account_id,operation.id)
     return get_operation(conn, operation.scope.account_id, operation.id)
 
 

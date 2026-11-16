@@ -23,7 +23,29 @@ from wechat_agent.storage.db import open_db,migrate
 
 def app_factory():
     directory=tempfile.TemporaryDirectory(prefix='wechat browser test ')
-    app=create_app(Settings(data_dir=Path(directory.name)),Services(source=FakeSource()))
+    class BrowserSource(FakeSource):
+        # seed_case adds this synthetic source. It must remain readable during
+        # whole-account sync, rather than masquerading as a disappeared group.
+        async def conversations(self):
+            from wechat_agent.source.contracts import ConversationRecord
+            from wechat_agent.storage.db import open_existing_db
+            rooms=await super().conversations()
+            with closing(open_existing_db(Path(directory.name)/'archive.sqlite3',readonly=True)) as conn:
+                row=conn.execute("SELECT title FROM conversations WHERE account_id=? AND conversation_id='activity-room'",(self.account_id,)).fetchone()
+                if row:
+                    ids=[r[0] for r in conn.execute("SELECT DISTINCT sender_id FROM messages WHERE account_id=? AND conversation_id='activity-room' AND sender_id IS NOT NULL",(self.account_id,))]
+                    rooms.append(ConversationRecord(account_id=self.account_id,conversation_id='activity-room',kind='group',title=row[0],membership_state='known',member_ids=ids))
+            return rooms
+        async def messages(self,conversation_id,cursor,limit):
+            if conversation_id!='activity-room':return await super().messages(conversation_id,cursor,limit)
+            import json
+            from wechat_agent.storage.db import open_existing_db
+            self.calls.append((conversation_id,cursor,limit))
+            with closing(open_existing_db(Path(directory.name)/'archive.sqlite3',readonly=True)) as conn:
+                rows=conn.execute("SELECT * FROM messages WHERE account_id=? AND conversation_id='activity-room'",(self.account_id,)).fetchall()
+                records=[make_message(message_id=r['message_id'],conversation_id=conversation_id,sender_id=r['sender_id'],sent_at=datetime.fromisoformat(r['sent_at']),body=r['body'],source_revision=r['source_revision'],raw=json.loads(r['raw_json'])) for r in rows]
+            return make_page(records,conversation_id=conversation_id)
+    app=create_app(Settings(data_dir=Path(directory.name)),Services(source=BrowserSource()))
     class MemoryCredentials:
         def __init__(self):self.values={}
         def get(self,ref):return self.values[ref]
