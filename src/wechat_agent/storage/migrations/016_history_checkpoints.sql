@@ -6,6 +6,7 @@ CREATE TABLE history_runs (
  strategy TEXT NOT NULL,
  estimator TEXT NOT NULL,
  mode TEXT NOT NULL CHECK(mode IN ('direct','chunked')),
+ materials_json TEXT NOT NULL CHECK(json_valid(materials_json)),
  context_tokens INTEGER NOT NULL,
  progress_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(progress_json)),
  PRIMARY KEY(account_id,snapshot_id),

@@ -10,7 +10,7 @@ from ..model.contracts import ModelRequest,ModelMessage,ModelCallError
 from ..profiles.contracts import AnalysisResult,analysis_result_schema
 from ..profiles.publisher import check_inputs
 from ..source.repository import transaction
-from .checkpoints import create_run,register_unit,checkpoint,set_unit,update_progress
+from .checkpoints import create_run,register_unit,checkpoint,set_unit,RunProgress
 from .coverage import compute_coverage
 from .facts import validate_unit,source_refs,deduplicate,merge_groups,combine,enforce_merge_scope
 
@@ -24,24 +24,25 @@ class WorkflowV2:
             model_config_version=self.gateway.config.version,messages=[ModelMessage(role='system',content=prompt),ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))],
             output_schema=analysis_result_schema(),output_tokens=min(8192,self.gateway.config.capabilities.max_output_tokens))
 
-    async def unit(self,snapshot,token,request,allowed,label='all',candidates=()):
-        saved=checkpoint(self.conn,snapshot,request)
-        if saved['state']=='succeeded':
-            try:result=validate_unit(self.conn,snapshot,json.loads(saved['output_json']),allowed)
-            except (ValueError,TypeError):raise ModelCallError('checkpoint_invalid') from None
-            enforce_merge_scope(result,label,candidates)
-            set_unit(self.conn,snapshot,token,request,'succeeded',reused=True)
-            return result
+    async def unit(self,snapshot,token,request,allowed,label='all',candidates=(),*,reader=None,progress=None):
         try:
-            set_unit(self.conn,snapshot,token,request,'running')
+            saved=checkpoint(self.conn,snapshot,request)
+            if saved['state']=='succeeded':
+                try:payload=json.loads(saved['output_json'])
+                except (ValueError,TypeError):raise ModelCallError('checkpoint_invalid') from None
+                result=validate_unit(self.conn,snapshot,payload,allowed,reader=reader)
+                enforce_merge_scope(result,label,candidates)
+                set_unit(self.conn,snapshot,token,request,'succeeded',reused=True,progress=progress)
+                return result
+            set_unit(self.conn,snapshot,token,request,'running',progress=progress)
             response=await self.gateway.generate(request,token)
-            result=validate_unit(self.conn,snapshot,response.payload,allowed)
+            result=validate_unit(self.conn,snapshot,response.payload,allowed,reader=reader)
             enforce_merge_scope(result,label,candidates)
-            set_unit(self.conn,snapshot,token,request,'succeeded',output=result)
+            set_unit(self.conn,snapshot,token,request,'succeeded',output=result,progress=progress)
             return result
         except ModelCallError as error:
             if error.code in {'model_cancelled','cancelled'}:raise
-            set_unit(self.conn,snapshot,token,request,'failed',error=error.code)
+            set_unit(self.conn,snapshot,token,request,'failed',error=error.code,progress=progress)
             raise
 
     async def run(self,snapshot,checkpoint_hint,cancellation):
@@ -59,11 +60,13 @@ class WorkflowV2:
         prompt=files('wechat_agent.model').joinpath('prompts/profile-v1.md').read_text()
         direct=self.request(snapshot,{**base,'messages':rows},prompt)
         if request_budget(direct,self.gateway.config).fits:
-            create_run(self.conn,snapshot,cancellation,'direct',self.gateway.config)
+            create_run(self.conn,snapshot,cancellation,'direct',self.gateway.config,messages=rows)
             spans=tuple(MessageSpan(r['message_id'],r['revision'],0,len(r['body']),len(r['body'])) for r in rows)
             req=register_unit(self.conn,snapshot,cancellation,direct,spans,0,self.gateway.config)
-            update_progress(self.conn,snapshot,cancellation)
-            return await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in rows})
+            progress=RunProgress(self.conn,snapshot,cancellation);progress.persist()
+            result=await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in rows},reader=reader,progress=progress)
+            if not compute_coverage(self.conn,snapshot.key.account_id,snapshot.id).complete:raise ModelCallError('history_coverage_incomplete')
+            return result
         prompt+='\n'+files('wechat_agent.model').joinpath('prompts/history-v1.md').read_text()
         # Limit metadata to what a chunk can actually observe, without omitting
         # the target or changing the frozen global publication authority.
@@ -79,16 +82,16 @@ class WorkflowV2:
         def planned(selected):
             return extraction(selected,[{'message_id':r['message_id'],'revision':r['revision'],**r.get('body_fragment',{'start':0,'end':len(r['body']),'total':len(r['body'])})} for r in selected])
         chunks=await asyncio.to_thread(plan_chunks,rows,planned,self.gateway.config)
-        create_run(self.conn,snapshot,cancellation,'chunked',self.gateway.config)
+        create_run(self.conn,snapshot,cancellation,'chunked',self.gateway.config,messages=rows)
         requests=[]
         for chunk in chunks:
             req=extraction(list(chunk.messages),[asdict(s) for s in chunk.spans])
             requests.append((chunk,register_unit(self.conn,snapshot,cancellation,req,chunk.spans,chunk.ordinal,self.gateway.config)))
-        update_progress(self.conn,snapshot,cancellation)
+        progress=RunProgress(self.conn,snapshot,cancellation);progress.persist()
         results=[];first_error=None
         fatal={'model_cancelled','cancelled','authentication_failed','model_not_found','credential_unavailable','model_config_changed','checkpoint_scope_mismatch'}
         for chunk,req in requests:
-            try:results.append(await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in chunk.messages}))
+            try:results.append(await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in chunk.messages},reader=reader,progress=progress))
             except ModelCallError as error:
                 if error.code in fatal:raise
                 first_error=first_error or error
@@ -107,11 +110,11 @@ class WorkflowV2:
             req=merge_request(label,candidates)
             if not request_budget(req,self.gateway.config).fits:raise ModelCallError('history_merge_unit_too_large')
             merges.append((label,candidates,register_unit(self.conn,snapshot,cancellation,req,(),ordinal,self.gateway.config)))
-        update_progress(self.conn,snapshot,cancellation)
+        progress.load(merge_only=True);progress.persist()
         merged=[];first_error=None
         for label,candidates,req in merges:
             allowed={(ref.message_id,ref.revision) for c in candidates for ref in source_refs(AnalysisResult.model_validate(c))}
-            try:merged.append((label,await self.unit(snapshot,cancellation,req,allowed,label,candidates)))
+            try:merged.append((label,await self.unit(snapshot,cancellation,req,allowed,label,candidates,reader=reader,progress=progress)))
             except ModelCallError as error:
                 if error.code in fatal:raise
                 first_error=first_error or error

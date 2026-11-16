@@ -11,6 +11,7 @@ class ContextReader:
             (snapshot.key.account_id,snapshot.id,snapshot.key.contact_id)).fetchone()
         if saved is None or ContextSnapshot.model_validate_json(saved['manifest_json'])!=snapshot:
             raise SnapshotError('snapshot_not_authorized')
+        self.snapshot=snapshot
         self._payload=json.loads(saved['payload_json'])
         self._messages={(row['message_id'],row['revision']):row for row in self._payload['messages']}
 

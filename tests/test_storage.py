@@ -136,3 +136,20 @@ def test_search_tracks_message_edits_deletes_and_rollbacks(db):
     with db:
         db.execute("DELETE FROM messages")
     assert db.execute("SELECT COUNT(*) FROM message_search WHERE message_search MATCH '备货完成'").fetchone()[0] == 0
+
+def test_schema15_upgrade_preserves_archive_profiles_and_operations(tmp_path,monkeypatch):
+    from wechat_agent.storage import db as storage
+    from tests.factories import seed_case
+    from tests.profile_seed import seed_profile
+    with closing(storage.open_db(tmp_path/'upgrade.sqlite3')) as conn:
+        with monkeypatch.context() as patch:
+            patch.setattr(storage,'SCHEMA_VERSION',15)
+            patch.setattr(storage,'_MIGRATIONS',tuple(m for m in storage._MIGRATIONS if m[0]<=15))
+            storage.migrate(conn)
+        seed_case(conn);seed_profile(conn)
+        tables=['messages','message_revisions','profile_heads','profile_versions','operations','operation_items','snapshots']
+        before={name:[tuple(r) for r in conn.execute(f'SELECT * FROM {name} ORDER BY rowid')] for name in tables}
+        storage.migrate(conn);storage.migrate(conn)
+        assert conn.execute('SELECT version FROM schema_version').fetchone()[0]==16
+        assert {name:[tuple(r) for r in conn.execute(f'SELECT * FROM {name} ORDER BY rowid')] for name in tables}==before
+        assert conn.execute('SELECT COUNT(*) FROM history_checkpoints').fetchone()[0]==0

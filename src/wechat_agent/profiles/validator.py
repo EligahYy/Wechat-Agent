@@ -25,8 +25,10 @@ def _units(text):
     return {(Decimal(n),aliases.get(unit.lower(),unit.lower())) for n,unit in re.findall(pattern,text,re.I)}
 
 
-def validate_result(conn,snapshot,result):
-    try:reader=ContextReader(conn,snapshot)
+def validate_result(conn,snapshot,result,*,reader=None):
+    try:
+        if reader is None:reader=ContextReader(conn,snapshot)
+        elif not isinstance(reader,ContextReader) or reader.snapshot!=snapshot:raise SnapshotError("snapshot_not_authorized")
     except (SnapshotError,ValidationError,ValueError):return ValidationResult(reason='snapshot_not_authorized')
     try:result=AnalysisResult.model_validate(result.model_dump() if isinstance(result,AnalysisResult) else result)
     except (ValidationError,TypeError,ValueError):return ValidationResult(reason='output_invalid')

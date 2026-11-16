@@ -237,3 +237,53 @@ async def test_failed_merge_retries_without_reextracting_successful_history(db,h
         result=await WorkflowV2(db,e.gateway).run(e.snapshot,None,e.token)
         assert e.calls and all(p['history_unit']['phase']=='merge' for _,p in e.calls)
         assert publish(db,e.snapshot,result,e.token).version==1
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('corruption',['shorter_body','unknown_ref'])
+async def test_coverage_checks_spans_against_frozen_material_not_only_declared_totals(db,history_env,corruption):
+    from wechat_agent.analysis.history import WorkflowV2
+    from wechat_agent.analysis.coverage import compute_coverage
+    e=history_env
+    async with e.client:await WorkflowV2(db,e.gateway).run(e.snapshot,None,e.token)
+    row=db.execute("SELECT unit_id,primary_json FROM history_run_units WHERE snapshot_id=? AND phase='extract' ORDER BY ordinal LIMIT 1",(e.snapshot.id,)).fetchone()
+    spans=json.loads(row['primary_json'])
+    if corruption=='shorter_body':
+        span=next(s for s in spans if s['total']>1);span['end']-=1;span['total']-=1
+    else:spans.append({'message_id':'unknown-ref','revision':1,'start':0,'end':1,'total':1})
+    with db:db.execute('UPDATE history_run_units SET primary_json=? WHERE snapshot_id=? AND unit_id=?',(json.dumps(spans),e.snapshot.id,row['unit_id']))
+    assert not compute_coverage(db,'acct-1',e.snapshot.id).complete
+
+@pytest.mark.asyncio
+async def test_empty_merge_is_retryable_instead_of_a_successful_poisoned_checkpoint(db,history_env):
+    from wechat_agent.analysis.history import WorkflowV2
+    e=history_env;original=e.client._transport.handler;empty=True
+    async def handler(request):
+        p=json.loads(json.loads(request.content)['messages'][-1]['content'])
+        if empty and p.get('history_unit',{}).get('phase')=='merge':
+            return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':'{"contact_id":"merchant-a"}'}}]})
+        return await original(request)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        e.gateway.client=client
+        with pytest.raises(ModelCallError) as error:await WorkflowV2(db,e.gateway).run(e.snapshot,None,e.token)
+        assert error.value.code=='history_merge_incomplete'
+        assert db.execute("SELECT COUNT(*) FROM history_checkpoints WHERE phase='merge' AND state='succeeded'").fetchone()[0]==0
+        empty=False;e.retry('repair-empty-merge');e.calls.clear()
+        result=await WorkflowV2(db,e.gateway).run(e.snapshot,None,e.token)
+        assert e.calls and all(p.get('history_unit',{}).get('phase')=='merge' for _,p in e.calls)
+        assert publish(db,e.snapshot,result,e.token).version==1
+
+@pytest.mark.asyncio
+async def test_history_units_share_one_authorized_reader_and_do_not_rescan_progress_per_unit(db,history_env,monkeypatch):
+    from wechat_agent.analysis.history import WorkflowV2
+    from wechat_agent.context.reader import ContextReader
+    e=history_env;constructed=[];scans=[];original=ContextReader.__init__
+    def reader_init(self,*args,**kwargs):
+        constructed.append(1);original(self,*args,**kwargs)
+    monkeypatch.setattr(ContextReader,'__init__',reader_init)
+    def trace(sql):
+        if 'FROM history_run_units WHERE account_id=' in sql and 'unit_id=' not in sql:scans.append(sql)
+    db.set_trace_callback(trace)
+    async with e.client:await WorkflowV2(db,e.gateway).run(e.snapshot,None,e.token)
+    db.set_trace_callback(None)
+    assert len(constructed)==1
+    assert len(scans)<=3

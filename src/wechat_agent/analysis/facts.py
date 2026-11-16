@@ -14,13 +14,13 @@ def source_refs(result):
         for fact in [*shipment.goods,*shipment.logistics]:yield from fact.sources
 
 
-def validate_unit(conn,snapshot,payload,allowed):
+def validate_unit(conn,snapshot,payload,allowed,*,reader=None):
     try:result=AnalysisResult.model_validate(payload)
     except ValueError:raise ModelCallError('output_invalid') from None
     if result.contact_id!=snapshot.key.contact_id:raise ModelCallError('target_mismatch')
     if any((r.message_id,r.revision) not in allowed for r in source_refs(result)):
         raise ModelCallError('chunk_source_outside_unit')
-    checked=validate_result(conn,snapshot,result)
+    checked=validate_result(conn,snapshot,result,reader=reader)
     if checked.reason and checked.reason!='empty_result':raise ModelCallError(checked.reason)
     clean=checked.result or AnalysisResult(contact_id=snapshot.key.contact_id)
     clean.gaps=sorted(set(result.gaps)|set(checked.issues))
@@ -79,13 +79,24 @@ def combine(results,contact_id):
 
 
 def enforce_merge_scope(result,label,candidates):
+    inputs=[AnalysisResult.model_validate(c) for c in candidates]
+    # Seen-but-irrelevant is valid during extraction, not a successful reduction
+    # of already meaningful candidates. Fail it so retries can repair the unit.
+    for group in ('goods','logistics'):
+        for name in type(getattr(result,group)).model_fields:
+            if any(getattr(getattr(c,group),name).value for c in inputs) and not getattr(getattr(result,group),name).value:
+                raise ModelCallError('history_merge_incomplete')
+    if any(c.communication.summary.value for c in inputs) and not result.communication.summary.value:
+        raise ModelCallError('history_merge_incomplete')
+    if any(c.shipments for c in inputs) and not result.shipments:raise ModelCallError('history_merge_incomplete')
     if label=='all':return
     allowed={}
     if label=='communication':allowed={'communication':result.communication.model_dump()}
     elif label=='shipments':
         allowed={'shipments':[b.model_dump() for b in result.shipments]}
-        candidate_ids={b.get('existing_id') or b['candidate_key'] for c in candidates for b in c.get('shipments',[])}
-        if any((b.existing_id or b.candidate_key) not in candidate_ids for b in result.shipments):raise ModelCallError('merge_scope_invalid')
+        candidate_keys={b['candidate_key'] for c in candidates for b in c.get('shipments',[])}
+        candidate_ids={b['existing_id'] for c in candidates for b in c.get('shipments',[]) if b.get('existing_id')}
+        if any(b.candidate_key not in candidate_keys and b.existing_id not in candidate_ids for b in result.shipments):raise ModelCallError('merge_scope_invalid')
     else:
         group,name=label.split('.');allowed={group:{name:getattr(getattr(result,group),name).model_dump()}}
     projected=AnalysisResult(contact_id=result.contact_id,**allowed,gaps=result.gaps)

@@ -6,19 +6,25 @@ from ..source.repository import transaction,cancellation_requested
 from ..model.contracts import ModelCallError
 from ..context.tokens import ESTIMATOR,request_budget
 from ..operations.service import now
-from .coverage import compute_coverage
+from .coverage import span_coverage
 
 
 def canonical(value):return json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False)
 def digest(value):return hashlib.sha256(canonical(value).encode()).hexdigest()
 
 
-def create_run(conn,snapshot,token,mode,config):
+def create_run(conn,snapshot,token,mode,config,*,messages=None):
+    if messages is None:
+        from ..context.reader import ContextReader
+        messages=ContextReader(conn,snapshot).messages()
+    materials={r['message_id']:{'revision':r['revision'],'total':len(r['body'])} for r in messages}
+    if {(k,v['revision']) for k,v in materials.items()}!={(r.message_id,r.revision) for r in snapshot.material_refs}:
+        raise ModelCallError('snapshot_not_authorized')
     with transaction(conn):
         if cancellation_requested(conn,snapshot.key.account_id,token):raise ModelCallError('model_cancelled')
-        conn.execute('''INSERT INTO history_runs(account_id,snapshot_id,contact_id,operation_id,strategy,estimator,mode,context_tokens)
-            VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING''',
-            (snapshot.key.account_id,snapshot.id,snapshot.key.contact_id,token.operation_id,'chunked-text-v1',ESTIMATOR,mode,config.capabilities.context_tokens))
+        conn.execute('''INSERT INTO history_runs(account_id,snapshot_id,contact_id,operation_id,strategy,estimator,mode,context_tokens,materials_json)
+            VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING''',
+            (snapshot.key.account_id,snapshot.id,snapshot.key.contact_id,token.operation_id,'chunked-text-v1',ESTIMATOR,mode,config.capabilities.context_tokens,canonical(materials)))
 
 
 def register_unit(conn,snapshot,token,request,primary,ordinal,config):
@@ -47,7 +53,7 @@ def checkpoint(conn,snapshot,request):
         (snapshot.key.account_id,snapshot.key.contact_id,request.checkpoint_key)).fetchone()
 
 
-def set_unit(conn,snapshot,token,request,state,*,output=None,error=None,reused=False):
+def set_unit(conn,snapshot,token,request,state,*,output=None,error=None,reused=False,progress=None):
     with transaction(conn):
         if cancellation_requested(conn,snapshot.key.account_id,token):raise ModelCallError('model_cancelled')
         if not reused:
@@ -56,28 +62,65 @@ def set_unit(conn,snapshot,token,request,state,*,output=None,error=None,reused=F
                 (state,output.model_dump_json() if output is not None else None,error,snapshot.key.account_id,snapshot.key.contact_id,request.checkpoint_key))
         conn.execute('''UPDATE history_run_units SET state=?,reused=?,error_code=? WHERE account_id=? AND snapshot_id=? AND unit_id=?''',
             (state,int(reused),error,snapshot.key.account_id,snapshot.id,request.unit_id))
-    update_progress(conn,snapshot,token)
+    if progress is None:progress=RunProgress(conn,snapshot,token)
+    else:progress.changed(request.unit_id,state,reused)
+    progress.persist()
 
 
-def update_progress(conn,snapshot,token):
-    account=snapshot.key.account_id
-    with transaction(conn):
-        if cancellation_requested(conn,account,token):raise ModelCallError('model_cancelled')
-        rows=conn.execute('SELECT phase,state,reused,input_tokens,output_tokens FROM history_run_units WHERE account_id=? AND snapshot_id=?',(account,snapshot.id)).fetchall()
-        progress={}
-        for phase,label in [('extract','chunks'),('merge','merge')]:
-            items=[r for r in rows if r['phase']==phase]
-            for name,value in [('total',len(items)),('completed',sum(r['state']=='succeeded' for r in items)),('failed',sum(r['state']=='failed' for r in items)),('reused',sum(r['reused'] for r in items))]:
-                progress[f'analysis_{label}_{name}']=value
-        window=conn.execute('SELECT context_tokens FROM history_runs WHERE account_id=? AND snapshot_id=?',(account,snapshot.id)).fetchone()[0]
-        progress.update(analysis_context_tokens=window,analysis_max_input_tokens=max((r['input_tokens'] for r in rows),default=0),analysis_max_output_tokens=max((r['output_tokens'] for r in rows),default=0))
-        coverage=compute_coverage(conn,account,snapshot.id)
-        progress.update(analysis_material_total=len(snapshot.material_refs),analysis_material_completed=len(coverage.processed))
-        conn.execute('UPDATE history_runs SET progress_json=? WHERE account_id=? AND snapshot_id=?',(canonical(progress),account,snapshot.id))
-        aggregate={}
-        for run in conn.execute('SELECT progress_json FROM history_runs WHERE account_id=? AND operation_id=?',(account,token.operation_id)):
-            for key,value in json.loads(run[0]).items():
-                aggregate[key]=max(aggregate.get(key,0),value) if key in {'analysis_context_tokens','analysis_max_input_tokens','analysis_max_output_tokens'} else aggregate.get(key,0)+value
-        counts=json.loads(conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',(account,token.operation_id)).fetchone()[0])
-        counts.update(aggregate)
-        conn.execute('UPDATE operations SET counts_json=?,updated_at=? WHERE account_id=? AND id=?',(canonical(counts),now(),account,token.operation_id))
+class RunProgress:
+    """One in-memory index per frozen run; persist counters, not repeated scans."""
+    def __init__(self,conn,snapshot,token):
+        self.conn,self.snapshot,self.token=conn,snapshot,token
+        saved=conn.execute('SELECT context_tokens,materials_json FROM history_runs WHERE account_id=? AND snapshot_id=?',(snapshot.key.account_id,snapshot.id)).fetchone()
+        self.materials=json.loads(saved['materials_json'])
+        self.window=saved['context_tokens'];self.units={};self.done_parts={};self.parts={};self.covered=set()
+        self.values={f'analysis_{phase}_{name}':0 for phase in ('chunks','merge') for name in ('total','completed','failed','reused')}
+        self.values.update(analysis_context_tokens=self.window,analysis_max_input_tokens=0,analysis_max_output_tokens=0)
+        self.load()
+
+    def load(self,*,merge_only=False):
+        sql='SELECT * FROM history_run_units WHERE account_id=? AND snapshot_id=?'
+        if merge_only:sql+=" AND phase='merge'"
+        for row in self.conn.execute(sql,(self.snapshot.key.account_id,self.snapshot.id)):
+            if row['unit_id'] in self.units:continue
+            item=dict(row);item['primary']=json.loads(item['primary_json']);self.units[item['unit_id']]=item
+            label='chunks' if item['phase']=='extract' else 'merge'
+            self.values[f'analysis_{label}_total']+=1
+            self.values['analysis_max_input_tokens']=max(self.values['analysis_max_input_tokens'],item['input_tokens'])
+            self.values['analysis_max_output_tokens']=max(self.values['analysis_max_output_tokens'],item['output_tokens'])
+            for span in item['primary']:
+                key=span['message_id'];self.parts.setdefault(key,[]).append(span)
+            self._account(item,1)
+        self.valid_materials={key for key,parts in self.parts.items() if span_coverage(self.materials.get(key),[(p,'succeeded') for p in parts])}
+        self.covered={k for k in self.valid_materials if self.done_parts.get(k,0)==len(self.parts[k])}
+
+    def _account(self,item,delta):
+        label='chunks' if item['phase']=='extract' else 'merge'
+        if item['state']=='succeeded':self.values[f'analysis_{label}_completed']+=delta
+        if item['state']=='failed':self.values[f'analysis_{label}_failed']+=delta
+        self.values[f'analysis_{label}_reused']+=delta*item['reused']
+        if item['state']=='succeeded':
+            for span in item['primary']:
+                key=span['message_id'];self.done_parts[key]=self.done_parts.get(key,0)+delta
+
+    def changed(self,unit_id,state,reused):
+        item=self.units[unit_id];self._account(item,-1)
+        item.update(state=state,reused=int(reused));self._account(item,1)
+        for span in item['primary']:
+            key=span['message_id']
+            if key in self.valid_materials and self.done_parts.get(key,0)==len(self.parts[key]):self.covered.add(key)
+            else:self.covered.discard(key)
+
+    def persist(self):
+        account=self.snapshot.key.account_id
+        progress={**self.values,'analysis_material_total':len(self.materials),'analysis_material_completed':len(self.covered)}
+        with transaction(self.conn):
+            if cancellation_requested(self.conn,account,self.token):raise ModelCallError('model_cancelled')
+            self.conn.execute('UPDATE history_runs SET progress_json=? WHERE account_id=? AND snapshot_id=?',(canonical(progress),account,self.snapshot.id))
+            aggregate={}
+            for run in self.conn.execute('SELECT progress_json FROM history_runs WHERE account_id=? AND operation_id=?',(account,self.token.operation_id)):
+                for key,value in json.loads(run[0]).items():
+                    aggregate[key]=max(aggregate.get(key,0),value) if key in {'analysis_context_tokens','analysis_max_input_tokens','analysis_max_output_tokens'} else aggregate.get(key,0)+value
+            counts=json.loads(self.conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',(account,self.token.operation_id)).fetchone()[0])
+            counts.update(aggregate)
+            self.conn.execute('UPDATE operations SET counts_json=?,updated_at=? WHERE account_id=? AND id=?',(canonical(counts),now(),account,self.token.operation_id))
