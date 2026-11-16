@@ -1,16 +1,16 @@
 # 实施方案与验收顺序
 
-更新：2026-11-15（北京时间）。依据 [产品方案](PRODUCT_DESIGN.md) 和 [交互方案](INTERACTION_DESIGN.md)。本文件定义架构和实施顺序，实际交付与实机证据见状态页。
+更新：2026-11-16（北京时间）。依据 [产品方案](PRODUCT_DESIGN.md) 和 [交互方案](INTERACTION_DESIGN.md)。本文件定义架构和实施顺序，实际交付与实机证据见状态页。
 
 ## 1. 当前交付与待实现部分
 
 | 已完成云端开发 | 待开发／实测 |
 | --- | --- |
-| React两页、SQLite/schema13、联系人身份和业务范围管理 | 生产真实档案闭环、人工资料界面及最终交互 |
+| React两页、SQLite/schema15、联系人身份与业务范围、真实资料／备货／人工编辑界面 | Mac真实资料语义质量、完整备份恢复交付 |
 | wx-cli归档、修订游标、后台操作与停止、导入、日历原文及库内附件访问 | 附件来源获取／解析、长历史分块、完整恢复与日调度 |
 | M2契约／模板、持久输入快照、有界网关、安全配置及主动连接检查 | 真实模型容量／视觉与Keychain实测、档案语义和质量闭环 |
 
-下一步M2任务6「档案与编辑交互」；M2任务1—5完成云端开发，M2尚未整体完成，M3—M5对应计划尚未实施。原文查询维护已于0b42eac结束，其完成状态不改变M2主计划任务6—7待实施的边界。原文浏览不等于模型读懂资料，连接检查不等于容量验证，来源成功不等于档案已发布。准确边界、最新回归及Mac证据见[STATUS](STATUS.md)。
+M2任务1—7及整理准入／记录反馈维护已完成云端开发，M2真实质量仍待Mac实测；下一主开发阶段M3。当前链路与审查见[整理架构报告](verification/organize-outcomes-report.md)。原文浏览不等于模型读懂资料，连接检查不等于容量验证，来源成功不等于档案已发布。准确边界、最新回归及Mac证据见[STATUS](STATUS.md)。
 
 ## 2. 本轮工程选型建议
 
@@ -144,7 +144,7 @@ CSV／JSON 导入复用同一归档层，保存来源批次与行号。导入接
 
 全局“同步并整理”和客户页“同步并整理此客户”都走：**刷新联系人／会话并拉取最新消息 → 归档并判断变化 → 组织商家资料 → 模型整理 → 校验发布**。单客户只分析目标商家；不按按钮拆成仅同步和仅整理。主页不再另设元数据刷新按钮，内部诊断接口保留。
 
-同一客户不会并发执行两份分析。用户在批量期间指定客户时，将该客户提升到下一可执行位置；若正处理该客户则打开现有进度，不重复请求。
+当前按账号串行领取任务，同范围活跃任务去重；部分客户失败不抹掉已完成结果。已知会话缺口阻断受影响客户，覆盖范围未知仅提示；重新同步时已完成且输入未变化的客户跳过模型。批量中提优先级、精确继续／重试属于M4目标，尚未交付。
 
 停止时立即停止调度后续步骤，当前网络请求尽可能取消；原始归档与已完成客户保留。已经发出的模型请求可能仍产生用量，结果不得在停止后误发布。尚在排队的任务直接停止，不为它发请求；恢复生成新的执行令牌。
 
@@ -164,12 +164,14 @@ CSV／JSON 导入复用同一归档层，保存来源批次与行号。导入接
 | --- | --- |
 | GET/PATCH `/api/settings` | 偏好、来源与模型状态；不隐式探测 |
 | GET `/api/contacts`，PATCH `/api/contacts/roles`、`/api/contacts/scope` | 姓名搜索、分页、身份和人工业务范围覆盖 |
-| POST `/api/operations`，GET `/api/operations/{id}` | 持久意图、进度、来源结果和可用控制；已完成的具体action以contracts/service为准 |
+| POST `/api/operations`，GET `/api/operations/{id}` | 持久意图、名称快照、版本化结果报告、逐客户原因及控制；同源写入、账号隔离 |
 | GET `/api/contacts/{id}/messages`、`/message-calendar` | 日历元数据、按日搜索、本人定位、双向游标和附件引用 |
 | GET `/api/attachments/{id}`，POST `/api/imports` | 库内安全附件访问、映射预览与幂等导入 |
-| GET/PUT `/api/model`，POST `/api/model/check` | 非敏感配置、Keychain保存和显式最小连接检查 |
+| GET/PUT `/api/model`，POST `/api/model/check`、`/api/model/budget-review` | 配置、Keychain、最小连接检查及文档预算核对 |
+| GET `/api/contacts/{id}/profile`、`/profile/evidence`，PATCH `/manual` | 档案、授权证据与人工覆盖 |
+| PATCH `/api/shipments/{id}/numbers` | 单号独立编辑，不改变批次阶段 |
 
-档案读取／发布、manual、shipments numbers、reanalyze、完整继续／重试等在M2任务4—7及M4实施；这里只定义后续边界，不把草案端点当已有API。来源真实连接诊断沿用doctor／operations.check工具。
+当前已实现档案读取、证据查看、manual和shipments numbers；专门reanalyze、完整继续／重试在M4实施，不把草案端点当已有API。来源真实连接诊断沿用doctor／operations.check工具。
 
 ## 9. 开发阶段与完成条件
 

@@ -13,6 +13,8 @@
 | 云端开发与技能恢复 | [开发工作流](DEVELOPMENT_WORKFLOW.md) |
 | M2验收与M3后续阶段 | [开发计划索引](superpowers/plans/README.md) |
 
+最新已实施维护：[整理准入、发布保护与记录反馈](superpowers/specs/2026-11-16-organize-outcomes-design.md)，[执行计划](superpowers/plans/2026-11-16-organize-outcomes.md)及45个已执行合成场景；[架构及验收报告](verification/organize-outcomes-report.md)记录整体CR、结果和实机边界。
+
 当前有效补充设计：[原文查询优化与影响审查](superpowers/specs/2026-11-15-message-query-optimization-design.md)、[业务范围](superpowers/specs/2026-11-13-business-contacts-design.md)、[日历双栏消息](superpowers/specs/2026-11-15-timeline-calendar-design.md)。
 
 有效证据：[来源刷新链路审查](verification/source-refresh-review.md)、[M2资料与生产链路](verification/m2-profile-review.md)、[M2任务6](verification/m2-task6-report.md)、[整理记录交互排查](verification/operation-history-report.md)、[M2任务5](verification/m2-task5-report.md)、[M2任务4](verification/m2-task4-report.md)、[原文查询性能](verification/message-query-optimization-report.md)、[M2任务3](verification/m2-task3-report.md)、[日历消息浏览](verification/calendar-message-browser-report.md)、[Mac回传记录](verification/mac-validation.md)、[来源能力](verification/source-capabilities.md)、[模型能力](verification/model-capabilities.md)。阶段报告里的数字是当时结果，最新基线统一看STATUS。

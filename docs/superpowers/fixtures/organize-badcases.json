@@ -1,0 +1,732 @@
+{
+  "version": 1,
+  "status": "synthetic-replay-v1",
+  "defaults": {
+    "account_id": "acct-1",
+    "scope": "merchant-a",
+    "contact_name": "兴🌟",
+    "role": "merchant",
+    "business_override": "include",
+    "private_exists": true,
+    "target_membership": "known",
+    "author_proven_room": true,
+    "known_rooms": [
+      "merchant-a",
+      "room-a"
+    ],
+    "messages": [
+      {
+        "id": "a1",
+        "room": "room-a",
+        "sender": "merchant-a",
+        "body": "下周发德国，20方服装",
+        "revision": 1
+      },
+      {
+        "id": "a2",
+        "room": "room-a",
+        "sender": "provider-a",
+        "body": "请确认装货地址",
+        "revision": 1
+      }
+    ],
+    "inserted": 2,
+    "prior_profile": false,
+    "model_config_verified": true
+  },
+  "cases": [
+    {
+      "id": "unknown_unrelated_group",
+      "given": {
+        "unrelated_group_membership": "unknown"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": "coverage_unverified"
+      }
+    },
+    {
+      "id": "empty_unrelated_group",
+      "given": {
+        "unrelated_group_membership": "empty"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": "coverage_unverified"
+      }
+    },
+    {
+      "id": "all_groups_unknown_but_author_proven",
+      "given": {
+        "target_membership": "unknown",
+        "author_proven_room": true
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": "coverage_unverified",
+        "context_contains_other_speakers": true
+      }
+    },
+    {
+      "id": "no_association_no_read",
+      "given": {
+        "target_membership": "unknown",
+        "author_proven_room": false,
+        "private_exists": false
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "not_applicable",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "no_material",
+        "model_target_rooms": []
+      }
+    },
+    {
+      "id": "known_room_timeout",
+      "given": {
+        "room_failure": {
+          "room-a": "source_timeout"
+        }
+      },
+      "expect": {
+        "source_outcome": "partial",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_timeout",
+        "head_unchanged": true
+      }
+    },
+    {
+      "id": "known_room_pagination_limit",
+      "given": {
+        "room_failure": {
+          "room-a": "source_page_limit_reached"
+        }
+      },
+      "expect": {
+        "source_outcome": "partial",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_page_limit_reached",
+        "head_unchanged": true
+      }
+    },
+    {
+      "id": "known_room_shard_missing",
+      "given": {
+        "room_failure": {
+          "room-a": "source_shards_unavailable"
+        }
+      },
+      "expect": {
+        "source_outcome": "partial",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_shards_unavailable"
+      }
+    },
+    {
+      "id": "sender_conflict",
+      "given": {
+        "room_failure": {
+          "room-a": "message_sender_conflict"
+        }
+      },
+      "expect": {
+        "source_outcome": "partial",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "message_sender_conflict",
+        "quarantine": true
+      }
+    },
+    {
+      "id": "server_skipped_row",
+      "given": {
+        "room_failure": {
+          "room-a": "source_rows_skipped"
+        }
+      },
+      "expect": {
+        "source_outcome": "partial",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_rows_skipped"
+      }
+    },
+    {
+      "id": "account_mismatch",
+      "given": {
+        "global_failure": "source_account_mismatch"
+      },
+      "expect": {
+        "source_outcome": "failed",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_account_mismatch",
+        "foreign_account_unchanged": true
+      }
+    },
+    {
+      "id": "refresh_failed",
+      "given": {
+        "global_failure": "source_metadata_refresh_failed"
+      },
+      "expect": {
+        "source_outcome": "failed",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_metadata_refresh_failed"
+      }
+    },
+    {
+      "id": "worker_changed",
+      "given": {
+        "global_failure": "source_changed_during_sync"
+      },
+      "expect": {
+        "source_outcome": "failed",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_changed_during_sync"
+      }
+    },
+    {
+      "id": "metadata_changed_mid_read",
+      "given": {
+        "global_failure": "source_metadata_changed"
+      },
+      "expect": {
+        "source_outcome": "failed",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_metadata_changed",
+        "head_unchanged": true
+      }
+    },
+    {
+      "id": "archive_write_failed",
+      "given": {
+        "global_failure": "archive_write_failed"
+      },
+      "expect": {
+        "source_outcome": "failed",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "archive_write_failed",
+        "no_half_transaction": true
+      }
+    },
+    {
+      "id": "unknown_issue_blocks",
+      "given": {
+        "global_failure": "new_unknown_problem"
+      },
+      "expect": {
+        "source_outcome": "failed",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "new_unknown_problem"
+      }
+    },
+    {
+      "id": "mixed_account_batch",
+      "given": {
+        "scope": "account",
+        "room_failure": {
+          "room-a": "source_timeout"
+        },
+        "second_merchant": {
+          "id": "merchant-b",
+          "rooms": [
+            "room-b"
+          ]
+        }
+      },
+      "expect": {
+        "source_outcome": "partial",
+        "analysis_outcome": "partial",
+        "model_calls": 1,
+        "publish": true,
+        "reason": "source_timeout",
+        "updated_contacts": [
+          "merchant-b"
+        ],
+        "blocked_contacts": [
+          "merchant-a"
+        ]
+      }
+    },
+    {
+      "id": "shared_failed_room",
+      "given": {
+        "scope": "account",
+        "room_failure": {
+          "room-a": "source_timeout"
+        },
+        "second_merchant": {
+          "id": "merchant-b",
+          "rooms": [
+            "room-a"
+          ]
+        }
+      },
+      "expect": {
+        "source_outcome": "partial",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_timeout",
+        "blocked_contacts": [
+          "merchant-a",
+          "merchant-b"
+        ]
+      }
+    },
+    {
+      "id": "first_profile_zero_insertions",
+      "given": {
+        "inserted": 0,
+        "prior_profile": false
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": null
+      }
+    },
+    {
+      "id": "unchanged_inputs",
+      "given": {
+        "inserted": 0,
+        "prior_profile": true,
+        "same_inputs": true
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "unchanged",
+        "model_calls": 0,
+        "publish": false,
+        "reason": null,
+        "head_unchanged": true
+      }
+    },
+    {
+      "id": "changed_model_config",
+      "given": {
+        "inserted": 0,
+        "prior_profile": true,
+        "model_config_version_delta": 1
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": null
+      }
+    },
+    {
+      "id": "changed_manual_before_run",
+      "given": {
+        "inserted": 0,
+        "prior_profile": true,
+        "manual_version_delta": 1
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": null,
+        "manual_wins": true
+      }
+    },
+    {
+      "id": "empty_archive",
+      "given": {
+        "messages": [],
+        "private_exists": false,
+        "target_membership": "unknown",
+        "author_proven_room": false
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "not_applicable",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "no_material"
+      }
+    },
+    {
+      "id": "budget_not_reviewed",
+      "given": {
+        "model_failure": "model_budget_unverified"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "model_budget_unverified",
+        "head_unchanged": true
+      }
+    },
+    {
+      "id": "model_http_timeout",
+      "given": {
+        "model_failure": "model_timeout",
+        "fail_during_model": true
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 1,
+        "publish": false,
+        "reason": "model_timeout",
+        "head_unchanged": true
+      }
+    },
+    {
+      "id": "invalid_model_citation",
+      "given": {
+        "model_response": "foreign_account_citation"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 1,
+        "publish": false,
+        "reason": "invalid_evidence",
+        "foreign_account_unchanged": true
+      }
+    },
+    {
+      "id": "oversize_context",
+      "given": {
+        "context_size": "over_budget"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "context_requires_chunking",
+        "no_truncation": true
+      }
+    },
+    {
+      "id": "manual_changed_during_call",
+      "given": {
+        "during_model": "manual_version_delta"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 1,
+        "publish": false,
+        "reason": "manual_changed",
+        "manual_wins": true
+      }
+    },
+    {
+      "id": "role_changed_during_call",
+      "given": {
+        "during_model": "role_version_delta"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 1,
+        "publish": false,
+        "reason": "contact_changed"
+      }
+    },
+    {
+      "id": "scope_removed_during_call",
+      "given": {
+        "during_model": "scope_version_delta"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 1,
+        "publish": false,
+        "reason": "scope_changed"
+      }
+    },
+    {
+      "id": "material_revised_during_call",
+      "given": {
+        "during_model": "message_revision_delta"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 1,
+        "publish": false,
+        "reason": "material_changed"
+      }
+    },
+    {
+      "id": "cancelled_during_call",
+      "given": {
+        "during_model": "stop"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "stopped",
+        "model_calls": 1,
+        "publish": false,
+        "reason": "user_stopped",
+        "head_unchanged": true
+      }
+    },
+    {
+      "id": "warning_preserves_prior_fact",
+      "given": {
+        "unrelated_group_membership": "unknown",
+        "prior_profile": true,
+        "old_goods": "服装",
+        "model_omits_goods": true
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": "coverage_unverified",
+        "retained_goods": "服装"
+      }
+    },
+    {
+      "id": "invalid_prior_evidence",
+      "given": {
+        "prior_profile": true,
+        "old_goods": "服装",
+        "model_omits_goods": true,
+        "old_evidence_authorizable": false
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 1,
+        "publish": false,
+        "reason": "retained_evidence_unavailable",
+        "head_unchanged": true
+      }
+    },
+    {
+      "id": "same_name_different_people",
+      "given": {
+        "same_name_contact": {
+          "id": "merchant-b",
+          "name": "兴🌟",
+          "rooms": [
+            "room-b"
+          ]
+        }
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": null,
+        "model_target_rooms": [
+          "merchant-a",
+          "room-a"
+        ],
+        "no_cross_contact_evidence": true
+      }
+    },
+    {
+      "id": "renamed_after_creation",
+      "given": {
+        "rename_after_creation": "新名字"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": null,
+        "history_label": "兴🌟"
+      }
+    },
+    {
+      "id": "legacy_failed_record",
+      "given": {
+        "record_only": true,
+        "legacy_report": null,
+        "legacy_state": "failed"
+      },
+      "expect": {
+        "source_outcome": "failed",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "legacy_reason_unavailable",
+        "never_auto_rerun": true
+      }
+    },
+    {
+      "id": "legacy_deleted_contact",
+      "given": {
+        "record_only": true,
+        "legacy_report": null,
+        "contact_deleted": true
+      },
+      "expect": {
+        "source_outcome": "failed",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "legacy_reason_unavailable",
+        "label_fallback": true
+      }
+    },
+    {
+      "id": "duplicate_start_same_key",
+      "given": {
+        "duplicate_idempotency_key": true
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "updated",
+        "model_calls": 1,
+        "publish": true,
+        "reason": null,
+        "operation_count": 1
+      }
+    },
+    {
+      "id": "non_merchant",
+      "given": {
+        "role": "provider"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "not_applicable",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "role_not_merchant"
+      }
+    },
+    {
+      "id": "manual_exclusion",
+      "given": {
+        "business_override": "exclude"
+      },
+      "expect": {
+        "source_outcome": "not_started",
+        "analysis_outcome": "not_applicable",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "scope_excluded",
+        "operation_rejected": true
+      }
+    },
+    {
+      "id": "stop_before_source",
+      "given": {
+        "stop_before_start": true
+      },
+      "expect": {
+        "source_outcome": "stopped",
+        "analysis_outcome": "stopped",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "user_stopped"
+      }
+    },
+    {
+      "id": "historical_unknown_failure",
+      "given": {
+        "record_only": true,
+        "legacy_report": null,
+        "legacy_state": "failed",
+        "legacy_counts_completed": 3,
+        "legacy_counts_total": 3
+      },
+      "expect": {
+        "source_outcome": "failed",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "legacy_reason_unavailable",
+        "never_relabel_success": true
+      }
+    },
+    {
+      "id": "discovery_model_failed",
+      "given": {
+        "role": "unknown",
+        "provisional_business_lead": true,
+        "discovery_failure": "model_timeout"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "failed",
+        "model_calls": 1,
+        "publish": false,
+        "reason": "classification_failed",
+        "identity_unchanged": true
+      }
+    },
+    {
+      "id": "metadata_only_no_analysis",
+      "given": {
+        "action": "refresh_contacts"
+      },
+      "expect": {
+        "source_outcome": "completed",
+        "analysis_outcome": "not_applicable",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "metadata_only",
+        "message_reads": 0
+      }
+    },
+    {
+      "id": "known_archived_room_disappeared",
+      "given": {
+        "source_missing_rooms": [
+          "room-a"
+        ]
+      },
+      "expect": {
+        "source_outcome": "partial",
+        "analysis_outcome": "not_started",
+        "model_calls": 0,
+        "publish": false,
+        "reason": "source_conversation_unavailable",
+        "head_unchanged": true
+      }
+    }
+  ]
+}

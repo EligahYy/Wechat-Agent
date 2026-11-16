@@ -6,9 +6,11 @@
 
 ## 当前执行位置
 
+**最新维护已完成云端交付：** [整理准入与结果反馈计划](superpowers/plans/2026-11-16-organize-outcomes.md)全部云端任务已实施并完成整体CR修复，见[架构及验收报告](verification/organize-outcomes-report.md)。未知无关群仅提示覆盖未验证，已知来源失败按客户隔离；整理记录展示客户名、阶段、准确原因与操作。45个合成场景已逐例运行真实同步／worker／发布链路，包含在最新589项后端回归内。
+
 **M2任务1—7云端代码及审查修复已完成。M2真实商家与业务质量验收仍待Mac实测，不能用合成回放替代。**
 
-当前schema14，Python3.12，前端最低Node24.14.1。任务6检查点fe13fae；任务7交付结果见[单客户链路报告](verification/m2-profile-review.md)。
+当前schema15，Python3.12，前端最低Node24.14.1。任务6检查点fe13fae；任务7交付结果见[单客户链路报告](verification/m2-profile-review.md)。
 
 ## 阶段总览
 
@@ -50,9 +52,13 @@
 
 ## 回归及实机验收
 
+本轮整理改造：Python589、前端单元36、浏览器71全部通过；Node24.14.1前端构建、wheel资源逐字节核验及静态服务检查通过。整体CR发现的部分字段误报完成、运行配置失败误报无材料、全量覆盖警告遗漏均已修复并回归；历史统计展示及故障场景保真同步补齐。完整架构、实施取舍与实测边界见[本轮报告](verification/organize-outcomes-report.md)。
+
+以下为前轮历史结果：
+
 任务6：全Python479、资料与布局定向5浏览器、31单元、Node24.14.1构建通过。审查收尾最终全Python499、66浏览器、31单元和Node24.14.1构建通过，wheel包含本轮来源修复、runtime及014迁移；文档链接／锚点和diff检查通过。两项Important已先红后绿修复，见本轮报告。
 
-Mac按[更新指南](MAC_SETUP.md)pull、build、重启并核对schema14，保留现有库和wx-cli。先一名真实商家核对主体、货量／单位、路线、旧／新批次及来源、停止和人工保持，再考虑扩大调用；[质量清单](verification/m2-profile-review.md)尚未实测，不宣称真实业务质量已通过。
+Mac按[更新指南](MAC_SETUP.md)pull、build、重启并核对schema15，保留现有库和wx-cli。先一名真实商家核对主体、货量／单位、路线、旧／新批次及来源、停止和人工保持，再考虑扩大调用；[质量清单](verification/m2-profile-review.md)尚未实测，不宣称真实业务质量已通过。
 
 ## 已知后续项
 
