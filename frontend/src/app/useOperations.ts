@@ -30,32 +30,61 @@ export const operationTitle = (job: Operation | null) => {
       : "来源同步未完成";
   return "本次来源同步已完成";
 };
+// Keep records observed through submission/detail/polling even while a list request
+// is in flight. updated_at prevents an older summary from replacing a final report.
+function mergeHistory(account: string, previous: Operation[], incoming: Operation[]) {
+  const records = new Map<string, Operation>();
+  for (const item of [...previous, ...incoming]) {
+    if (item.scope.account_id !== account) continue;
+    const existing = records.get(item.id);
+    if (!existing || Date.parse(item.updated_at) >= Date.parse(existing.updated_at)) {
+      records.set(item.id, {...existing, ...item, items: item.items ?? existing?.items});
+    }
+  }
+  // Legacy summaries can lack created_at: preserve their server order rather
+  // than moving rows whenever a progress timestamp changes.
+  return [...records.values()].sort((a, b) =>
+    a.created_at && b.created_at ? Date.parse(b.created_at) - Date.parse(a.created_at)
+      : a.created_at ? -1 : b.created_at ? 1 : 0);
+}
 export function useOperations(account: string | null, onDone: () => void) {
   const [job, setJob] = useState<Operation | null>(null),
     [history, setHistory] = useState<Operation[]>([]),
     [submitting, setSubmitting] = useState(false),
     [error, setError] = useState("");
   const lock = useRef(false);
+  const currentAccount = useRef(account);
+  currentAccount.current = account;
+  const remember = useCallback((operation: Operation) => {
+    if (!account || currentAccount.current !== account || operation.scope.account_id !== account) return;
+    setHistory(previous => mergeHistory(account, previous, [operation]));
+  }, [account]);
+  useEffect(() => { if (job) remember(job); }, [job, remember]);
   const [errorScope,setErrorScope]=useState<ContactKey|null>(null);
   const loadHistory = useCallback(async () => {
     if (!account) return;
     const result = await request<{ items: Operation[] }>(
       `/api/operations?${new URLSearchParams({ account_id: account })}`,
     );
-    setHistory(result.items);
+    if (currentAccount.current === account)
+      setHistory(previous => mergeHistory(account, previous, result.items));
     return result.items;
   }, [account]);
   const read = useCallback(
-    async (id: string, signal?: AbortSignal) =>
-      request<Operation>(
+    async (id: string, signal?: AbortSignal) => {
+      const operation = await request<Operation>(
         `/api/operations/${encodeURIComponent(id)}?${new URLSearchParams({ account_id: account || "" })}`,
         { signal },
-      ),
-    [account],
+      );
+      if (!signal?.aborted) remember(operation);
+      return operation;
+    },
+    [account, remember],
   );
   useEffect(() => {
     let cancelled = false;
     setJob(null);
+    setHistory([]);
     setError("");setErrorScope(null);
     if (account)
       loadHistory()
@@ -164,5 +193,5 @@ export function useOperations(account: string | null, onDone: () => void) {
       setSubmitting(false);
     }
   };
-  return { job, history, submitting, error, errorScope, start, stop, read, loadHistory };
+  return { job, history, submitting, error, errorScope, start, stop, read, loadHistory, remember };
 }

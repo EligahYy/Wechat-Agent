@@ -1,4 +1,3 @@
-import {historyScopeLabel} from './operationOutcome';
 import {OperationHistory} from '../components/OperationHistory';
 import {Toast} from "../components/Toast";
 import { ContactManager } from "../features/settings/ContactManager";
@@ -155,6 +154,7 @@ export function App() {
     setRecordDetailLoading(false);
     setRecordDetailError("");
     setRecordsError("");
+    operations.remember(operation);
     setSelectedJob(operation);
     setRecordsOpen(true);
   };
@@ -208,7 +208,7 @@ export function App() {
       {recordDetailLoading ? <p className="muted" role="status">正在读取记录详情…</p> : recordDetailError ? (
         <div className="error-banner" role="alert"><span>{recordDetailError}</span><button className="text-button" onClick={() => void selectRecord(current, true)}>重试</button></div>
       ) : <>
-        <OperationDetails operation={current} label={historyScopeLabel(current,operations.history)} onAction={(action)=>{if(action==='open_model_settings'){setRecordsOpen(false);setManageContacts(false);setPage('settings');}else if(action==='review_contact'){setRecordsOpen(false);setManageContacts(true);setPage('settings');}else if(action==='retry_sync'){void operations.start(current.scope.contact_id||undefined);}}} />
+        <OperationDetails operation={current} onAction={(action)=>{if(action==='open_model_settings'){setRecordsOpen(false);setManageContacts(false);setPage('settings');}else if(action==='review_contact'){setRecordsOpen(false);setManageContacts(true);setPage('settings');}else if(action==='retry_sync'){void operations.start(current.scope.contact_id||undefined);}}} />
         {current.available_actions.includes("stop") && current.id === job?.id && (
           <button className="button secondary" disabled={operations.submitting} onClick={() => void operations.stop()}>停止本次</button>
         )}
@@ -424,7 +424,6 @@ export function App() {
               </button>
             </div>
           )}
-          {current && !operations.history.some(item => item.id === current.id) && recordDetail}
           {recordsLoading ? (
             <p className="muted" role="status">
               正在读取记录…

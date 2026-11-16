@@ -25,6 +25,7 @@
   --focus: rgba(0, 102, 204, 0.16);
   --danger: #bd3038;
   --success: #15803d;
+  --warning: #9a5b00;
   --radius: 20px;
   --ease: cubic-bezier(0.22, 0.8, 0.2, 1);
   --fast: 180ms;
@@ -48,6 +49,7 @@
   --focus: rgba(101, 173, 255, 0.2);
   --danger: #ff8892;
   --success: #73dca2;
+  --warning: #f2ba62;
   color-scheme: dark;
 }
 * {
@@ -765,6 +767,17 @@ small {
   padding: 17px;
 }
 .history-entry[aria-expanded="true"] {border-color:var(--accent)}
+.history-record[data-tone="error"] {--operation-color:var(--danger)}
+.history-record[data-tone="success"] {--operation-color:var(--success)}
+.history-record[data-tone="warning"] {--operation-color:var(--warning)}
+.history-record[data-tone="active"] {--operation-color:var(--accent)}
+.history-record[data-tone="neutral"] {--operation-color:var(--muted)}
+.history-record[data-tone] > .history-entry {
+  background:color-mix(in srgb,var(--operation-color) 5%,var(--surface));
+  border-color:color-mix(in srgb,var(--operation-color) 30%,var(--line));
+}
+.history-record[data-tone] > .history-entry[aria-expanded="true"] {border-color:var(--operation-color)}
+.history-record[data-tone] > .history-detail {border-color:color-mix(in srgb,var(--operation-color) 30%,var(--line))}
 .history-entry svg {flex-shrink:0;transition:transform 160ms var(--ease)}
 .history-entry[aria-expanded="true"] svg {transform:rotate(90deg)}
 .history-detail {padding:18px;border:1px solid var(--line);border-radius:14px;margin-top:8px;background:var(--surface)}
@@ -793,6 +806,19 @@ small {
   padding-bottom: 20px;
   margin-bottom: 20px;
 }
+.operation-outcomes {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.operation-gaps p {margin-top:10px;line-height:1.7}
+.operation-gaps .text-button {margin-top:10px}
+.operation-diagnostics {margin-top:16px;color:var(--muted);font-size:12px}
+.operation-diagnostics summary {cursor:pointer;line-height:1.8}
+.operation-diagnostics p {margin-top:8px;overflow-wrap:anywhere}
+.operation-customer-results {padding-left:20px;margin-top:16px;line-height:1.8}
 .operation-gaps {
   margin-top: 18px;
   padding: 16px 18px;

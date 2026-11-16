@@ -18,3 +18,13 @@ it('distinguishes same-name records including identifiers with a shared suffix',
  expect(historyScopeLabel(first,[first,second])).not.toBe(historyScopeLabel(second,[first,second]));
  expect(historyScopeLabel(first,[first,first])).toBe('刘');
 });
+
+it('colors final task outcomes without treating coverage hints as a failed task',()=>{
+ const completed={version:1 as const,scope_label:'兴',source_outcome:'completed',analysis_outcome:'updated',contacts:[],issues:[{code:'source_group_membership_unverified',severity:'warning' as const,stage:'metadata',scope:'operation',suggested_action:'none'}]};
+ expect(presentOperation(operation({report:completed})).tone).toBe('success');
+ expect(presentOperation(operation({state:'failed',report:{...completed,analysis_outcome:'failed'}})).tone).toBe('error');
+ expect(presentOperation(operation({state:'failed',report:{...completed,analysis_outcome:'partial'}})).tone).toBe('warning');
+ expect(presentOperation(operation({state:'failed',report:null})).tone).toBe('error');
+ expect(presentOperation(operation({state:'running',report:null})).tone).toBe('active');
+ expect(presentOperation(operation({state:'stopped',report:null})).tone).toBe('neutral');
+});

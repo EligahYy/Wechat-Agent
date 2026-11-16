@@ -13,6 +13,8 @@
 | 云端开发与技能恢复 | [开发工作流](DEVELOPMENT_WORKFLOW.md) |
 | M2验收与M3后续阶段 | [开发计划索引](superpowers/plans/README.md) |
 
+最新界面维护：[整理记录缓存与结果卡片](verification/operation-history-cache-report.md)。
+
 最新已实施维护：[整理准入、发布保护与记录反馈](superpowers/specs/2026-11-16-organize-outcomes-design.md)，[执行计划](superpowers/plans/2026-11-16-organize-outcomes.md)及45个已执行合成场景；[架构及验收报告](verification/organize-outcomes-report.md)记录整体CR、结果和实机边界。
 
 当前有效补充设计：[原文查询优化与影响审查](superpowers/specs/2026-11-15-message-query-optimization-design.md)、[业务范围](superpowers/specs/2026-11-13-business-contacts-design.md)、[日历双栏消息](superpowers/specs/2026-11-15-timeline-calendar-design.md)。
