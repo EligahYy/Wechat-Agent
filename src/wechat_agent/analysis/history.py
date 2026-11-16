@@ -16,6 +16,7 @@ from .facts import validate_unit,source_refs,deduplicate,merge_groups,combine,en
 
 
 class WorkflowV2:
+    strategy_version="workflow-v2"
     def __init__(self,conn,gateway):self.conn=conn;self.gateway=gateway
 
     def request(self,snapshot,payload,prompt,phase='extract'):

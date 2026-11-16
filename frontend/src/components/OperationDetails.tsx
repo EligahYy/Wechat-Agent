@@ -1,3 +1,4 @@
+import {HistoryProgress} from './HistoryProgress';
 import {reasonLabels,presentOperation} from '../app/operationOutcome';
 import { metadataTotals } from "../app/operationPresentation";
 import type { Operation } from "../api/types";
@@ -55,6 +56,7 @@ export function OperationDetails({ operation,onAction }: { operation: Operation;
         <span className="info-chip">修订 {operation.counts.revised||0}</span>
         <span className="info-chip">不变 {operation.counts.unchanged||0}</span>
       </div>
+      <HistoryProgress counts={operation.counts} state={operation.state}/>
       <div className="operation-outcomes"><p>消息同步：{{completed:'已完成（已知范围）',partial:(operation.counts.conversations_total>0&&operation.counts.completed_conversations>=operation.counts.conversations_total)?'会话已读取，仍有消息异常':'部分完成',failed:'未完成',stopped:'已停止',not_started:'未开始'}[report.source_outcome]||'处理中'} · {operation.counts.completed_conversations||0}/{operation.counts.conversations_total||0} 个会话</p>
       <p>资料整理：{operationTitle(operation)}</p></div>
       {(unique.length>0||notApplicable.length>0||report.analysis_outcome==='failed'||presentation.action)&&<div className="operation-gaps"><h4>本次处理提示</h4>
@@ -64,7 +66,7 @@ export function OperationDetails({ operation,onAction }: { operation: Operation;
       {presentation.action&&onAction&&<button className="text-button" onClick={()=>onAction(presentation.action!)}>{presentation.action==='open_model_settings'?'检查模型设置':presentation.action==='review_contact'?'检查联系人':'重新同步'}</button>}
       </div>}
       {report.contacts.length>1&&<ul className="operation-customer-results">{report.contacts.map(c=><li key={c.contact_id}>{c.name_snapshot||c.contact_id} · {c.analysis_outcome==='failed'?'未完成':c.analysis_outcome==='partial'?'已更新，需核对':c.analysis_outcome==='updated'?'已更新':c.analysis_outcome==='unchanged'?'无需更新':'未执行'}</li>)}</ul>}
-      <details className="operation-diagnostics"><summary>诊断详情</summary>{unique.map((i,n)=><p key={n}>{i.stage} · <code>{i.code}</code> {i.field_path} {i.conversation_id}</p>)}{report.contacts.map(c=><p key={c.contact_id}>{c.contact_id} · {c.analysis_outcome} {c.reason}</p>)}</details>
+      <details className="operation-diagnostics"><summary>诊断详情</summary>{!!operation.counts.analysis_context_tokens&&<p>上下文容量 {operation.counts.analysis_context_tokens} · 最大单元输入估算 {operation.counts.analysis_max_input_tokens||0} · 输出预留 {operation.counts.analysis_max_output_tokens||0} · 安全余量 10%。输入采用 UTF-8 保守上界，非精确 token 数。</p>}{unique.map((i,n)=><p key={n}>{i.stage} · <code>{i.code}</code> {i.field_path} {i.conversation_id}</p>)}{report.contacts.map(c=><p key={c.contact_id}>{c.contact_id} · {c.analysis_outcome} {c.reason}</p>)}</details>
     </section>;
   }
   const metadataOnly = operation.action === "refresh_contacts";

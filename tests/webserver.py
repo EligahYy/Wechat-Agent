@@ -51,7 +51,7 @@ def app_factory():
         def get(self,ref):return self.values[ref]
         def set(self,ref,value):self.values[ref]=value
     app.state.services.credential_store=MemoryCredentials()
-    def model_reply(request):
+    async def model_reply(request):
         import json
         content=json.loads(request.content)['messages'][-1]['content']
         if content=='Return {"probe":"ok"}.':answer='{"probe":"ok"}'
@@ -59,8 +59,20 @@ def app_factory():
             payload=json.loads(content)
             result=json.loads((Path(__file__).parent/'fixtures/profile-ready.json').read_text())
             result['contact_id']=payload['contact_id']
+            unit=payload.get('history_unit')
+            if unit:
+                import asyncio
+                await asyncio.sleep(.08)
+                if app.state.history_failure and any(s['message_id']=='history-05' for s in unit.get('primary_spans',[])):
+                    return httpx.Response(503)
+                if unit['phase']=='merge':result=payload['candidates'][0]
+                else:
+                    row=next((r for r in payload['messages'] if '12' in r['body'] and r['kind']=='text'),None)
+                    result={'contact_id':payload['contact_id']}
+                    if row:result['goods']={'volume':{'state':'known','value':'12方','sources':[{'message_id':row['message_id'],'revision':row['revision']}]}}
             answer=json.dumps(result)
         return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':answer}}]})
+    app.state.history_failure=False
     app.state.services.model_transport=httpx.MockTransport(model_reply)
     app.state.test_directory=directory
     with closing(open_db(app.state.database_path)) as conn:
@@ -69,6 +81,8 @@ def app_factory():
 
     @app.post('/api/__test__/reset')
     def reset(body:dict=Body(default={})):
+        app.state.services.source=BrowserSource()
+        app.state.history_failure=bool(body.get('history_failure'))
         with closing(open_db(app.state.database_path)) as conn:
             conn.execute('PRAGMA foreign_keys=OFF')
             tables=[row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'message_search%' AND name!='schema_version'")]
@@ -77,8 +91,17 @@ def app_factory():
                     conn.execute('DELETE FROM "'+table+'"')
             conn.execute('PRAGMA foreign_keys=ON')
             seed_case(conn)
+            if body.get('case')=='long-history':
+                records=[make_message(message_id=f'history-{i:02}',body='收纳盒12方 '+('历史语境资料 '*150)) for i in range(12)]
+                page=make_page(records)
+                archive_page(conn,page)
+                app.state.services.source.pages['group-1']=[page]
             if body.get('case')=='profile-ready':
                 from tests.profile_seed import seed_profile
                 seed_profile(conn)
+        return {'status':'ok'}
+    @app.post('/api/__test__/history-recover')
+    def recover_history():
+        app.state.history_failure=False
         return {'status':'ok'}
     return app

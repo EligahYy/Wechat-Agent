@@ -63,18 +63,21 @@ def update_progress(conn,snapshot,token):
     account=snapshot.key.account_id
     with transaction(conn):
         if cancellation_requested(conn,account,token):raise ModelCallError('model_cancelled')
-        rows=conn.execute('SELECT phase,state,reused FROM history_run_units WHERE account_id=? AND snapshot_id=?',(account,snapshot.id)).fetchall()
+        rows=conn.execute('SELECT phase,state,reused,input_tokens,output_tokens FROM history_run_units WHERE account_id=? AND snapshot_id=?',(account,snapshot.id)).fetchall()
         progress={}
         for phase,label in [('extract','chunks'),('merge','merge')]:
             items=[r for r in rows if r['phase']==phase]
             for name,value in [('total',len(items)),('completed',sum(r['state']=='succeeded' for r in items)),('failed',sum(r['state']=='failed' for r in items)),('reused',sum(r['reused'] for r in items))]:
                 progress[f'analysis_{label}_{name}']=value
+        window=conn.execute('SELECT context_tokens FROM history_runs WHERE account_id=? AND snapshot_id=?',(account,snapshot.id)).fetchone()[0]
+        progress.update(analysis_context_tokens=window,analysis_max_input_tokens=max((r['input_tokens'] for r in rows),default=0),analysis_max_output_tokens=max((r['output_tokens'] for r in rows),default=0))
         coverage=compute_coverage(conn,account,snapshot.id)
         progress.update(analysis_material_total=len(snapshot.material_refs),analysis_material_completed=len(coverage.processed))
         conn.execute('UPDATE history_runs SET progress_json=? WHERE account_id=? AND snapshot_id=?',(canonical(progress),account,snapshot.id))
         aggregate={}
         for run in conn.execute('SELECT progress_json FROM history_runs WHERE account_id=? AND operation_id=?',(account,token.operation_id)):
-            for key,value in json.loads(run[0]).items():aggregate[key]=aggregate.get(key,0)+value
+            for key,value in json.loads(run[0]).items():
+                aggregate[key]=max(aggregate.get(key,0),value) if key in {'analysis_context_tokens','analysis_max_input_tokens','analysis_max_output_tokens'} else aggregate.get(key,0)+value
         counts=json.loads(conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',(account,token.operation_id)).fetchone()[0])
         counts.update(aggregate)
         conn.execute('UPDATE operations SET counts_json=?,updated_at=? WHERE account_id=? AND id=?',(canonical(counts),now(),account,token.operation_id))

@@ -42,10 +42,10 @@
 
 **Files:** analysis/runtime.py、runner.py、operations/reports.py；CustomerSyncStatus.tsx、OperationDetails.tsx、operationOutcome.ts、tests/webserver.py及生产／浏览器测试。
 
-- [ ] Step1 失败测试覆盖超窗真实网关任务成功发布、失败复用、在途进度、重试不重复成功段、来源与分析状态分开、人工修改阻止旧结果。
-- [ ] Step2 生产启用WorkflowV2；操作counts保存分段／归纳／复用／消息覆盖；现有任务终态更新保留这些计数。
-- [ ] Step3 卡片就近显示分段进度与复用，失败原因提供重新同步并解释保留检查点；单元用完次数明确提示，不无穷重复付费。
-- [ ] Step4 定向API、单元、浏览器和构建通过；提交生产UI检查点。
+- [x] Step1 失败测试覆盖超窗真实网关任务成功发布、失败复用、在途进度、重试不重复成功段、来源与分析状态分开、人工修改阻止旧结果。
+- [x] Step2 生产启用WorkflowV2；操作counts保存分段／归纳／复用／消息覆盖；现有任务终态更新保留这些计数。
+- [x] Step3 卡片就近显示分段进度与复用，失败原因提供重新同步并解释保留检查点；单元用完次数明确提示，不无穷重复付费。
+- [x] Step4 定向API、单元、浏览器和构建通过；提交生产UI检查点。
 
 ## Task 4: 整体验收、CR与架构文档
 

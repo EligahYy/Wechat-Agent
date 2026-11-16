@@ -45,7 +45,7 @@ async def analyze(conn,operation,owner,session,targets):
             item=next((c for c in report.contacts if c.contact_id==contact),None) if report else None
             if report and (not item or not item.can_analyze):raise ModelCallError('source_not_complete')
             coverage=ContextCoverage(required_conversation_ids=tuple(item.required_conversation_ids),completed_conversation_ids=tuple(item.completed_conversation_ids),warning_codes=tuple(sorted({i.code for i in item.issues if i.severity=='warning'}))) if item else None
-            snapshot=build_snapshot(conn,ContactKey(account_id=operation.scope.account_id,contact_id=contact),datetime.now(timezone.utc),coverage=coverage,versions={'template':'profile-v1','strategy':'workflow-v1','output_schema':'1','model_config':session.config.version})
+            snapshot=build_snapshot(conn,ContactKey(account_id=operation.scope.account_id,contact_id=contact),datetime.now(timezone.utc),coverage=coverage,versions={'template':'profile-v1','strategy':getattr(session.workflow,'strategy_version','workflow-v1'),'output_schema':'1','model_config':session.config.version})
             if coverage and (set(coverage.required_conversation_ids)!=set(ContextReader(conn,snapshot).conversations()) or any(gap.split(':',1)[0] in {'source_not_complete','source_gap','source_issue','message_time_invalid','message_author_unverified'} for gap in snapshot.gaps)):
                 raise ModelCallError('source_not_complete')
             if unchanged(conn,snapshot):
@@ -62,6 +62,10 @@ async def analyze(conn,operation,owner,session,targets):
         except ModelCallError as error:code=error.code
         except Exception:code='analysis_failed'
         if not _owned(conn,operation,owner):_stop(conn,operation,owner);return
+        # The history workflow persists progress while running. Do not overwrite
+        # these live counters with the runner's pre-call copy at terminalization.
+        live=conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',(operation.scope.account_id,operation.id)).fetchone()
+        counts.update(json.loads(live[0]))
         if code:counts['analysis_failed']+=1;first_error=first_error or code
         elif skipped:counts['analysis_skipped']+=1
         else:counts['analysis_completed']+=1;counts['analysis_incomplete']+=int(incomplete)

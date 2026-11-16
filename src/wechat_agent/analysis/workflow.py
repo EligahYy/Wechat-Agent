@@ -8,6 +8,7 @@ from ..profiles.publisher import check_inputs
 from ..source.repository import transaction
 
 class WorkflowV1:
+    strategy_version="workflow-v1"
     def __init__(self,conn,gateway):
         self.conn=conn;self.gateway=gateway
 

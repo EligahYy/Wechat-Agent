@@ -45,7 +45,7 @@ def analysis_issue(raw,contact):
 def suggested_action(code):
     if code in {'model_timeout','model_temporary_error','model_retry_limit','rate_limited','retry_after_exceeds_deadline'}:return 'retry_sync'
     if code in {'scope_excluded','scope_changed','contact_changed','retained_evidence_unavailable'}:return 'review_contact'
-    if code in {'context_requires_chunking'}:return 'none'
+    if code in {'context_requires_chunking','history_merge_unit_too_large','context_reference_too_large','context_message_overhead_exceeded'}:return 'none'
     if code.startswith('model_') or code in {'capability_not_ready','authentication_failed','credential_unavailable','credential_store_unsupported','request_invalid'}:return 'open_model_settings'
     return 'retry_sync'
 
@@ -71,7 +71,7 @@ def finalize_report(conn,account_id,operation_id):
             if not any(i.code==issue.code and i.field_path==issue.field_path for i in outcome.issues):outcome.issues.append(issue)
         field_incomplete=item.error_code=='analysis_incomplete' and any(i.stage=='publication' for i in normalized)
         if item.error_code and item.error_code not in {'analysis_incomplete','user_stopped','cancelled'}:
-            stage='publication' if item.error_code in {'manual_changed','material_changed','profile_changed','scope_changed','contact_changed','retained_evidence_unavailable','scope_excluded','participants_changed','snapshot_not_authorized'} else 'context' if item.error_code in {'source_not_complete','context_requires_chunking'} else 'model'
+            stage='publication' if item.error_code in {'manual_changed','material_changed','profile_changed','scope_changed','contact_changed','retained_evidence_unavailable','scope_excluded','participants_changed','snapshot_not_authorized'} else 'context' if item.error_code in {'source_not_complete','context_requires_chunking','context_fixed_overhead_exceeded','context_reference_too_large','context_message_overhead_exceeded','history_merge_unit_too_large','history_coverage_incomplete','chunk_source_outside_unit','merge_scope_invalid','checkpoint_invalid'} else 'model'
             issue=OperationIssue(code=item.error_code,stage=stage,severity='blocker',scope='contact',contact_id=item.contact_id,suggested_action=suggested_action(item.error_code))
             if not any(i.code==issue.code for i in outcome.issues):outcome.issues.append(issue)
         outcome.analysis_outcome='not_started' if item.error_code=='source_not_complete' else 'failed' if item.state=='failed' else 'stopped' if item.state=='stopped' else 'unchanged' if item.counts.get('skipped') else 'partial' if item.state=='succeeded' and field_incomplete else 'updated' if item.state=='succeeded' else 'running'

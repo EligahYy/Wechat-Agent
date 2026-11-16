@@ -72,7 +72,7 @@ export function ModelConfigDialog({accountId,onClose,onChanged}:{accountId:strin
           {mode==='json_schema'&&<label className="budget-confirm"><input type="checkbox" checked={schemaAck} disabled={!!busy||dirty} onChange={event=>setSchemaAck(event.target.checked)}/>我已核对服务支持JSON Schema响应格式</label>}
           <button className="button secondary" disabled={!!busy||dirty||!budgetAck||!budgetReference||(mode==='json_schema'&&!schemaAck)} onClick={()=>void confirmBudget()}>{busy==='budget'?'正在保存核对记录…':'确认文本预算'}</button>
         </>}
-        <p className="field-hint">连接检查、文档预算核对和真实整理质量分别验证；当前不自动启用图片理解。历史超出预算会明确提示，后续分段处理后再整理。</p>
+        <p className="field-hint">连接检查、文档预算核对和真实整理质量分别验证；当前不自动启用图片理解。文本长历史将自动分段处理，未完成时可重新同步并复用有效分段。</p>
       </section>}
     </div>
   </Dialog>;
