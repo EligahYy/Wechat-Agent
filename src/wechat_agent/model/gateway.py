@@ -27,6 +27,13 @@ class ModelGateway:
             raise ModelCallError('model_config_changed')
         operation=self.conn.execute('SELECT contact_id FROM operations WHERE account_id=? AND id=?',(account,cancellation.operation_id)).fetchone()
         if operation is None or operation['contact_id'] not in (None,contact):raise ModelCallError('operation_scope_mismatch')
+        if request.checkpoint_key:
+            grant=self.conn.execute('''SELECT 1 FROM history_run_units u JOIN history_runs r
+                ON r.account_id=u.account_id AND r.snapshot_id=u.snapshot_id
+                WHERE u.account_id=? AND u.contact_id=? AND u.snapshot_id=? AND u.unit_id=?
+                AND u.cache_key=? AND u.phase=? AND r.operation_id=?''',
+                (account,contact,request.snapshot_id,request.unit_id,request.checkpoint_key,request.phase,cancellation.operation_id)).fetchone()
+            if not grant:raise ModelCallError('checkpoint_scope_mismatch')
         self._cancel(account,cancellation)
         return account,contact
 
@@ -46,6 +53,11 @@ class ModelGateway:
             if previous>=3:raise ModelCallError('call_request_limit')
             conflict=self.conn.execute('SELECT 1 FROM model_calls WHERE account_id=? AND call_id=? AND unit_id!=?',(account,request.call_id,request.unit_id)).fetchone()
             if conflict:raise ModelCallError('call_scope_mismatch')
+            if request.checkpoint_key:
+                reserved=self.conn.execute('''UPDATE history_checkpoints SET requests=requests+1
+                    WHERE account_id=? AND contact_id=? AND cache_key=? AND requests<6''',
+                    (account,contact,request.checkpoint_key))
+                if not reserved.rowcount:raise ModelCallError('unit_request_limit')
             number=unit['requests']+1
             self.conn.execute('UPDATE analysis_units SET requests=? WHERE account_id=? AND unit_id=?',(number,account,request.unit_id))
             self.conn.execute('''INSERT INTO model_calls(account_id,contact_id,snapshot_id,unit_id,call_id,phase,config_version,attempt,status,model_id)

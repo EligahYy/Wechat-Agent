@@ -50,6 +50,7 @@ class ModelMessage(BaseModel):
     content:str
 
 class ModelRequest(BaseModel):
+    checkpoint_key:str|None=Field(default=None,min_length=1,max_length=64)
     model_config={'extra':'forbid'}
     call_id:str=Field(min_length=1,max_length=128)
     unit_id:str=Field(min_length=1,max_length=128)

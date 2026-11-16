@@ -33,10 +33,10 @@
 
 **Files:** schema016_history_checkpoints.sql、analysis/checkpoints.py、analysis/history.py、analysis/facts.py、model/prompts/history-v1.md；model/contracts.py、gateway.py、storage/db.py及测试。
 
-- [ ] Step1 写失败测试：三段中段失败仍完成其余段，重试只补失败；持久化重开；修订／角色／人工／配置变更正确失效；单消息分片、伪造引用、无关空结果、归纳失败／超大字段、停止及跨账号；6次预算跨操作持久化。
-- [ ] Step2 运行定向红灯。
-- [ ] Step3 实现schema16和内容寻址缓存；阶段输入／校验／结果持久化、程序覆盖和归纳；未知错误不缓存成成功。
-- [ ] Step4 定向绿灯和迁移／发布回归；提交后端检查点。
+- [x] Step1 写失败测试：三段中段失败仍完成其余段，重试只补失败；持久化重开；修订／角色／人工／配置变更正确失效；单消息分片、伪造引用、无关空结果、归纳失败／超大字段、停止及跨账号；6次预算跨操作持久化。
+- [x] Step2 运行定向红灯。
+- [x] Step3 实现schema16和内容寻址缓存；阶段输入／校验／结果持久化、程序覆盖和归纳；未知错误不缓存成成功。
+- [x] Step4 定向绿灯和迁移／发布回归；提交后端检查点。
 
 ## Task 3: 生产接线与用户进度
 

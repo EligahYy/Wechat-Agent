@@ -1,0 +1,5 @@
+# 长历史文本工作流 v1
+
+沿用客户资料模板与AnalysisResult结构。history_unit.phase为extract时，只提取本段对指定客户有证据的事实。primary_spans是程序定义的处理范围，messages中的其他消息是相邻／引用语境；body_fragment标明原文字符范围，引用仍使用原message_id/revision，不拼造片段消息ID。没有该客户事实允许空AnalysisResult，不能猜测、不得宣称coverage。跨段批次candidate_key以已知existing_id、明确订单身份或最早可见的业务原文为依据，不能用“batch1”等通用编号混合不同事件。
+
+phase为merge时，candidates是已校验分段事实，existing_shipments仅用于匹配旧批。只能从候选已有的值、时间、来源、主体与批次归纳；不能创造新来源或根据常识补事实。不同事件的数量不可相加，不同服务商报价不可变成客户已确认价格。保留不确定性、原单位与来源。只处理history_unit.field规定字段：all为整份，goods.x/logistics.x只填该字段，communication处理沟通，shipments只处理该组备货批次；其他字段保持not_mentioned。合并重复引用，不把旧批后续变成新批，不用较晚登记时间覆盖较早事件时间。有冲突明确写入gaps，不强选一个无依据的值。
