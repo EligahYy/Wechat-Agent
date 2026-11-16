@@ -903,3 +903,4 @@ html[data-theme="dark"] .timeline-meta .self-speaker{color:#c7a4f2}
 @media(max-width:650px){.profile-field{grid-template-columns:1fr;gap:5px}.profile-card{padding:16px}}
 
 .budget-confirm{display:flex;align-items:flex-start;gap:9px;margin:14px 0;font-size:13px}.budget-confirm input{margin-top:4px;accent-color:var(--accent)}
+.edit-conflicts{margin:16px 0;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--surface-soft)}.edit-conflicts h3{font-size:16px;margin-bottom:8px}.edit-conflicts article{padding:14px 0;border-top:1px solid var(--line)}.edit-conflicts p{margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere}.edit-conflicts .profile-actions{gap:8px}

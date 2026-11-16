@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans or superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**最新基线（2026-11-15）：** 任务1—6云端完成，任务7生产接线已实现并进入整体验收；Mac真实商家质量退出门槛仍保留。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
+**最新基线（2026-11-15）：** 任务1—7云端开发及审查重要问题修复完成；Mac真实商家质量退出门槛仍保留。原文性能维护已于`0b42eac`交付（schema11），该维护计划的任务4不是本计划任务4。沟通原文已按用户新确认实现日历双栏，保留该入口；Task6补齐资料概览／备货与来源，不再执行旧的“移除一级原文页签”安排。
 
 **Goal:** 一位真实商家从已归档聊天生成可查来源、可纠正、保留独立备货批次的客户档案。
 
@@ -218,7 +218,8 @@ async def test_only_requested_customer_is_analyzed(db, services):
 
 - [x] **Step 2 — 红灯：** `python -m pytest tests/test_single_customer_flow.py -q`，预期 M1 仍返回 capability_not_ready。
 - [x] **Step 3 — 实现：** 接通现有 worker 和档案入口；前端“同步并整理此客户”使用统一 operations API，停止检查沿用 generation，不单独写一套 Promise 任务。
-- [ ] **Step 4 — 绿灯及实测：** 上述测试通过后，在 Mac 选择一位已确认商家，跑一次真实完整小历史；人工核对主体、货量／单位、路线、卡航与海运、旧批已走货＋新批需求、来源及缺口。把错提／漏提如实记录，不以合法 JSON 当验收。
+- [x] **Step 4a — 云端绿灯：** 全Python499、全浏览器66、31单元、Node24.14.1构建与wheel通过；独立审查两项Important均已用失败回归复现后修复。
+- [ ] **Step 4b — Mac真实实测：** 在 Mac 选择一位已确认商家，跑一次真实完整小历史；人工核对主体、货量／单位、路线、卡航与海运、旧批已走货＋新批需求、来源及缺口。把错提／漏提如实记录，不以合法 JSON 当验收。
 - [x] **Step 5 — 提交检查点：** 获准时提交代码及脱敏 review，消息 `feat: complete real single-customer analysis flow`。
 
 ## 退出条件

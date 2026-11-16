@@ -53,8 +53,26 @@ def get_evidence(request:Request,contact_id:str,account_id:str=Query(min_length=
                     if value.get('message_id')==message_id and value.get('revision')==revision:return True
                     return any(cited(child) for child in value.values())
                 return isinstance(value,list) and any(cited(child) for child in value)
-            if not cited(json.loads(row['result_json'])):raise OperationError('profile_evidence_not_found',404)
-            payload=json.loads(row['payload_json']);messages=payload['messages']
+            current=json.loads(row['result_json'])
+            if cited(current):
+                payload=json.loads(row['payload_json'])
+            else:
+                # Retained batches can outlive the current overview. Authorize
+                # against visible batch payloads, then resolve their exact last
+                # published payload, never an arbitrary historical reference.
+                batches=[json.loads(batch[0]) for batch in conn.execute(
+                    'SELECT payload_json FROM shipments WHERE account_id=? AND contact_id=?',
+                    (account_id,contact_id)) if cited(json.loads(batch[0]))]
+                if not batches:raise OperationError('profile_evidence_not_found',404)
+                payload=None
+                for previous in conn.execute('''SELECT v.result_json,s.payload_json FROM profile_versions v
+                    JOIN snapshots s ON s.account_id=v.account_id AND s.snapshot_id=v.snapshot_id
+                    WHERE v.account_id=? AND v.contact_id=? ORDER BY v.version DESC''',(account_id,contact_id)):
+                    published=json.loads(previous['result_json'])
+                    if any(batch in published.get('shipments',[]) for batch in batches):
+                        payload=json.loads(previous['payload_json']);break
+                if payload is None:raise OperationError('profile_evidence_not_found',404)
+            messages=payload['messages']
             target=next((item for item in messages if item['message_id']==message_id and item['revision']==revision),None)
             if not target:raise OperationError('profile_evidence_not_found',404)
             conversation=[item for item in messages if item['conversation_id']==target['conversation_id']]
