@@ -122,9 +122,8 @@ async def test_malformed_usage_is_sanitized(setup_gateway):
     gateway,request,token,responses,calls,delays,client=setup_gateway
     malformed=answer().json();malformed['usage']='bad'
     responses.extend([httpx.Response(200,json=malformed),httpx.Response(200,json=malformed)])
-    async with client:
-        with pytest.raises(ModelCallError) as error:await gateway.generate(request,token)
-    assert error.value.code=='output_invalid'
+    async with client:result=await gateway.generate(request,token)
+    assert result.payload=={'ok':True} and result.usage=={} and len(calls)==1
 
 @pytest.mark.asyncio
 async def test_repair_does_not_reset_call_budget(setup_gateway):

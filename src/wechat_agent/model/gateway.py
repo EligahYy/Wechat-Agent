@@ -67,7 +67,17 @@ class ModelGateway:
     def _audit(self,account,request,attempt,status,reason=None,usage=None):
         with transaction(self.conn):
             self.conn.execute('''UPDATE model_calls SET status=?,finish_reason=?,usage_json=? WHERE account_id=? AND unit_id=? AND attempt=?''',
-                (status,reason,json.dumps(usage or {}),account,request.unit_id,attempt))
+                (status,reason,json.dumps({**(usage or {}),'requested_output_tokens':request.output_tokens}),account,request.unit_id,attempt))
+            owner=self.conn.execute('SELECT operation_id FROM analysis_units WHERE account_id=? AND unit_id=?',(account,request.unit_id)).fetchone()
+            if owner:
+                row=self.conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',(account,owner[0])).fetchone()
+                if row:
+                    counts=json.loads(row[0]);counts['model_last_output_limit']=request.output_tokens
+                    counts['model_output_truncations']=counts.get('model_output_truncations',0)+int(status=='output_truncated')
+                    for field in ('completion_tokens','reasoning_tokens'):
+                        counts.pop('model_last_'+field,None)
+                        if usage and field in usage:counts['model_last_'+field]=usage[field]
+                    self.conn.execute('UPDATE operations SET counts_json=? WHERE account_id=? AND id=?',(json.dumps(counts),account,owner[0]))
 
     async def generate(self,request,cancellation):
         request=ModelRequest.model_validate(request.model_dump())
@@ -125,9 +135,14 @@ class ModelGateway:
                     if code!=200:raise ModelCallError('request_invalid')
                     try:
                         data=response.json();choice=data['choices'][0];reason=choice['finish_reason']
-                        if reason!='stop':raise ModelCallError('output_truncated' if reason=='length' else 'completion_not_finished')
                         if data.get('model')!=self.config.model_id:raise ModelCallError('model_identity_mismatch')
-                        usage={k:v for k,v in data.get('usage',{}).items() if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and v>=0}
+                        raw_usage=data.get('usage')
+                        if not isinstance(raw_usage,dict):raw_usage={}
+                        usage={k:v for k,v in raw_usage.items() if k in ('prompt_tokens','completion_tokens','total_tokens') and type(v) is int and v>=0}
+                        details=raw_usage.get('completion_tokens_details',{})
+                        reasoning=details.get('reasoning_tokens') if isinstance(details,dict) else None
+                        if type(reasoning) is int and reasoning>=0:usage['reasoning_tokens']=reasoning
+                        if reason!='stop':raise ModelCallError('output_truncated' if reason=='length' else 'completion_not_finished')
                         output=json.loads(choice['message']['content'])
                         json.dumps(output,allow_nan=False).encode('utf-8')
                         validator.validate(output)

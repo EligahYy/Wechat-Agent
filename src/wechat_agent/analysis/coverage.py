@@ -26,7 +26,19 @@ def compute_coverage(conn,account,snapshot_id):
     materials=json.loads(saved['materials_json']) if saved['materials_json'] else {}
     authorized={k:v['revision'] for k,v in materials.items()}==refs
     states={key:[] for key in refs}
-    rows=conn.execute('SELECT phase,state,primary_json FROM history_run_units WHERE account_id=? AND snapshot_id=?',(account,snapshot_id)).fetchall()
+    rows=conn.execute('SELECT unit_id,phase,state,primary_json,superseded FROM history_run_units WHERE account_id=? AND snapshot_id=?',(account,snapshot_id)).fetchall()
+    by_id={r['unit_id']:r for r in rows}
+    edges={}
+    for edge in conn.execute('SELECT parent_id,child_id FROM history_refinements WHERE account_id=? AND snapshot_id=?',(account,snapshot_id)):
+        edges.setdefault(edge['parent_id'],[]).append(edge['child_id'])
+    def valid_tree(key,path):
+        if key in path or key not in by_id:return False
+        row=by_id[key]
+        if not row['superseded']:return True
+        children=edges.get(key,[])
+        return bool(children) and all(c in by_id and by_id[c]['phase']==row['phase'] for c in children) and all(valid_tree(c,path|{key}) for c in children)
+    authorized=authorized and all(valid_tree(r['unit_id'],set()) for r in rows)
+    rows=[r for r in rows if not r['superseded']]
     for row in rows:
         if row['phase']!='extract':continue
         for span in json.loads(row['primary_json']):

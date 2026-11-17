@@ -19,12 +19,12 @@ def test_factory_has_no_filesystem_or_network_side_effects(tmp_path, monkeypatch
     with TestClient(app) as client:
         response = client.get("/api/health")
         assert response.status_code == 200
-        assert response.json() == {"status": "ok", "schema_version": 16}
+        assert response.json() == {"status": "ok", "schema_version": 17}
     assert (root / "archive.sqlite3").is_file()
 
 
 def test_health_reads_real_schema_and_reports_mismatch(client):
-    assert client.get("/api/health").json() == {"status": "ok", "schema_version": 16}
+    assert client.get("/api/health").json() == {"status": "ok", "schema_version": 17}
     from wechat_agent.storage.db import open_db
     with closing(open_db(client.app.state.database_path)) as conn, conn:
         conn.execute("UPDATE schema_version SET version=999")

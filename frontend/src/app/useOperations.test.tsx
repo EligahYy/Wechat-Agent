@@ -23,7 +23,7 @@ it('updates the cached history entry when polling reaches a terminal result',asy
  await waitFor(()=>expect(result.current.history).toHaveLength(1));
  await act(async()=>{await result.current.start('merchant-a');});
  await waitFor(()=>expect(done).toHaveBeenCalledOnce());
- expect(result.current.history.find(o=>o.id==='latest')?.state).toBe('succeeded');
+ await waitFor(()=>expect(result.current.history.find(o=>o.id==='latest')?.state).toBe('succeeded'));
 });
 it('remembers detail records and never downgrades a newer cached outcome',async()=>{
  vi.mocked(request).mockImplementation(async url=>String(url).includes('/latest?')?latest:{items:[old,{...latest,state:'running',updated_at:'2026-11-16T12:00:00Z'}]});

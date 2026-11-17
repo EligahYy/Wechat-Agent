@@ -14,7 +14,7 @@ def test_schema_is_repeatable_and_isolated(tmp_path):
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert 0 < conn.execute("PRAGMA busy_timeout").fetchone()[0] <= 5000
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 16
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 17
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"accounts", "contacts", "conversations", "members", "messages", "message_revisions",
                 "attachments", "sync_cursors", "sync_attempts", "operations", "operation_items", "settings"} <= tables
@@ -150,6 +150,28 @@ def test_schema15_upgrade_preserves_archive_profiles_and_operations(tmp_path,mon
         tables=['messages','message_revisions','profile_heads','profile_versions','operations','operation_items','snapshots']
         before={name:[tuple(r) for r in conn.execute(f'SELECT * FROM {name} ORDER BY rowid')] for name in tables}
         storage.migrate(conn);storage.migrate(conn)
-        assert conn.execute('SELECT version FROM schema_version').fetchone()[0]==16
+        assert conn.execute('SELECT version FROM schema_version').fetchone()[0]==17
         assert {name:[tuple(r) for r in conn.execute(f'SELECT * FROM {name} ORDER BY rowid')] for name in tables}==before
         assert conn.execute('SELECT COUNT(*) FROM history_checkpoints').fetchone()[0]==0
+
+def test_schema16_upgrade_preserves_checkpoint_request_budget(tmp_path,monkeypatch):
+    from wechat_agent.storage import db as storage
+    from tests.factories import seed_case
+    from tests.profile_seed import seed_profile
+    with closing(storage.open_db(tmp_path/'upgrade16.sqlite3')) as conn:
+        with monkeypatch.context() as patch:
+            patch.setattr(storage,'SCHEMA_VERSION',16)
+            patch.setattr(storage,'_MIGRATIONS',tuple(m for m in storage._MIGRATIONS if m[0]<=16))
+            storage.migrate(conn)
+        seed_case(conn);seed_profile(conn)
+        snapshot=conn.execute('SELECT snapshot_id FROM snapshots LIMIT 1').fetchone()[0]
+        operation=conn.execute('SELECT id FROM operations LIMIT 1').fetchone()[0]
+        with conn:
+            conn.execute("INSERT INTO history_runs VALUES('acct-1',?,'merchant-a',?,'chunked-text-v1','utf8-upper-bound-v1','direct','{}',128000,'{}')",(snapshot,operation))
+            conn.execute("INSERT INTO history_checkpoints VALUES('acct-1','merchant-a','key','extract','failed',3,NULL,'output_truncated')")
+            conn.execute("INSERT INTO history_run_units VALUES('acct-1',?,'merchant-a','unit','key','extract',0,'failed',0,100,1024,'[]','{}','output_truncated')",(snapshot,))
+        before=tuple(conn.execute('SELECT * FROM history_checkpoints').fetchone())
+        storage.migrate(conn)
+        assert tuple(conn.execute('SELECT * FROM history_checkpoints').fetchone())==before
+        assert conn.execute('SELECT superseded FROM history_run_units').fetchone()[0]==0
+        assert conn.execute('SELECT COUNT(*) FROM history_refinements').fetchone()[0]==0

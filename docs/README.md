@@ -13,6 +13,8 @@
 | 云端开发与技能恢复 | [开发工作流](DEVELOPMENT_WORKFLOW.md) |
 | M2验收与M3后续阶段 | [开发计划索引](superpowers/plans/README.md) |
 
+最新输出修复：[截断恢复与多次组装](verification/output-recovery.md)。
+
 最新M3文本交付：[分段、归纳与恢复验收](verification/m3-text-history.md)、[实施计划](superpowers/plans/2026-11-16-m3-text-history.md)。
 
 最新界面维护：[整理记录缓存与结果卡片](verification/operation-history-cache-report.md)。

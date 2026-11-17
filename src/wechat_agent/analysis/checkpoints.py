@@ -75,11 +75,12 @@ class RunProgress:
         self.materials=json.loads(saved['materials_json'])
         self.window=saved['context_tokens'];self.units={};self.done_parts={};self.parts={};self.covered=set()
         self.values={f'analysis_{phase}_{name}':0 for phase in ('chunks','merge') for name in ('total','completed','failed','reused')}
+        self.values['analysis_refinements']=conn.execute('SELECT COUNT(DISTINCT parent_id) FROM history_refinements WHERE account_id=? AND snapshot_id=?',(snapshot.key.account_id,snapshot.id)).fetchone()[0]
         self.values.update(analysis_context_tokens=self.window,analysis_max_input_tokens=0,analysis_max_output_tokens=0)
         self.load()
 
     def load(self,*,merge_only=False):
-        sql='SELECT * FROM history_run_units WHERE account_id=? AND snapshot_id=?'
+        sql='SELECT * FROM history_run_units WHERE account_id=? AND snapshot_id=? AND superseded=0'
         if merge_only:sql+=" AND phase='merge'"
         for row in self.conn.execute(sql,(self.snapshot.key.account_id,self.snapshot.id)):
             if row['unit_id'] in self.units:continue
