@@ -59,6 +59,9 @@ def app_factory():
             payload=json.loads(content)
             result=json.loads((Path(__file__).parent/'fixtures/profile-ready.json').read_text())
             result['contact_id']=payload['contact_id']
+            if app.state.history_bad_citation:
+                app.state.history_bad_citation=False
+                return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':json.dumps({'contact_id':payload['contact_id'],'goods':{'volume':{'state':'known','value':'12方','sources':[{'message_id':'invented','revision':1}]}}})}}]})
             unit=payload.get('history_unit')
             if app.state.history_output_truncated and (not unit or (unit['phase']=='extract' and len(unit.get('primary_spans',[]))>3) or (unit['phase']=='merge' and unit['field']=='all')):
                 return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'length','message':{'content':'{"incomplete":'}}],'usage':{'completion_tokens':1024,'completion_tokens_details':{'reasoning_tokens':900}}})
@@ -76,6 +79,7 @@ def app_factory():
         return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':answer}}]})
     app.state.history_failure=False
     app.state.history_output_truncated=False
+    app.state.history_bad_citation=False
     app.state.services.model_transport=httpx.MockTransport(model_reply)
     app.state.test_directory=directory
     with closing(open_db(app.state.database_path)) as conn:
@@ -87,6 +91,7 @@ def app_factory():
         app.state.services.source=BrowserSource()
         app.state.history_failure=bool(body.get('history_failure'))
         app.state.history_output_truncated=bool(body.get('history_output_truncated'))
+        app.state.history_bad_citation=bool(body.get('history_bad_citation'))
         with closing(open_db(app.state.database_path)) as conn:
             conn.execute('PRAGMA foreign_keys=OFF')
             tables=[row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'message_search%' AND name!='schema_version'")]

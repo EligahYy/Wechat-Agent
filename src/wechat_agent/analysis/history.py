@@ -21,9 +21,9 @@ class WorkflowV2:
     def __init__(self,conn,gateway):self.conn=conn;self.gateway=gateway
 
     def request(self,snapshot,payload,prompt,phase='extract'):
-        request=ModelRequest(call_id='planning',unit_id='planning',snapshot_id=snapshot.id,phase=phase,
+        request=ModelRequest(allow_output_growth=True,call_id='planning',unit_id='planning',snapshot_id=snapshot.id,phase=phase,
             model_config_version=self.gateway.config.version,messages=[ModelMessage(role='system',content=prompt),ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))],
-            output_schema=analysis_result_schema(),output_tokens=self.gateway.config.capabilities.max_output_tokens)
+            output_schema=analysis_result_schema(),output_tokens=min(8192,self.gateway.config.capabilities.max_output_tokens))
         fixed={**payload,**{key:[] for key in ('messages','candidates') if key in payload}}
         probe=request.model_copy(update={'messages':[request.messages[0],ModelMessage(role='user',content=json.dumps(fixed,ensure_ascii=False))]})
         budget=request_budget(probe,self.gateway.config)
@@ -43,7 +43,26 @@ class WorkflowV2:
             if saved['error_code']=='output_truncated':raise ModelCallError('output_truncated')
             set_unit(self.conn,snapshot,token,request,'running',progress=progress)
             response=await self.gateway.generate(request,token)
-            result=validate_unit(self.conn,snapshot,response.payload,allowed,reader=reader)
+            try:result=validate_unit(self.conn,snapshot,response.payload,allowed,reader=reader)
+            except ModelCallError as error:
+                if error.code!='chunk_source_outside_unit':raise
+                versions={r.message_id:r.revision for r in snapshot.material_refs}
+                refs={(r.message_id,r.revision) for r in source_refs(AnalysisResult.model_validate(response.payload)) if (r.message_id,r.revision) not in allowed}
+                details={'model_source_unknown':0,'model_source_revision_mismatch':0,'model_source_other_unit':0}
+                for identifier,revision in refs:
+                    key='model_source_unknown' if identifier not in versions else 'model_source_revision_mismatch' if versions[identifier]!=revision else 'model_source_other_unit'
+                    details[key]+=1
+                with transaction(self.conn):
+                    row=self.conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',(snapshot.key.account_id,token.operation_id)).fetchone()
+                    counts=json.loads(row[0])
+                    for key,value in details.items():counts[key]=counts.get(key,0)+value
+                    self.conn.execute('UPDATE operations SET counts_json=? WHERE account_id=? AND id=?',(json.dumps(counts),snapshot.key.account_id,token.operation_id))
+                payload=json.loads(request.messages[-1].content)
+                payload['_source_correction']={'instruction':'Return one complete corrected result. Copy message_id and revision exactly from allowed_sources. Remove unsupported facts; do not invent identifiers or use any other sources.','allowed_sources':[{'message_id':identifier,'revision':revision} for identifier,revision in sorted(allowed)]}
+                correction=request.model_copy(update={'call_id':request.call_id+':refs','messages':[request.messages[0],ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))]})
+                if not request_budget(correction,self.gateway.config).fits:raise error
+                response=await self.gateway.generate(correction,token)
+                result=validate_unit(self.conn,snapshot,response.payload,allowed,reader=reader)
             enforce_merge_scope(result,label,candidates)
             set_unit(self.conn,snapshot,token,request,'succeeded',output=result,progress=progress)
             return result

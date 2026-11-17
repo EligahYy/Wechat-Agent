@@ -54,7 +54,7 @@ export function ModelConfigDialog({accountId,onClose,onChanged}:{accountId:strin
       <section><h3>处理范围</h3><div className="import-mapping">
         <FormField label="上下文上限" type="number" min={1} value={context} disabled={!!busy} onChange={event=>setContext(event.target.value)}/>
         <FormField label="最大输出" type="number" min={16} value={output} disabled={!!busy} onChange={event=>setOutput(event.target.value)}/>
-      </div><p className="field-hint">按服务文档填写声明值。连接检查不证明窗口容量或视觉能力；未验证能力不会自动启用图片处理。</p></section>
+      </div><p className="field-hint">上下文容量与单次最大输出是独立限制，请分别按模型文档填写。系统从小额度开始，必要时增加或拆分，不会直接请求整个窗口的输出。连接检查不证明窗口容量或视觉能力；未验证能力不会自动启用图片处理。</p></section>
       {saved?.configured&&<section className="import-preview"><h3>连接检查</h3>
         <div className="model-connection-row">
           <ModelConnectionStatus state={busy==='checking'?'running':state} modified={dirty}/>

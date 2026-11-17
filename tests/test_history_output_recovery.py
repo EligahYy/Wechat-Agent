@@ -7,11 +7,11 @@ from wechat_agent.analysis.history import WorkflowV2
 from wechat_agent.model.contracts import ModelCallError
 
 
-def test_profile_request_uses_configured_output_above_8192(history_env):
+def test_profile_request_starts_small_with_room_for_configured_growth(history_env):
     e=history_env
     e.gateway.config=e.config.model_copy(update={'capabilities':e.config.capabilities.model_copy(update={'context_tokens':200000,'max_output_tokens':32000})})
     request=WorkflowV2(e.gateway.conn,e.gateway).request(e.snapshot,{'messages':[]},'rules')
-    assert request.output_tokens==32000
+    assert request.output_tokens==8192
 
 @pytest.mark.asyncio
 async def test_truncated_response_retains_safe_usage_and_requested_output(setup_gateway,db):

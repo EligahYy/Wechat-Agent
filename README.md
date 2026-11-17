@@ -4,7 +4,9 @@
 
 **当前主线：M3文本长历史分段与检查点恢复已完成云端开发；下一步为附件获取／解析。真实商家质量待Mac核对。** 当前schema17，不把最小连接检查或文档预算核对当作真实业务质量通过。
 
-最新[输出截断恢复与程序组装](docs/verification/output-recovery.md)：多次完整结构化回复经校验后合并，失败保留检查点。
+最新反馈修复见[单次额度与引用纠正](docs/verification/output-allocation.md)，避免把1M上下文直接当作单次输出。
+
+此前[输出截断恢复与程序组装](docs/verification/output-recovery.md)：多次完整结构化回复经校验后合并，失败保留检查点。
 
 本轮[文本长历史与恢复验收](docs/verification/m3-text-history.md)说明处理范围、重试预算与实测边界。
 

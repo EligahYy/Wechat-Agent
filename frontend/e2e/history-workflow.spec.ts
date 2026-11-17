@@ -1,14 +1,14 @@
 import {test,expect} from '@playwright/test';
-for(const mode of ['source-failure','output-truncated']){
+for(const mode of ['source-failure','output-truncated','citation-repair']){
 test(`large history assembles complete results: ${mode}`,async({page,request})=>{
- await request.post('/api/__test__/reset',{data:{case:'long-history',history_failure:mode==='source-failure',history_output_truncated:mode==='output-truncated'}});
+ await request.post('/api/__test__/reset',{data:{case:'long-history',history_failure:mode==='source-failure',history_output_truncated:mode==='output-truncated',history_bad_citation:mode==='citation-repair'}});
  await page.goto('/');await page.getByRole('button',{name:'设置',exact:true}).click();
  await page.getByRole('button',{name:'配置模型',exact:true}).click();
  const model=page.getByRole('dialog',{name:'模型配置'});
  await model.getByLabel('服务地址',{exact:true}).fill('https://synthetic.example/chat/completions');
  await model.getByLabel('模型 ID',{exact:true}).fill('synthetic');
  await model.getByLabel('API 密钥',{exact:true}).fill('synthetic-key');
- await model.getByLabel('上下文上限',{exact:true}).fill(mode==='output-truncated'?'500000':'24000');
+ await model.getByLabel('上下文上限',{exact:true}).fill(mode==='source-failure'?'24000':'500000');
  await model.getByLabel('最大输出',{exact:true}).fill('1024');
  await model.getByRole('button',{name:'保存配置',exact:true}).click();
  await model.getByRole('button',{name:'检查连接',exact:true}).click();
@@ -21,7 +21,7 @@ test(`large history assembles complete results: ${mode}`,async({page,request})=>
  const customer=page.getByRole('dialog').first();
  await customer.getByRole('button',{name:'同步并整理此客户',exact:true}).click();
  const status=customer.getByRole('region',{name:'当前客户同步状态'});
- await expect(status.getByRole('group',{name:'长历史整理进度'})).toBeVisible();
+ if(mode!=='citation-repair')await expect(status.getByRole('group',{name:'长历史整理进度'})).toBeVisible();
  if(mode==='source-failure'){
  await expect(status.getByText('消息已同步，整理未完成',{exact:true})).toBeVisible();
  await expect(status.getByText('已完成分段已保留，重新同步将复用有效结果。')).toBeVisible();
@@ -31,16 +31,17 @@ test(`large history assembles complete results: ${mode}`,async({page,request})=>
  await expect(status.getByText('整理完成',{exact:true})).toBeVisible();
  const historyProgress=status.getByRole('group',{name:'长历史整理进度'});
  if(mode==='source-failure')await expect(historyProgress.getByText(/分段提取 \d+ \/ \d+ · 复用 [1-9]\d* 段/)).toBeVisible();
- await expect(customer.getByText('12方',{exact:true})).toBeVisible();
+ await expect(customer.getByText(/^(约)?12方$/)).toBeVisible();
  const jobs=await(await request.get('/api/operations?account_id=acct-1')).json();
- const latest=jobs.items[0];if(mode==='source-failure')expect(latest.counts.analysis_chunks_reused).toBeGreaterThan(0);else expect(latest.counts.analysis_refinements).toBeGreaterThan(0);
+ const latest=jobs.items[0];if(mode==='source-failure')expect(latest.counts.analysis_chunks_reused).toBeGreaterThan(0);else if(mode==='output-truncated')expect(latest.counts.analysis_refinements).toBeGreaterThan(0);else expect(latest.counts.model_source_unknown).toBeGreaterThan(0);
  expect(latest.counts.analysis_chunks_completed).toBe(latest.counts.analysis_chunks_total);
  expect(latest.counts.analysis_material_completed).toBe(latest.counts.analysis_material_total);
  await status.getByRole('button',{name:'查看同步详情',exact:true}).click();
  const records=page.getByRole('dialog',{name:'整理记录'});
- await expect(records.getByRole('group',{name:'长历史整理进度'})).toBeVisible();
+ if(mode!=='citation-repair')await expect(records.getByRole('group',{name:'长历史整理进度'})).toBeVisible();
  await records.getByText('诊断详情',{exact:true}).click();
  await expect(records.getByText(/UTF-8 保守上界/)).toBeVisible();
+ if(mode==='citation-repair')await expect(records.getByText(/引用问题：未知编号 1/)).toBeVisible();
 });
 
 }
