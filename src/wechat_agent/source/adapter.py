@@ -342,7 +342,7 @@ class WXCLIAdapter:
             gaps.append(code)
         if not page.items and page.paging.has_more:
             gaps.append("source_empty_page_with_more")
-        if gaps:
+        if set(gaps) - {"source_message_id_unavailable"}:
             next_cursor = cursor
         elif page.paging.has_more:
             next_cursor = position.model_copy(update={"offset": position.offset + limit, "last_key": previous}).model_dump_json()

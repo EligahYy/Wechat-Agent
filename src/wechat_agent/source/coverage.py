@@ -27,7 +27,7 @@ class SyncAssessment(BaseModel):
 
 WARNINGS={'source_group_membership_unverified','source_name_read_failed','source_group_members_unreadable','source_group_members_unavailable'}
 GLOBAL={'source_account_mismatch','source_changed_during_sync','source_metadata_changed','archive_write_failed','source_metadata_refresh_failed','source_metadata_refresh_timeout','source_contract_invalid','source_authentication_failed'}
-LOCAL={'source_timeout','source_unreachable','source_page_limit_reached','source_shards_unavailable','source_rows_skipped','message_sender_conflict','message_sender_missing','message_sender_invalid','message_contract_invalid','source_conversation_unavailable','source_empty_page_with_more','source_cursor_no_progress','source_page_no_progress'}
+LOCAL={'source_message_id_unavailable','source_timeout','source_unreachable','source_page_limit_reached','source_shards_unavailable','source_rows_skipped','message_sender_conflict','message_sender_missing','message_sender_invalid','message_contract_invalid','source_conversation_unavailable','source_empty_page_with_more','source_cursor_no_progress','source_page_no_progress'}
 
 def assess_sync(conn,account_id,contact_ids,result):
     from ..contacts.conversations import resolve_contact_conversations

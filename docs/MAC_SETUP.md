@@ -262,3 +262,15 @@ curl --max-time 10 -sS http://127.0.0.1:9100/api/v1/health
 
 
 最新输出分配修复仍为schema17，不需迁移或清库。上下文和输出是独立参数，请分别按供应商文档填写；初始输出通常不超过8192，系统按需增额／拆分。引用错误增加一次受限纠正及分类诊断，具体见[最新说明](verification/output-allocation.md)。
+
+### 部分消息缺少稳定编号
+
+整理记录出现 `source_message_id_unavailable` 时，wx-cli 返回的消息缺少可用于归档的正数 `server_id`。更新后从整理记录点击「重新同步」，出错会话会使用新游标从头读取；后续可识别的消息仍会归档，其他会话也会继续同步。缺少编号的原始记录保存在问题表，该会话仍有缺口。重复读到同样的无编号记录时，需要检查来源端；本地无法确认这些记录的身份。
+
+如只需补拉诊断详情中列出的会话，可在仓库目录执行以下命令，将两个占位符替换为工作账号和会话编号。此命令只拉消息。
+
+```sh
+.venv/bin/python -m wechat_agent.source.sync \
+  --source-account '工作账号ID' --conversation '会话ID' \
+  --from-start --page-size 200 --max-pages 1000
+```

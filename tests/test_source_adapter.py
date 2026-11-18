@@ -260,3 +260,15 @@ async def test_unidentified_rows_keep_separate_observations_instead_of_body_hash
     archive_page(db, page)
     assert db.execute("SELECT COUNT(*) FROM source_issues").fetchone()[0] == 2
     assert db.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_numberless_row_allows_reading_later_pages_without_claiming_completion():
+    server = NativeServer()
+    server.rows[0]["server_id"] = 0
+    async with adapter(server) as source:
+        first = await source.messages("room@chatroom", None, 2)
+        assert first.gaps == ["source_message_id_unavailable"] and not first.complete
+        assert first.next_cursor is not None
+        later = await source.messages("room@chatroom", first.next_cursor, 2)
+    assert later.complete and [row.message_id for row in later.records] == ["wx-cli:room%40chatroom:3"]

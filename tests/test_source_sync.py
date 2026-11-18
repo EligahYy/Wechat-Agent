@@ -274,3 +274,41 @@ def test_attachment_links_and_existing_file_state_survive_replay(db):
     attachment = db.execute("SELECT state,local_path FROM attachments").fetchone()
     assert tuple(attachment) == ("original", "private-image.png")
     assert json.loads(db.execute("SELECT raw_json FROM message_revisions").fetchone()[0]) == record.raw
+
+
+@pytest.mark.asyncio
+async def test_missing_message_id_restarts_only_affected_cursor_and_keeps_reading_other_rooms(db):
+    from tests.fakes.source import FakeSource
+    from wechat_agent.operations.contracts import OperationScope
+    from wechat_agent.source.contracts import SourceIssue
+    from wechat_agent.source.coverage import assess_sync
+    from wechat_agent.source.sync import sync_scope
+
+    source = FakeSource()
+    saved_group = source.pages['group-1'][0]
+    first = make_page(conversation_id='dm-a', conversation_kind='private', records=[
+        make_message(conversation_id='dm-a', message_id='dm-a:stable'),
+    ], next_cursor='page:1', complete=False)
+    issue = SourceIssue(code='source_message_id_unavailable', raw={'talker':'dm-a','server_id':0})
+    broken = make_page([], conversation_id='dm-a', conversation_kind='private', next_cursor='page:2', complete=False).model_copy(
+        update={'issues':[issue], 'gaps':[issue.code]})
+    later = make_page([make_message(conversation_id='dm-a', message_id='dm-a:later')],
+                      conversation_id='dm-a', conversation_kind='private')
+    source.pages = {'dm-a': [first, broken, later], 'group-1': [saved_group]}
+    scope = OperationScope(account_id=source.account_id)
+
+    failed = await sync_scope(db, source, scope, None)
+    assert failed.failed_conversations == ['dm-a']
+    assert ('dm-a', 'page:2', 200) in source.calls
+    assert tuple(db.execute("SELECT cursor,complete FROM sync_cursors WHERE conversation_id='dm-a'").fetchone()) == ('page:1', 0)
+    assert db.execute("SELECT COUNT(*) FROM messages WHERE message_id='dm-a:later'").fetchone()[0] == 1
+    assert failed.successful_conversations == ['group-1']
+    assert not assess_sync(db, source.account_id, {'merchant-a'}, failed).global_blocked
+
+    source.calls.clear()
+    retry = await sync_scope(db, source, scope, None)
+    assert source.calls[0][:2] == ('dm-a', None)
+    assert retry.failed_conversations == ['dm-a']
+    assert retry.successful_conversations == ['group-1']
+    assert db.execute("SELECT COUNT(*) FROM messages WHERE message_id='dm-a:stable'").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM source_issues WHERE resolved=0").fetchone()[0] > 0

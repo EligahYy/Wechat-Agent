@@ -173,10 +173,11 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
                 with transaction(conn):
                     conn.execute("""INSERT INTO sync_attempts(account_id,attempt_id,conversation_id,state,started_at)
                                     VALUES (?,?,?,'running',?)""", (scope.account_id, attempt_id, conversation_id, _now()))
-                saved = conn.execute("SELECT cursor,complete FROM sync_cursors WHERE account_id=? AND conversation_id=?",
+                saved = conn.execute("SELECT cursor,complete,gaps_json FROM sync_cursors WHERE account_id=? AND conversation_id=?",
                                      (scope.account_id, conversation_id)).fetchone()
                 saved_cursor = saved[0] if saved else None
-                cursor = None if from_start or (saved and saved[1]) else saved_cursor
+                retry_missing_id = saved and 'source_message_id_unavailable' in json.loads(saved[2])
+                cursor = None if from_start or (saved and saved[1]) or retry_missing_id else saved_cursor
                 seen_cursors, seen_messages = set(), set()
                 for _ in range(max_pages):
                     if cancellation_requested(conn, scope.account_id, cancellation):
@@ -189,17 +190,26 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
                     page = await source.messages(conversation_id, cursor, page_size)
                     if page.account_id != scope.account_id or page.conversation_id != conversation_id:
                         raise SourceError("source_message_scope_mismatch")
-                    page_gaps = list(page.gaps)
+                    page_gaps = set(page.gaps)
                     ids = {record.message_id for record in page.records}
-                    if not page_gaps:
+                    recoverable = {"source_message_id_unavailable"}
+                    if not page_gaps - recoverable:
                         if ids and ids <= seen_messages:
-                            page_gaps.append("source_page_no_progress")
-                    if not page.complete and not page_gaps:
-                        if page.next_cursor is None or page.next_cursor == cursor or page.next_cursor in seen_cursors:
-                            page_gaps.append("source_cursor_no_progress")
-                    if page_gaps != page.gaps:
-                        page = page.model_copy(update={"gaps": sorted(set(page_gaps)), "complete": False})
-                    delta = archive_page(conn, page, expected_cursor=saved_cursor, start_cursor=cursor,
+                            page_gaps.add("source_page_no_progress")
+                        if not page.complete and not page_gaps and page.next_cursor is None:
+                            page_gaps.add("source_cursor_no_progress")
+                        if page.next_cursor is not None and (page.next_cursor == cursor or page.next_cursor in seen_cursors):
+                            page_gaps.add("source_cursor_no_progress")
+                    # Numberless rows remain quarantined. While reading later
+                    # pages, keep the saved cursor at the first gap and persist
+                    # the incomplete status, including if this read is stopped.
+                    prior_gap = bool(gaps)
+                    gaps.extend(sorted(page_gaps - set(gaps)))
+                    stored_page = page
+                    if gaps:
+                        stored_page = page.model_copy(update={"gaps": sorted(gaps), "complete": False})
+                    archive_cursor = saved_cursor if prior_gap else cursor
+                    delta = archive_page(conn, stored_page, expected_cursor=saved_cursor, start_cursor=archive_cursor,
                                          lease_owner=owner, cancellation=cancellation)
                     result.inserted += delta.inserted
                     result.revised += delta.revised
@@ -207,14 +217,11 @@ async def sync_scope(conn, source, scope, cancellation, *, conversation_ids=None
                     result.pages_processed += 1
                     if on_progress:
                         on_progress(result, conversation_id)
-                    if page.gaps:
-                        gaps.extend(page.gaps)
+                    saved_cursor = archive_cursor if gaps else page.next_cursor
+                    if set(gaps) - recoverable or page.complete or page.next_cursor is None:
+                        completed = page.complete and not gaps
                         break
-                    saved_cursor = page.next_cursor
                     seen_messages.update(ids)
-                    if page.complete:
-                        completed = True
-                        break
                     seen_cursors.add(page.next_cursor)
                     cursor = page.next_cursor
                 else:
