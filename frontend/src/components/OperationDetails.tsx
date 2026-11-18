@@ -56,6 +56,14 @@ export function OperationDetails({ operation,onAction }: { operation: Operation;
         <span className="info-chip">修订 {operation.counts.revised||0}</span>
         <span className="info-chip">不变 {operation.counts.unchanged||0}</span>
       </div>
+      {operation.error_code==='analysis_budget_paused'&&<p>本次已到处理预算，继续整理时会复用已验证的分段。</p>}
+      {Object.keys(operation.counts).some(key=>key.startsWith('timing_'))&&
+        <p className="muted">{([
+          ['同步','timing_source_ms'], ['准备','timing_prepare_ms'], ['提取','timing_model_extract_ms'],
+          ['归纳','timing_model_merge_ms'], ['重试等待','timing_retry_wait_ms'], ['发布','timing_publish_ms'],
+        ] as const).filter(([,key])=>operation.counts[key]!==undefined)
+          .map(([label,key])=>`${label} ${(operation.counts[key]/1000).toFixed(1)}秒`).join(' · ')}
+          {operation.counts.model_requests!==undefined&&` · 模型请求 ${operation.counts.model_requests} 次`}</p>}
       <HistoryProgress counts={operation.counts} state={operation.state}/>
       <div className="operation-outcomes"><p>消息同步：{{completed:'已完成（已知范围）',partial:(operation.counts.conversations_total>0&&operation.counts.completed_conversations>=operation.counts.conversations_total)?'会话已读取，仍有消息异常':'部分完成',failed:'未完成',stopped:'已停止',not_started:'未开始'}[report.source_outcome]||'处理中'} · {operation.counts.completed_conversations||0}/{operation.counts.conversations_total||0} 个会话</p>
       <p>资料整理：{operationTitle(operation)}</p></div>

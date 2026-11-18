@@ -4,6 +4,7 @@ from datetime import datetime,timezone
 from email.utils import parsedate_to_datetime
 import json
 import random
+from time import monotonic
 import httpx
 from referencing import Registry
 from referencing.exceptions import NoSuchResource,Unresolvable
@@ -13,10 +14,11 @@ from ..source.repository import transaction,cancellation_requested
 from ..context.tokens import request_budget,wire_payload
 
 class ModelGateway:
-    def __init__(self,conn,config,client,credentials,*,sleep=asyncio.sleep):
+    def __init__(self,conn,config,client,credentials,*,sleep=asyncio.sleep,execution_budget=None):
         self.conn=conn
         self.config=ModelConfig.model_validate_json(config.model_dump_json())
         self.client=client;self.credentials=credentials;self.sleep=sleep
+        self.execution_budget = execution_budget
         self.output_ceiling=self.config.capabilities.max_output_tokens
 
     def _scope(self,request,cancellation):
@@ -54,6 +56,8 @@ class ModelGateway:
             if previous>=3:raise ModelCallError('call_request_limit')
             conflict=self.conn.execute('SELECT 1 FROM model_calls WHERE account_id=? AND call_id=? AND unit_id!=?',(account,request.call_id,request.unit_id)).fetchone()
             if conflict:raise ModelCallError('call_scope_mismatch')
+            if self.execution_budget is not None:
+                self.execution_budget.reserve(self.conn, account, token.operation_id)
             if request.checkpoint_key:
                 reserved=self.conn.execute('''UPDATE history_checkpoints SET requests=requests+1
                     WHERE account_id=? AND contact_id=? AND cache_key=? AND requests<6''',
@@ -65,15 +69,23 @@ class ModelGateway:
                 VALUES(?,?,?,?,?,?,?,?,?,?)''',(account,contact,request.snapshot_id,request.unit_id,request.call_id,request.phase,self.config.version,number,'started',self.config.model_id))
         return number
 
-    def _audit(self,account,request,attempt,status,reason=None,usage=None):
+    def _audit(self,account,request,attempt,status,reason=None,usage=None,*,started):
+        elapsed_ms = max(0, round((monotonic()-started)*1000))
         with transaction(self.conn):
-            self.conn.execute('''UPDATE model_calls SET status=?,finish_reason=?,usage_json=? WHERE account_id=? AND unit_id=? AND attempt=?''',
-                (status,reason,json.dumps({**(usage or {}),'requested_output_tokens':request.output_tokens}),account,request.unit_id,attempt))
+            self.conn.execute('''UPDATE model_calls SET status=?,finish_reason=?,usage_json=?,elapsed_ms=? WHERE account_id=? AND unit_id=? AND attempt=?''',
+                (status,reason,json.dumps({**(usage or {}),'requested_output_tokens':request.output_tokens}),elapsed_ms,account,request.unit_id,attempt))
             owner=self.conn.execute('SELECT operation_id FROM analysis_units WHERE account_id=? AND unit_id=?',(account,request.unit_id)).fetchone()
             if owner:
                 row=self.conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',(account,owner[0])).fetchone()
                 if row:
                     counts=json.loads(row[0]);counts['model_last_output_limit']=request.output_tokens
+                    key = f'timing_model_{request.phase}_ms'
+                    counts[key] = counts.get(key, 0) + elapsed_ms
+                    counts['model_requests'] = counts.get('model_requests', 0) + 1
+                    if request.checkpoint_key and self.execution_budget is not None:
+                        from ..analysis.adaptive import observe_attempt
+                        observe_attempt(self.conn, account, self.config.version, request.phase,
+                                        status, elapsed_ms, usage or {}, request.output_tokens)
                     counts['model_output_truncations']=counts.get('model_output_truncations',0)+int(status=='output_truncated')
                     for field in ('completion_tokens','reasoning_tokens'):
                         counts.pop('model_last_'+field,None)
@@ -105,9 +117,15 @@ class ModelGateway:
         if request.output_tokens>self.config.capabilities.max_output_tokens or not budget.fits:
             raise ModelCallError('context_requires_chunking')
         try:
-            async with asyncio.timeout(300):
+            async with asyncio.timeout(120):
                 return await self._generate(request,cancellation,account,contact)
-        except TimeoutError:raise ModelCallError('model_timeout') from None
+        except TimeoutError:
+            if request.checkpoint_key and self.execution_budget is not None:
+                from ..analysis.adaptive import observe_attempt
+                with transaction(self.conn):
+                    observe_attempt(self.conn, account, self.config.version, request.phase,
+                                    'model_timeout', 120_000, {}, request.output_tokens)
+            raise ModelCallError('model_timeout') from None
 
     async def _generate(self,request,token,account,contact):
         key=self.credentials.get(self.config.credential_ref)
@@ -124,10 +142,11 @@ class ModelGateway:
                 sent+=1
                 payload=wire_payload(request,self.config,messages=messages)
                 response=None;reason=None;usage={};status='model_failed'
+                started = monotonic()
                 try:
                     response=await self.client.post(self.config.endpoint,json=payload,
                         headers={'Authorization':'Bearer '+key,'X-Request-ID':request.call_id},
-                        timeout=httpx.Timeout(300,connect=15),follow_redirects=False)
+                        timeout=httpx.Timeout(90,connect=15),follow_redirects=False)
                     self._cancel(account,token)
                     code=response.status_code
                     if code==401 or code==403:raise ModelCallError('authentication_failed')
@@ -162,17 +181,17 @@ class ModelGateway:
                     except (KeyError,IndexError,TypeError,ValueError,UnicodeError,AttributeError,SchemaError,Unresolvable,RecursionError):
                         raise ModelCallError('output_invalid') from None
                     self._cancel(account,token)
-                    self._audit(account,request,attempt,'succeeded','stop',usage)
+                    self._audit(account,request,attempt,'succeeded','stop',usage,started=started)
                     return ModelResponse(payload=output,finish_reason='stop',usage=usage,model_id=data['model'])
                 except asyncio.CancelledError:
-                    self._audit(account,request,attempt,'model_cancelled');raise
+                    self._audit(account,request,attempt,'model_cancelled',started=started);raise
                 except httpx.TimeoutException:
                     status='model_timeout'
                 except httpx.TransportError:
                     status='model_temporary_error'
                 except ModelCallError as error:
                     status=error.code
-                self._audit(account,request,attempt,status,reason if reason in ('stop','length') else None,usage)
+                self._audit(account,request,attempt,status,reason if reason in ('stop','length') else None,usage,started=started)
                 if status=='model_output_limit_rejected' and request.allow_output_growth and accepted_output is not None:
                     self.output_ceiling=min(self.output_ceiling,accepted_output)
                     raise ModelCallError('output_truncated')
@@ -185,7 +204,7 @@ class ModelGateway:
                     repaired=True
                     messages=[*messages,{'role':'system','content':'Return one valid JSON object matching the required schema. Preserve original evidence and target; do not invent missing facts.'}]
                     break
-                if status not in ('rate_limited','model_temporary_error','model_timeout') or retry==2:raise ModelCallError(status)
+                if status not in ('rate_limited','model_temporary_error','model_timeout') or retry==2 or (status=='model_timeout' and retry>=1):raise ModelCallError(status)
                 self._cancel(account,token)
                 delay=(2**retry)*random.uniform(.8,1.2)
                 if response is not None and response.headers.get('Retry-After'):
@@ -195,6 +214,9 @@ class ModelGateway:
                         try:delay=(parsedate_to_datetime(value)-datetime.now(timezone.utc)).total_seconds()
                         except (ValueError,TypeError):delay=2**retry
                     if not 0<=delay<300:raise ModelCallError('retry_after_exceeds_deadline')
+                waiting = monotonic()
                 await self.sleep(delay)
+                from ..analysis.telemetry import record_stage
+                record_stage(self.conn, account, token.operation_id, 'retry_wait', waiting)
             else:raise ModelCallError('model_retry_limit')
         raise ModelCallError('output_invalid')

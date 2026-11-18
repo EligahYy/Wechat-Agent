@@ -193,5 +193,23 @@ export function useOperations(account: string | null, onDone: () => void) {
       setSubmitting(false);
     }
   };
-  return { job, history, submitting, error, errorScope, start, stop, read, loadHistory, remember };
+  const resume = async (previous: Operation) => {
+    if (!account || lock.current || previous.scope.account_id !== account) return;
+    lock.current = true;
+    setSubmitting(true);
+    setError("");
+    try {
+      const result = await request<Operation>("/api/operations", {
+        method: "POST",
+        body: JSON.stringify({action:"resume", account_id:account, operation_id:previous.id}),
+      });
+      if (currentAccount.current === account) setJob(result);
+    } catch (reason) {
+      if (currentAccount.current === account) setError(messageFor(reason));
+    } finally {
+      lock.current = false;
+      setSubmitting(false);
+    }
+  };
+  return { job, history, submitting, error, errorScope, start, stop, resume, read, loadHistory, remember };
 }

@@ -27,20 +27,41 @@ def create_run(conn,snapshot,token,mode,config,*,messages=None):
             (snapshot.key.account_id,snapshot.id,snapshot.key.contact_id,token.operation_id,'chunked-text-v1',ESTIMATOR,mode,config.capabilities.context_tokens,canonical(materials)))
 
 
+def material_dependencies(payload):
+    refs = {(row['message_id'], row['revision']) for row in payload.get('messages', [])}
+    if payload.get('candidates'):
+        from ..profiles.contracts import AnalysisResult
+        from .facts import source_refs
+        refs.update(
+            (ref.message_id, ref.revision)
+            for candidate in payload['candidates']
+            for ref in source_refs(AnalysisResult.model_validate(candidate))
+        )
+    return sorted(refs)
+
+
 def register_unit(conn,snapshot,token,request,primary,ordinal,config):
+    payload = json.loads(request.messages[-1].content)
+    reads_previous_profile = request.phase != 'extract' or 'history_unit' not in payload
     key=digest({'policy':'chunked-text-v1','account':snapshot.key.account_id,'contact':snapshot.key.contact_id,
         'role':snapshot.role_version,'manual':snapshot.manual_version,'scope':snapshot.scope_version,
-        'profile':snapshot.profile_version,'versions':snapshot.versions,'coverage':snapshot.coverage.model_dump() if snapshot.coverage else None,
+        'profile':snapshot.profile_version if reads_previous_profile else None,'versions':snapshot.versions,'coverage':snapshot.coverage.model_dump() if reads_previous_profile and snapshot.coverage else None,
         'phase':request.phase,'messages':[m.model_dump() for m in request.messages],
         'schema':request.output_schema,'output':request.output_tokens,'primary':[asdict(s) for s in primary]})
     unit='h:'+digest([snapshot.id,token.operation_id,key])
     request=request.model_copy(update={'unit_id':unit,'call_id':unit,'checkpoint_key':key})
+    dependencies = material_dependencies(payload)
     budget=request_budget(request,config)
     if not budget.fits:raise ModelCallError('context_requires_chunking')
     with transaction(conn):
         if cancellation_requested(conn,snapshot.key.account_id,token):raise ModelCallError('model_cancelled')
         conn.execute('''INSERT INTO history_checkpoints(account_id,contact_id,cache_key,phase,state)
             VALUES(?,?,?,?,'pending') ON CONFLICT DO NOTHING''',(snapshot.key.account_id,snapshot.key.contact_id,key,request.phase))
+        conn.executemany(
+            'INSERT INTO history_checkpoint_refs VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING',
+            ((snapshot.key.account_id, snapshot.key.contact_id, key, identifier, revision)
+             for identifier, revision in dependencies),
+        )
         conn.execute('''INSERT INTO history_run_units(account_id,snapshot_id,contact_id,unit_id,cache_key,phase,ordinal,state,input_tokens,output_tokens,primary_json,request_json)
             VALUES(?,?,?,?,?,?,?,'pending',?,?,?,?) ON CONFLICT DO NOTHING''',
             (snapshot.key.account_id,snapshot.id,snapshot.key.contact_id,unit,key,request.phase,ordinal,budget.input_tokens,request.output_tokens,
@@ -49,8 +70,17 @@ def register_unit(conn,snapshot,token,request,primary,ordinal,config):
 
 
 def checkpoint(conn,snapshot,request):
-    return conn.execute('SELECT * FROM history_checkpoints WHERE account_id=? AND contact_id=? AND cache_key=?',
-        (snapshot.key.account_id,snapshot.key.contact_id,request.checkpoint_key)).fetchone()
+    identity = (snapshot.key.account_id, snapshot.key.contact_id, request.checkpoint_key)
+    saved = conn.execute('SELECT * FROM history_checkpoints WHERE account_id=? AND contact_id=? AND cache_key=?',
+                         identity).fetchone()
+    if saved['state'] == 'succeeded' and conn.execute(
+        """SELECT 1 FROM history_checkpoint_refs r LEFT JOIN messages m
+           ON m.account_id=r.account_id AND m.message_id=r.message_id AND m.revision=r.revision
+           WHERE r.account_id=? AND r.contact_id=? AND r.cache_key=? AND m.message_id IS NULL LIMIT 1""",
+        identity,
+    ).fetchone():
+        raise ModelCallError('material_changed')
+    return saved
 
 
 def set_unit(conn,snapshot,token,request,state,*,output=None,error=None,reused=False,progress=None):
@@ -59,7 +89,7 @@ def set_unit(conn,snapshot,token,request,state,*,output=None,error=None,reused=F
         if not reused:
             conn.execute('''UPDATE history_checkpoints SET state=?,output_json=?,error_code=?
                 WHERE account_id=? AND contact_id=? AND cache_key=?''',
-                (state,output.model_dump_json() if output is not None else None,error,snapshot.key.account_id,snapshot.key.contact_id,request.checkpoint_key))
+                (state,output.model_dump_json(exclude_defaults=True, exclude_none=True) if output is not None else None,error,snapshot.key.account_id,snapshot.key.contact_id,request.checkpoint_key))
         conn.execute('''UPDATE history_run_units SET state=?,reused=?,error_code=? WHERE account_id=? AND snapshot_id=? AND unit_id=?''',
             (state,int(reused),error,snapshot.key.account_id,snapshot.id,request.unit_id))
     if progress is None:progress=RunProgress(conn,snapshot,token)
@@ -79,10 +109,14 @@ class RunProgress:
         self.values.update(analysis_context_tokens=self.window,analysis_max_input_tokens=0,analysis_max_output_tokens=0)
         self.load()
 
-    def load(self,*,merge_only=False):
+    def load(self,*,merge_only=False,unit_id=None):
         sql='SELECT * FROM history_run_units WHERE account_id=? AND snapshot_id=? AND superseded=0'
         if merge_only:sql+=" AND phase='merge'"
-        for row in self.conn.execute(sql,(self.snapshot.key.account_id,self.snapshot.id)):
+        params = (self.snapshot.key.account_id, self.snapshot.id)
+        if unit_id is not None:
+            sql += " AND unit_id=?"
+            params += (unit_id,)
+        for row in self.conn.execute(sql,params):
             if row['unit_id'] in self.units:continue
             item=dict(row);item['primary']=json.loads(item['primary_json']);self.units[item['unit_id']]=item
             label='chunks' if item['phase']=='extract' else 'merge'
@@ -92,6 +126,8 @@ class RunProgress:
             for span in item['primary']:
                 key=span['message_id'];self.parts.setdefault(key,[]).append(span)
             self._account(item,1)
+        if merge_only:
+            return
         self.valid_materials={key for key,parts in self.parts.items() if span_coverage(self.materials.get(key),[(p,'succeeded') for p in parts])}
         self.covered={k for k in self.valid_materials if self.done_parts.get(k,0)==len(self.parts[k])}
 

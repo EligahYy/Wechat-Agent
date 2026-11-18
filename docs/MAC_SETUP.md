@@ -79,7 +79,7 @@ export GIT_SSH_COMMAND='ssh -o HostName=ssh.github.com -p 443 -o ConnectTimeout=
 curl -fsS http://127.0.0.1:8766/api/health
 ```
 
-通过标准：`{"status":"ok","schema_version":17}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
+通过标准：`{"status":"ok","schema_version":18}`。启动会按既有迁移升级数据库，保留原文和人工身份；不清库、不降级。原型8765及Vite开发端口5173不是正式应用入口。
 
 若出现来源配置错误，核对既有`.local/config/source.json`的base_url与expected_account_id，沿用token_env，不把凭据贴到聊天。原文浏览和手动导入使用已归档数据，不需要再次全量同步。
 
@@ -274,3 +274,8 @@ curl --max-time 10 -sS http://127.0.0.1:9100/api/v1/health
   --source-account '工作账号ID' --conversation '会话ID' \
   --from-start --page-size 200 --max-pages 1000
 ```
+
+
+### 整理可靠性 v3 更新
+
+拉取、构建并重启后，应用会从 schema 17 自动升至 18，保留旧归档和人工资料。健康接口应返回 `schema_version: 18`。首次使用新策略整理会建立新的检查点。若记录显示「整理已暂停，可继续」，打开该记录并点「继续整理」。操作详情可查看各阶段耗时和实际请求次数。详细验收见[整理可靠性 v3](verification/organize-reliability-v3.md)。

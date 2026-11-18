@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..operations.contracts import OperationScope, SyncOptions
-from ..operations.service import OperationError, control_operation, create_operation, get_operation
+from ..operations.service import OperationError, control_operation, create_operation, get_operation, resume_operation
 from ..storage.db import open_existing_db
 from .contacts import authorize_account
 
@@ -33,25 +33,31 @@ class StopRequest(BaseModel):
     operation_id: str = Field(min_length=1, max_length=128)
 
 
+class ResumeRequest(StopRequest):
+    action: Literal["resume"]
+
+
 @router.post("/api/operations")
-async def submit(request: Request, body: Annotated[CreateRequest | StopRequest, Body(discriminator="action")]):
+async def submit(request: Request, body: Annotated[CreateRequest | StopRequest | ResumeRequest, Body(discriminator="action")]):
     account_id = body.scope.account_id if isinstance(body, CreateRequest) else body.account_id
     try:
         with closing(open_existing_db(request.app.state.database_path)) as conn:
             authorize_account(request, conn, account_id)
             if isinstance(body, CreateRequest):
                 result = create_operation(conn, body.action, body.scope, body.idempotency_key, options=body.options)
+            elif isinstance(body, ResumeRequest):
+                result = resume_operation(conn, account_id, body.operation_id)
             else:
                 result = control_operation(conn, account_id, body.operation_id, "stop")
     except sqlite3.Error:
         raise OperationError("operation_write_failed", 503) from None
     runtime = request.app.state.worker
     if runtime:
-        if isinstance(body, StopRequest):
+        if body.action == "stop":
             runtime.stop_operation(result.id)
         else:
             runtime.wake.set()
-    return JSONResponse(status_code=202 if isinstance(body, CreateRequest) else 200, content=result.model_dump(mode="json"))
+    return JSONResponse(status_code=200 if body.action == "stop" else 202, content=result.model_dump(mode="json"))
 
 
 @router.get("/api/operations")

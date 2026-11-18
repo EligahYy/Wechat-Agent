@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from .contracts import CancellationToken, SyncOptions
 from .service import get_operation, initial_counts, now
 from ..source.adapter import SourceError
+from ..model.contracts import ModelCallError
 from ..source.coverage import assess_sync
 from ..source.repository import transaction
 from ..source.sync import sync_scope
@@ -66,6 +67,7 @@ def _counts(result):
     for name in ("completed", "failed", "incomplete"):
         attr = "successful_conversations" if name == "completed" else name + "_conversations"
         counts[name + "_conversations"] = len(getattr(result, attr))
+    counts["timing_source_ms"] = result.elapsed_ms
     return counts
 
 
@@ -178,6 +180,10 @@ def _complete_source(conn, operation, owner, result, *, ready=False, error_code=
         for target in blocked:
             conn.execute("INSERT INTO operation_items(account_id,operation_id,item_id,contact_id,state,phase,generation,role_version,error_code) VALUES(?,?,?,?,'failed','analysis',?,?,?)",(operation.scope.account_id,operation.id,'analysis:'+target[0],target[0],operation.generation,target[1],'source_not_complete'))
         counts = _counts(result)
+        prior = conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',
+                             (operation.scope.account_id, operation.id)).fetchone()
+        counts.update({key: value for key, value in json.loads(prior[0]).items()
+                       if key.startswith(('model_', 'timing_model_', 'timing_retry_'))})
         counts["analysis_required"] = len(targets)+len(blocked)
         counts.update(analysis_completed=0,analysis_skipped=0,analysis_failed=len(targets) if not ready else 0,analysis_incomplete=0)
         conn.execute("""UPDATE operation_items SET state=?,error_code=NULL,gaps_json=?,counts_json=?
@@ -216,11 +222,14 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
         except ValidationError:
             _fail_source(conn, operation, owner, "invalid_operation_request", ["invalid_operation_request"])
             return get_operation(conn, operation.scope.account_id, operation.id)
+        from time import monotonic
+        source_started = monotonic()
         async with _source(services, operation.scope.account_id) as source:
             result = await sync_scope(conn, source, operation.scope,
                 CancellationToken(operation_id=operation.id, generation=operation.generation),
                 **options.model_dump(), metadata_only=operation.action == 'refresh_contacts',
                 on_progress=lambda value, target: _save_progress(conn, operation, owner, value, target))
+        result.elapsed_ms = round((monotonic() - source_started) * 1000)
         from ..contacts.activity import refresh_activity
         with transaction(conn):refresh_activity(conn,operation.scope.account_id)
         _save_progress(conn, operation, owner, result, None)
@@ -240,7 +249,17 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
                         conn.execute("UPDATE operation_items SET state='succeeded',error_code=NULL,gaps_json='[]' WHERE account_id=? AND operation_id=? AND item_id='source'",(operation.scope.account_id,operation.id))
                         conn.execute("UPDATE operations SET phase='analysis',updated_at=? WHERE account_id=? AND id=?",(now(),operation.scope.account_id,operation.id))
                 async with runtime as session:
-                    await discover(conn,operation,owner,session.discovery,sync_result=result)
+                    try:
+                        await discover(conn,operation,owner,session.discovery,sync_result=result)
+                    except ModelCallError as error:
+                        if error.code != 'analysis_budget_paused':
+                            raise
+                        if not _fail_analysis(conn, operation, owner, error.code):
+                            _stop(conn, operation, owner)
+                        from .reports import finalize_report
+                        with transaction(conn):
+                            finalize_report(conn, operation.scope.account_id, operation.id)
+                        return get_operation(conn, operation.scope.account_id, operation.id)
                     targets=_complete_source(conn,operation,owner,result,ready=True)
                     if targets:await analyze(conn,operation,owner,session,targets)
                     elif targets is False:_stop(conn,operation,owner)

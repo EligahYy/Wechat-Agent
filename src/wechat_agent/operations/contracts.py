@@ -95,4 +95,6 @@ class Operation(BaseModel):
     @computed_field
     @property
     def available_actions(self) -> list[str]:
+        if self.action == 'sync_and_organize' and self.state in {'failed', 'stopped'} and self.error_code in {'analysis_budget_paused', 'operation_interrupted'}:
+            return ['resume']
         return ["stop"] if self.state in {"queued", "running"} else []

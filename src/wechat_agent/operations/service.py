@@ -105,6 +105,15 @@ def create_operation(conn, action, scope, idempotency_key, *, options=None):
     return get_operation(conn, scope.account_id, operation_id)
 
 
+def resume_operation(conn, account_id, operation_id):
+    previous = get_operation(conn, account_id, operation_id)
+    if 'resume' not in previous.available_actions:
+        raise OperationError('operation_not_resumable')
+    return create_operation(
+        conn, previous.action, previous.scope, f'resume:{operation_id}', options=previous.options,
+    )
+
+
 def control_operation(conn, account_id, operation_id, action):
     if action != "stop":
         raise OperationError("unsupported_control", 422)

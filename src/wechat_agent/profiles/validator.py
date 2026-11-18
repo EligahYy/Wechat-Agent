@@ -34,6 +34,13 @@ def validate_result(conn,snapshot,result,*,reader=None):
     except (ValidationError,TypeError,ValueError):return ValidationResult(reason='output_invalid')
     if result.contact_id!=snapshot.key.contact_id:return ValidationResult(reason='target_mismatch')
     result=result.model_copy(deep=True);issues=[]
+    def issue_reason(error):
+        code = str(error)
+        return code if code in {
+            'sources_missing', 'source_not_interpretable', 'attachment_not_processed',
+            'number_not_supported', 'unit_not_supported', 'event_date_not_supported',
+            'duplicate_candidate_key', 'shipment_outside_contact',
+        } else 'evidence_invalid'
     def evidence(refs):
         if not refs:raise ValueError('sources_missing')
         rows=[reader.resolve(ref) for ref in refs]
@@ -57,7 +64,9 @@ def validate_result(conn,snapshot,result,*,reader=None):
                 explicit={f'{int(y):04}-{int(m):02}-{int(d):02}' for y,m,d in re.findall(r'(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})',text)}
                 if day not in dates|explicit:raise ValueError('event_date_not_supported')
             return fact
-        except (ValueError,SnapshotError):issues.append(path+':evidence_invalid');return Fact()
+        except (ValueError,SnapshotError) as error:
+            issues.append(f'{path}:{issue_reason(error)}')
+            return Fact()
     for group in ('goods','logistics'):
         fields=getattr(result,group)
         for name in type(fields).model_fields:setattr(fields,name,check(getattr(fields,name),group+'.'+name))
@@ -74,10 +83,13 @@ def validate_result(conn,snapshot,result,*,reader=None):
             batch.goods=[check(f,path+'.goods') for f in batch.goods]
             batch.logistics=[check(f,path+'.logistics') for f in batch.logistics]
             shipments.append(batch)
-        except (ValueError,SnapshotError):issues.append(path+':evidence_invalid')
+        except (ValueError,SnapshotError) as error:
+            issues.append(f'{path}:{issue_reason(error)}')
     result.shipments=shipments
     if result.communication.tags and result.communication.summary.state=='not_mentioned':
-        result.communication.tags=[];issues.append('communication.tags:summary_missing')
+        result.communication.tags=[]
+        if not any(issue.startswith('communication.summary:') for issue in issues):
+            issues.append('communication.tags:summary_missing')
     stamp=result.communication.last_business_at
     if stamp and stamp not in {datetime.fromisoformat(row['sent_at'].replace('Z','+00:00')) for row in reader.messages() if row['kind'] not in ('system','revoke')}:
         result.communication.last_business_at=None;issues.append('communication.last_business_at:time_not_supported')

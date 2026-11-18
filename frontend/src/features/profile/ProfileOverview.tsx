@@ -1,9 +1,13 @@
 import type {Profile,SourceRef} from './types';
+import {issueText} from './issueText';
 import {groups} from './types';
 export function ProfileOverview({profile,onEdit,onEvidence}:{profile:Profile;onEdit:(group:string)=>void;onEvidence:(refs:SourceRef[])=>void}){
+ const issues=profile.issues_detail?.map(issue=>{
+   const [group,field]=issue.field_path?.split('.') ?? [];
+   const label=group && field ? groups[group]?.[field] : undefined;
+   return [label,issueText(issue)].filter(Boolean).join(' · ');
+ }) ?? profile.issues;
  return <div className="profile-overview"><section className="profile-card"><header><h3>当前沟通</h3><button className="text-button" onClick={()=>onEdit('communication')}>编辑沟通情况</button></header><p>{profile.effective.communication.summary.value||'暂无沟通摘要'}</p><div className="profile-actions">{profile.effective.communication.tags.map(tag=><span className="info-chip" key={tag}>{tag}</span>)}{profile.manual.fields['communication.summary']!==undefined&&<span className="info-chip">人工修改</span>}{!!profile.effective.communication.summary.sources.length&&<button className="text-button" onClick={()=>onEvidence(profile.effective.communication.summary.sources)}>查看沟通来源</button>}</div></section>
  {['goods','logistics'].map(group=><section className="profile-card" key={group}><header><h3>{group==='goods'?'货品资料':'物流资料'}</h3><button className="text-button" onClick={()=>onEdit(group)}>{group==='goods'?'编辑货品资料':'编辑物流资料'}</button></header><dl>{Object.entries(groups[group]).map(([name,label])=>{const fact=profile.effective[group as 'goods'|'logistics'][name],conflict=profile.conflicts.find(item=>item.path===`${group}.${name}`);return <div className="profile-field" key={name}><dt>{label}</dt><dd><span>{fact.value||'未提及'}</span>{fact.origin==='manual'&&<span className="info-chip">人工修改</span>}{fact.state==='uncertain'&&<span className="muted">待确认</span>}{!!fact.sources.length&&<button className="text-button" onClick={()=>onEvidence(fact.sources)}>查看 {label} 来源</button>}{conflict&&<details><summary>模型记录与人工值不同</summary><p>模型记录：{String(conflict.model_value)}</p>{!!conflict.model_sources.length&&<button className="text-button" onClick={()=>onEvidence(conflict.model_sources)}>查看模型来源</button>}</details>}</dd></div>;})}</dl>{profile.manual.notes[group]&&<div className="profile-note"><strong>{group==='goods'?'货品补充资料':'物流补充资料'} · 人工补充</strong><p>{profile.manual.notes[group]}</p></div>}</section>)}
- {!!profile.issues.length&&<details className="profile-card"><summary>本次整理缺口（{profile.issues.length}）</summary><ul>{profile.issues.map((issue,index)=><li key={index}>{issue.startsWith('source_message_id_unavailable:')
- ? `会话 ${issue.slice('source_message_id_unavailable:'.length)} 有消息缺少编号，待补齐`
- : issue}</li>)}</ul></details>}</div>;
+ {!!issues.length&&<details className="profile-card"><summary>整理提示（{issues.length}）</summary><ul>{issues.map((issue,index)=><li key={index}>{issue}</li>)}</ul></details>}</div>;
 }

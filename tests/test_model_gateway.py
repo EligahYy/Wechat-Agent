@@ -170,4 +170,4 @@ async def test_transport_timeouts_keep_their_classification(setup_gateway):
     responses.extend([httpx.ReadTimeout('synthetic') for _ in range(3)])
     async with client:
         with pytest.raises(ModelCallError) as error:await gateway.generate(request,token)
-    assert error.value.code=='model_timeout' and len(calls)==3
+    assert error.value.code=='model_timeout' and len(calls)==2

@@ -100,8 +100,9 @@ def app_factory():
                     conn.execute('DELETE FROM "'+table+'"')
             conn.execute('PRAGMA foreign_keys=ON')
             seed_case(conn)
-            if body.get('case')=='long-history':
-                records=[make_message(message_id=f'history-{i:02}',body='收纳盒12方 '+('历史语境资料 '*150)) for i in range(12)]
+            if body.get('case') in {'long-history', 'pause-history'}:
+                count, repeat = (25, 400) if body.get('case') == 'pause-history' else (12, 150)
+                records=[make_message(message_id=f'history-{i:02}',body='收纳盒12方 '+('历史语境资料 '*repeat)) for i in range(count)]
                 page=make_page(records)
                 archive_page(conn,page)
                 app.state.services.source.pages['group-1']=[page]

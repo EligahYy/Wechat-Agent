@@ -128,9 +128,12 @@ def read_profile(conn,key:ContactKey):
             UNION SELECT message_id,revision FROM messages WHERE account_id=? AND sender_id=?''',
             (key.account_id,key.account_id,key.contact_id,key.account_id,key.contact_id))}
         pending|=current!=expected
+    from dataclasses import asdict
+    from .issues import classify_issues
+    issues = json.loads(published['issues_json']) if published else []
     return {'account_id':key.account_id,'contact_id':key.contact_id,'applicable':person['role']=='merchant','model_version':version,'manual_version':manual_version,
         'model':model,'manual':{**manual,'origin':'manual'},'effective':effective,'field_origins':origins,'conflicts':conflicts,'shipments':shipments,
-        'complete':bool(published['complete']) and not pending if published else False,'pending':pending,'issues':json.loads(published['issues_json']) if published else []}
+        'complete':bool(published['complete']) and not pending if published else False,'pending':pending,'issues':issues,'issues_detail':[asdict(issue) for issue in classify_issues(issues)]}
 
 
 def save_numbers(conn,key:ContactKey,shipment_id:str,numbers:list[str],expected_version:int):

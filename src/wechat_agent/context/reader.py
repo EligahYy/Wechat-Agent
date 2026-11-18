@@ -29,3 +29,24 @@ class ContextReader:
             raise SnapshotError('attachment_outside_snapshot')
         if ref.locator is not None:raise SnapshotError('attachment_locator_not_processed')
         return copy.deepcopy(row)
+
+    def restrict(self, rows):
+        """A validated excerpt view preserves the frozen snapshot authority."""
+        visible = {}
+        for row in rows:
+            key = (row['message_id'], row['revision'])
+            original = self._messages.get(key)
+            if original is None:
+                raise SnapshotError('source_outside_snapshot')
+            span = row.get('body_fragment')
+            if span is None:
+                visible[key] = [original['body']]
+                continue
+            start, end = span['start'], span['end']
+            if not 0 <= start <= end <= len(original['body']):
+                raise SnapshotError('source_fragment_invalid')
+            visible.setdefault(key, []).append(original['body'][start:end])
+        view = copy.copy(self)
+        view._messages = {key: {**self._messages[key], 'body': '\n'.join(parts)} for key, parts in visible.items()}
+        view._payload = {**self._payload, 'messages': list(view._messages.values())}
+        return view

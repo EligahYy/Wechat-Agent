@@ -9,6 +9,7 @@ from ..context.contracts import SnapshotError
 from ..contacts.scope import business_scope_allows_analysis
 from ..source.repository import transaction,cancellation_requested
 from ..source.coverage import NUMBERLESS_MESSAGE
+from .issues import classify_issues
 
 class PublishResult(BaseModel):
     version:int|None=None
@@ -115,7 +116,7 @@ def _publish(conn,snapshot,result,cancellation):
         # Source coverage notices come from the archive, never model output.
         model_gaps = {gap for gap in candidate.gaps if gap.partition(':')[0] != NUMBERLESS_MESSAGE}
         gaps=sorted(set(snapshot.gaps)|model_gaps|set(issues))
-        complete=not gaps
+        complete = not any(issue.severity != 'business_uncertainty' for issue in classify_issues(gaps))
         version=(head['version'] if head else 0)+1
         conn.execute('INSERT INTO profile_heads(account_id,contact_id,version) VALUES(?,?,?) ON CONFLICT(account_id,contact_id) DO UPDATE SET version=excluded.version',(account,contact,version))
         conn.execute('INSERT INTO profile_versions(account_id,contact_id,version,snapshot_id,candidate_json,result_json,issues_json,complete,pending) VALUES(?,?,?,?,?,?,?,?,?)',

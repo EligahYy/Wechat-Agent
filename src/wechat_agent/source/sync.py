@@ -24,6 +24,7 @@ from .repository import archive_metadata, archive_page, cancellation_requested, 
 
 
 class SyncResult(BaseModel):
+    elapsed_ms: int = 0
     inserted: int = 0
     revised: int = 0
     unchanged: int = 0

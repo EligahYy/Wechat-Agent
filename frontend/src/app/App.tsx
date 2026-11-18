@@ -209,6 +209,9 @@ export function App() {
         <div className="error-banner" role="alert"><span>{recordDetailError}</span><button className="text-button" onClick={() => void selectRecord(current, true)}>重试</button></div>
       ) : <>
         <OperationDetails operation={current} onAction={(action)=>{if(action==='open_model_settings'){setRecordsOpen(false);setManageContacts(false);setPage('settings');}else if(action==='review_contact'){setRecordsOpen(false);setManageContacts(true);setPage('settings');}else if(action==='retry_sync'){void operations.start(current.scope.contact_id||undefined);}}} />
+        {current.available_actions.includes("resume") && (
+          <button className="button secondary" disabled={operations.submitting} onClick={() => void operations.resume(current)}>继续整理</button>
+        )}
         {current.available_actions.includes("stop") && current.id === job?.id && (
           <button className="button secondary" disabled={operations.submitting} onClick={() => void operations.stop()}>停止本次</button>
         )}

@@ -5,6 +5,8 @@ from importlib.resources import files
 import json
 from ..context.chunks import plan_chunks,MessageSpan,ContextChunk
 from ..context.reader import ContextReader
+from ..context.assembler import assemble_context
+from .adaptive import pinned_target
 from ..context.tokens import request_budget
 from ..model.contracts import ModelRequest,ModelMessage,ModelCallError
 from ..profiles.contracts import AnalysisResult,analysis_result_schema
@@ -13,6 +15,9 @@ from ..source.repository import transaction
 from .checkpoints import create_run,register_unit,checkpoint,set_unit,RunProgress
 from .coverage import compute_coverage
 from .refinement import supersede,MAX_DEPTH
+from .extraction import ExtractedFacts, normalize_extraction
+from .reduction import combine_field, record_reduction
+from .citations import build_aliases, resolve_aliases, isolate_invalid_fields
 from .facts import validate_unit,source_refs,deduplicate,merge_groups,combine,enforce_merge_scope
 
 
@@ -26,6 +31,18 @@ class WorkflowV2:
     def __init__(self,conn,gateway):self.conn=conn;self.gateway=gateway
 
     def request(self,snapshot,payload,prompt,phase='extract'):
+        if payload.get('messages'):
+            aliases = build_aliases({(row['message_id'], row['revision']) for row in payload['messages'] if 'message_id' in row and 'revision' in row})
+            if aliases:
+                by_ref = {ref: alias for alias, ref in aliases.items()}
+                payload = {**payload, 'messages': [
+                    {**row, 'source_alias': by_ref[(row['message_id'], row['revision'])]}
+                    for row in payload['messages']
+                ]}
+                prompt += '\n引用原文可使用该消息的 source_alias 作为 message_id，revision 保持原值。省略没有证据的字段。'
+        uses_sparse_schema = self.strategy_version == 'workflow-v3' and phase == 'extract'
+        if uses_sparse_schema:
+            prompt += '\n输出只需包含有证据的字段。若返回 processed_primary_ids，逐一列出主材料消息编号，每个编号只出现一次。'
         material_key = 'messages' if phase == 'extract' else 'candidates'
         material = payload.get(material_key)
         output_target = 8192
@@ -37,14 +54,14 @@ class WorkflowV2:
             output_target = min(8192, base + per_record * len(material) + material_bytes // 16)
         request=ModelRequest(allow_output_growth=True,call_id='planning',unit_id='planning',snapshot_id=snapshot.id,phase=phase,
             model_config_version=self.gateway.config.version,messages=[ModelMessage(role='system',content=prompt),ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))],
-            output_schema=analysis_result_schema(),output_tokens=min(output_target,self.gateway.config.capabilities.max_output_tokens))
+            output_schema=ExtractedFacts.model_json_schema() if uses_sparse_schema else analysis_result_schema(),output_tokens=min(output_target,self.gateway.config.capabilities.max_output_tokens))
         fixed={**payload,**{key:[] for key in ('messages','candidates') if key in payload}}
         probe=request.model_copy(update={'messages':[request.messages[0],ModelMessage(role='user',content=json.dumps(fixed,ensure_ascii=False))]})
         budget=request_budget(probe,self.gateway.config)
         available=budget.context_tokens-budget.safety_tokens-budget.input_tokens-budget.context_tokens//10
         return request.model_copy(update={'output_tokens':min(request.output_tokens,max(16,available))})
 
-    async def unit(self,snapshot,token,request,allowed,label='all',candidates=(),*,reader=None,progress=None):
+    async def unit(self,snapshot,token,request,allowed,label='all',candidates=(),*,reader=None,progress=None,require_coverage=False):
         try:
             saved=checkpoint(self.conn,snapshot,request)
             if saved['state']=='succeeded':
@@ -52,16 +69,25 @@ class WorkflowV2:
                 except (ValueError,TypeError):raise ModelCallError('checkpoint_invalid') from None
                 result=validate_unit(self.conn,snapshot,payload,allowed,reader=reader)
                 enforce_merge_scope(result,label,candidates)
+                if require_coverage:
+                    record_reduction(self.conn, snapshot, token, label, candidates, result)
                 set_unit(self.conn,snapshot,token,request,'succeeded',reused=True,progress=progress)
                 return result
-            if saved['error_code']=='output_truncated':raise ModelCallError('output_truncated')
+            if saved['error_code'] in {'output_truncated','model_timeout'}:raise ModelCallError(saved['error_code'])
             set_unit(self.conn,snapshot,token,request,'running',progress=progress)
             response=await self.gateway.generate(request,token)
-            try:result=validate_unit(self.conn,snapshot,response.payload,allowed,reader=reader)
+            aliases = build_aliases(allowed) if request.phase == 'extract' else {}
+            returned = resolve_aliases(response.payload, aliases)
+            request_payload = json.loads(request.messages[-1].content)
+            if request.phase == 'extract':
+                primary = request_payload.get('history_unit', {}).get('primary_spans', request_payload.get('messages', []))
+                primary_ids = {row['message_id'] for row in primary}
+                returned = normalize_extraction(returned, primary_ids, aliases)
+            try:result=validate_unit(self.conn,snapshot,returned,allowed,reader=reader)
             except ModelCallError as error:
                 if error.code!='chunk_source_outside_unit':raise
                 versions={r.message_id:r.revision for r in snapshot.material_refs}
-                refs={(r.message_id,r.revision) for r in source_refs(AnalysisResult.model_validate(response.payload)) if (r.message_id,r.revision) not in allowed}
+                refs={(r.message_id,r.revision) for r in source_refs(AnalysisResult.model_validate(returned)) if (r.message_id,r.revision) not in allowed}
                 details={'model_source_unknown':0,'model_source_revision_mismatch':0,'model_source_other_unit':0}
                 for identifier,revision in refs:
                     key='model_source_unknown' if identifier not in versions else 'model_source_revision_mismatch' if versions[identifier]!=revision else 'model_source_other_unit'
@@ -76,8 +102,28 @@ class WorkflowV2:
                 correction=request.model_copy(update={'call_id':request.call_id+':refs','messages':[request.messages[0],ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))]})
                 if not request_budget(correction,self.gateway.config).fits:raise error
                 response=await self.gateway.generate(correction,token)
-                result=validate_unit(self.conn,snapshot,response.payload,allowed,reader=reader)
+                returned = resolve_aliases(response.payload, aliases)
+                if request.phase == 'extract':
+                    returned = normalize_extraction(returned, primary_ids, aliases)
+                try:
+                    result=validate_unit(self.conn,snapshot,returned,allowed,reader=reader)
+                except ModelCallError as correction_error:
+                    if correction_error.code != 'chunk_source_outside_unit' or request.phase != 'extract':
+                        raise
+                    parsed = AnalysisResult.model_validate(returned)
+                    outside = {r.message_id for r in source_refs(parsed) if (r.message_id, r.revision) not in allowed}
+                    if any(self.conn.execute(
+                        'SELECT 1 FROM messages WHERE account_id=? AND message_id=?',
+                        (snapshot.key.account_id, identifier),
+                    ).fetchone() and identifier not in versions for identifier in outside):
+                        raise
+                    clean = isolate_invalid_fields(parsed, allowed)
+                    result = validate_unit(self.conn, snapshot, clean.model_dump(), allowed, reader=reader)
+                    if not any(source_refs(result)):
+                        raise correction_error
             enforce_merge_scope(result,label,candidates)
+            if require_coverage:
+                record_reduction(self.conn, snapshot, token, label, candidates, result)
             set_unit(self.conn,snapshot,token,request,'succeeded',output=result,progress=progress)
             return result
         except ModelCallError as error:
@@ -91,7 +137,7 @@ class WorkflowV2:
             reader,head,reason=check_inputs(self.conn,snapshot,cancellation)
             if reason:raise ModelCallError(reason)
             if (head['version'] if head else 0)!=snapshot.profile_version:raise ModelCallError('profile_changed')
-            if snapshot.versions!={'template':'profile-v1','strategy':'workflow-v2','output_schema':'1','model_config':self.gateway.config.version}:
+            if snapshot.versions!={'template':'profile-v1','strategy':self.strategy_version,'output_schema':'1','model_config':self.gateway.config.version}:
                 raise ModelCallError('workflow_versions_mismatch')
             batches=[{'shipment_id':r['shipment_id'],'stage':r['stage'],'facts':json.loads(r['payload_json']),'numbers':json.loads(r['numbers_json']),'numbers_origin':r['numbers_origin']} for r in self.conn.execute('SELECT * FROM shipments WHERE account_id=? AND contact_id=? ORDER BY shipment_id',(snapshot.key.account_id,snapshot.key.contact_id))]
         base={'account_id':snapshot.key.account_id,'contact_id':snapshot.key.contact_id,'actors':reader.actors(),'conversations':reader.conversations(),
@@ -114,7 +160,7 @@ class WorkflowV2:
             progress=RunProgress(self.conn,snapshot,cancellation);progress.persist()
             try:result=await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in rows},reader=reader,progress=progress)
             except ModelCallError as error:
-                if error.code!='output_truncated':raise
+                if error.code not in {'output_truncated','model_timeout'}:raise
                 direct_failed=(ContextChunk(0,tuple(rows),spans,request_budget(req,self.gateway.config)),req)
             if direct_failed is None and not compute_coverage(self.conn,snapshot.key.account_id,snapshot.id).complete:raise ModelCallError('history_coverage_incomplete')
             if direct_failed is None:return result
@@ -122,36 +168,73 @@ class WorkflowV2:
         # Limit metadata to what a chunk can actually observe, without omitting
         # the target or changing the frozen global publication authority.
         def extraction(selected,spans=()):
-            senders={r['sender_id'] for r in selected}|{snapshot.key.contact_id}
-            rooms={r['conversation_id'] for r in selected}
-            payload={**base,'actors':{k:v for k,v in base['actors'].items() if k in senders},'conversations':{k:v for k,v in base['conversations'].items() if k in rooms},
-                'messages':selected,'existing_shipments':[],
-                'history_unit':{'phase':'extract','primary_spans':list(spans)}}
+            pack = assemble_context(base, selected)
+            visible_messages = {row['message_id'] for row in selected}
+            rooms = set(pack.conversations)
+            # Context gaps for other rooms or unrelated attachments do not
+            # affect this extraction's facts or its checkpoint identity.
+            scoped_gaps = []
+            for gap in base['gaps']:
+                code, _, subject = gap.partition(':')
+                if code == 'reply_unavailable' and subject in visible_messages:
+                    scoped_gaps.append(gap)
+                elif code == 'source_message_id_unavailable' and subject in rooms:
+                    scoped_gaps.append(gap)
+            payload = {
+                **base, **asdict(pack), 'existing_shipments': [], 'gaps': scoped_gaps,
+                'history_unit': {'phase': 'extract', 'primary_spans': list(spans)},
+            }
             return self.request(snapshot,payload,prompt)
         # Include the primary manifest in planning as well as sending. A span per
         # visible message overestimates context-only metadata, which is safe.
         def planned(selected):
             return extraction(selected,[{'message_id':r['message_id'],'revision':r['revision'],**r.get('body_fragment',{'start':0,'end':len(r['body']),'total':len(r['body'])})} for r in selected])
         create_run(self.conn,snapshot,cancellation,'chunked',self.gateway.config,messages=rows)
-        requests=[]
-        if direct_failed:requests=[direct_failed]
-        else:
-            chunks=await asyncio.to_thread(
-                plan_chunks, rows, planned, self.gateway.config,
-                soft_input_target=INPUT_TARGET,
-            )
-            for chunk in chunks:
-                req=extraction(list(chunk.messages),[asdict(s) for s in chunk.spans])
-                requests.append((chunk,register_unit(self.conn,snapshot,cancellation,req,chunk.spans,chunk.ordinal,self.gateway.config)))
-        progress=RunProgress(self.conn,snapshot,cancellation);progress.persist()
+        progress = RunProgress(self.conn, snapshot, cancellation)
+
+        async def planned_requests():
+            if direct_failed:
+                yield direct_failed
+                return
+            if self.strategy_version == 'workflow-v3':
+                windows = {}
+                for row in rows:
+                    key = (row['conversation_id'], row['sent_at'][:7])
+                    windows.setdefault(key, []).append(row)
+                work = [
+                    (room, window, selected) for (room, window), selected in sorted(windows.items())
+                ]
+            else:
+                work = [('', '', rows)]
+            ordinal = 0
+            for room, window, selected in work:
+                target = pinned_target(
+                    self.conn, snapshot.key.account_id, snapshot.key.contact_id,
+                    self.gateway.config.version, room, window,
+                ) if room else INPUT_TARGET
+                chunks = await asyncio.to_thread(
+                    plan_chunks, selected, planned, self.gateway.config,
+                    soft_input_target=target, context_messages=rows,
+                )
+                requests = []
+                for chunk in chunks:
+                    req = extraction(list(chunk.messages), [asdict(span) for span in chunk.spans])
+                    requests.append((chunk, register_unit(
+                        self.conn, snapshot, cancellation, req, chunk.spans, ordinal, self.gateway.config,
+                    )))
+                    ordinal += 1
+                progress.load()
+                progress.persist()
+                for unit in requests:
+                    yield unit
         originals={r['message_id']:r for r in rows}
         refinement_nodes=0
-        fatal={'model_cancelled','cancelled','authentication_failed','model_not_found','credential_unavailable','model_config_changed','checkpoint_scope_mismatch','refinement_invalid'}
+        fatal={'model_cancelled','cancelled','authentication_failed','model_not_found','credential_unavailable','model_config_changed','checkpoint_scope_mismatch','refinement_invalid','analysis_budget_paused','material_changed'}
         async def extract_tree(chunk,req,depth=0):
             nonlocal refinement_nodes
-            try:return [await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in chunk.messages},reader=reader,progress=progress)]
+            try:return [await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in chunk.messages},reader=reader.restrict(chunk.messages),progress=progress)]
             except ModelCallError as error:
-                if error.code!='output_truncated' or depth>=MAX_DEPTH or refinement_nodes>=8:raise
+                if error.code not in {'output_truncated','model_timeout'} or depth>=MAX_DEPTH or refinement_nodes>=8:raise
             primary=[]
             for span in chunk.spans:
                 row=originals[span.message_id]
@@ -176,7 +259,7 @@ class WorkflowV2:
             if failure:raise failure
             return results
         results=[];first_error=None
-        for chunk,req in requests:
+        async for chunk,req in planned_requests():
             try:results.extend(await extract_tree(chunk,req))
             except ModelCallError as error:
                 if error.code in fatal:raise
@@ -191,53 +274,113 @@ class WorkflowV2:
             return AnalysisResult(contact_id=snapshot.key.contact_id, gaps=gaps)
         def merge_request(label,candidates):
             return self.request(snapshot,{**base,'history_unit':{'phase':'merge','field':label},'candidates':candidates},prompt,'merge')
+        merge_target = pinned_target(
+            self.conn, snapshot.key.account_id, snapshot.key.contact_id,
+            self.gateway.config.version, '', str(snapshot.profile_version), phase='merge',
+        ) if self.strategy_version == 'workflow-v3' else INPUT_TARGET
         all_candidates=deduplicate(meaningful)
         aggregate_budget = request_budget(merge_request('all', all_candidates), self.gateway.config)
-        if aggregate_budget.fits and aggregate_budget.input_tokens <= INPUT_TARGET:
+        if aggregate_budget.fits and aggregate_budget.input_tokens <= merge_target:
             groups = [('all', all_candidates)]
         else:groups=merge_groups(meaningful,snapshot.key.contact_id)
-        merges=[]
-        merged=[]
-        for ordinal,(label,candidates) in enumerate(groups):
-            req=merge_request(label,candidates)
-            if not request_budget(req,self.gateway.config).fits:
-                # merge_groups already coalesces equal field values including
-                # all their validated references. A single fact needs no model.
-                if len(candidates) == 1 and label.startswith(('goods.', 'logistics.')):
-                    merged.append((label, AnalysisResult.model_validate(candidates[0])))
-                    continue
+        first_error = None
+        merge_ordinal = 0
+
+        async def merge_one(label, candidates, *, depth=0, covered=False):
+            nonlocal merge_ordinal, progress
+            request = merge_request(label, candidates)
+            if covered:
+                instructions = request.messages[0].model_copy(update={
+                    'content': request.messages[0].content + '\n保留每个输入候选的全部来源；不同候选有冲突时保留各方原文，不选定一方。'
+                })
+                request = request.model_copy(update={'messages': [instructions, *request.messages[1:]]})
+            budget = request_budget(request, self.gateway.config)
+            too_large = not budget.fits or (label != 'all' and len(candidates) > 1 and budget.input_tokens > merge_target)
+            if too_large:
+                return await split_merge(label, candidates, depth=depth)
+            req = register_unit(self.conn, snapshot, cancellation, request, (), merge_ordinal, self.gateway.config)
+            merge_ordinal += 1
+            progress.load(merge_only=True,unit_id=req.unit_id)
+            progress.persist()
+            allowed = {(ref.message_id, ref.revision) for c in candidates
+                       for ref in source_refs(AnalysisResult.model_validate(c))}
+            try:
+                result = await self.unit(snapshot, cancellation, req, allowed, label, candidates,
+                                         reader=reader, progress=progress, require_coverage=covered)
+            except ModelCallError as error:
+                if error.code not in {'output_truncated', 'model_timeout'}:
+                    raise
+                return await split_merge(label, candidates, depth=depth, parent=req)
+            return [(label, result)], [req]
+
+        async def split_merge(label, candidates, *, depth, parent=None):
+            if depth >= MAX_DEPTH:
                 raise ModelCallError('history_merge_unit_too_large')
-            merges.append((label,candidates,register_unit(self.conn,snapshot,cancellation,req,(),ordinal,self.gateway.config)))
-        progress.load(merge_only=True);progress.persist()
-        first_error=None
-        async def merge_one(label,candidates,req):
-            allowed={(ref.message_id,ref.revision) for c in candidates for ref in source_refs(AnalysisResult.model_validate(c))}
-            try:return [(label,await self.unit(snapshot,cancellation,req,allowed,label,candidates,reader=reader,progress=progress))]
+            if label == 'all':
+                parts = merge_groups([AnalysisResult.model_validate(c) for c in candidates], snapshot.key.contact_id)
+                output = []
+                units = []
+                for field, values in parts:
+                    results, children = await merge_one(field, values, depth=depth + 1)
+                    output.extend(results)
+                    units.extend(children)
+            else:
+                local = combine_field(label, candidates, snapshot.key.contact_id)
+                if local is not None:
+                    allowed = {(ref.message_id, ref.revision) for c in candidates
+                               for ref in source_refs(AnalysisResult.model_validate(c))}
+                    local = validate_unit(self.conn, snapshot, local.model_dump(), allowed, reader=reader)
+                    enforce_merge_scope(local, label, candidates)
+                    record_reduction(self.conn, snapshot, cancellation, label, candidates, local)
+                    output, units = [(label, local)], []
+                else:
+                    if len(candidates) < 2:
+                        raise ModelCallError('history_merge_unit_too_large')
+                    pivot = len(candidates) // 2
+                    reduced = []
+                    units = []
+                    for part in (candidates[:pivot], candidates[pivot:]):
+                        if len(part) == 1:
+                            reduced.extend(part)
+                        else:
+                            subtree, nodes = await merge_one(label, part, depth=depth + 1, covered=True)
+                            reduced.extend(result.model_dump(mode='json', exclude_defaults=True) for _, result in subtree)
+                            units.extend(nodes)
+                    if len(reduced) >= len(candidates):
+                        raise ModelCallError('history_merge_unit_too_large')
+                    output, nodes = await merge_one(label, reduced, depth=depth + 1, covered=True)
+                    units.extend(nodes)
+                    record_reduction(self.conn, snapshot, cancellation, label, candidates, output[0][1])
+            if parent is not None:
+                if units:
+                    supersede(self.conn, snapshot, cancellation, parent, units, progress)
+                else:
+                    local = combine(output, snapshot.key.contact_id)
+                    enforce_merge_scope(local, label, candidates)
+                    record_reduction(self.conn, snapshot, cancellation, label, candidates, local)
+                    set_unit(self.conn, snapshot, cancellation, parent, 'succeeded',
+                             output=local, progress=progress)
+                    units = [parent]
+            return output, units
+
+        merged = []
+        for label, candidates in groups:
+            try:
+                results_for_group, _ = await merge_one(label, candidates)
+                merged.extend(results_for_group)
             except ModelCallError as error:
-                if error.code!='output_truncated' or label!='all':raise
-            split=merge_groups([AnalysisResult.model_validate(c) for c in candidates],snapshot.key.contact_id)
-            child_requests=[]
-            for index,(field,values) in enumerate(split):
-                child=merge_request(field,values)
-                if not request_budget(child,self.gateway.config).fits:raise ModelCallError('history_merge_unit_too_large')
-                child_requests.append(register_unit(self.conn,snapshot,cancellation,child,(),index,self.gateway.config))
-            supersede(self.conn,snapshot,cancellation,req,child_requests,progress)
-            out=[];failure=None
-            for (field,values),child in zip(split,child_requests):
-                try:out.extend(await merge_one(field,values,child))
-                except ModelCallError as error:
-                    if error.code in fatal:raise
-                    failure=failure or error
-            if failure:raise failure
-            return out
-        for label,candidates,req in merges:
-            try:merged.extend(await merge_one(label,candidates,req))
-            except ModelCallError as error:
-                if error.code in fatal:raise
-                first_error=first_error or error
+                if error.code in fatal:
+                    raise
+                first_error = first_error or error
             await asyncio.sleep(0)
-        if first_error:raise first_error
+        if first_error:
+            raise first_error
         if not compute_coverage(self.conn,snapshot.key.account_id,snapshot.id).complete:raise ModelCallError('history_coverage_incomplete')
         result=combine(merged,snapshot.key.contact_id)
         result.gaps=sorted(set(result.gaps)|set(gaps))
         return result
+
+
+class WorkflowV3(WorkflowV2):
+    """Stable per-conversation windows with feedback-based workload targets."""
+    strategy_version = 'workflow-v3'
