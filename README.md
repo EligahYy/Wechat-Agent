@@ -2,7 +2,7 @@
 
 从本机微信私信与群聊归档资料，管理业务联系人，并逐步生成有来源、可纠正的商家档案。
 
-**当前主线：M3 文本 workflow-v3 已交付。下一项为[整理链路审查修复计划](docs/superpowers/plans/2026-11-18-organize-review-followup.md)，完成后推进附件获取与解析。真实商家质量待Mac核对。** 当前schema18，不把最小连接检查或文档预算核对当作真实业务质量通过。
+**当前主线为 M3 附件获取与解析。** M3 文本 workflow-v4 云端修复已交付，数据库自动升级至 schema 19。真实商家质量与时延待 Mac 核对。[整理链路验收](docs/verification/organize-review-followup.md)
 
 最新反馈修复见[单次额度与引用纠正](docs/verification/output-allocation.md)，避免把1M上下文直接当作单次输出。
 

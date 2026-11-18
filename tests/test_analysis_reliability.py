@@ -228,3 +228,95 @@ async def test_unchanged_uncertain_discovery_is_not_repaid_on_continuation(db, m
     continued, new_owner, _ = _claim(db, 'acct-1')
     await runner.discover(db, continued, new_owner, strategy)
     assert strategy.calls == ['merchant-a']
+
+
+def test_local_communication_merge_preserves_latest_status():
+    from wechat_agent.analysis.reduction import combine_field
+    candidates = [
+        {'contact_id': 'a', 'communication': {
+            'summary': {'state': 'known', 'value': value, 'sources': [{'message_id': value, 'revision': 1}]},
+            'tags': [tag], 'last_business_at': stamp,
+        }}
+        for value, tag, stamp in [
+            ('报价', '询价中', '2026-11-18T12:00:00Z'),
+            ('初次沟通', '初步沟通', '2026-11-17T12:00:00Z'),
+        ]
+    ]
+    single = combine_field('communication', candidates[:1], 'a').communication
+    assert single.summary.state == 'known'
+    assert single.tags == ['询价中']
+    result = combine_field('communication', candidates, 'a').communication
+    assert result.tags == ['询价中']
+    assert result.last_business_at == single.last_business_at
+    assert {ref.message_id for ref in result.summary.sources} == {'报价', '初次沟通'}
+
+
+@pytest.mark.parametrize('pause', [False, True])
+@pytest.mark.asyncio
+async def test_worker_keeps_two_distinct_quotes_when_model_merge_drops_one(flow, monkeypatch, pause):
+    import httpx
+    from contextlib import closing
+    from tests.factories import make_message, make_page
+    from tests.test_single_customer_flow import open_existing_db
+    from wechat_agent.context.contracts import ContextSnapshot
+    from wechat_agent.context.reader import ContextReader
+
+    client, _, _ = flow
+    prepare(client)
+    client.app.state.services.source.pages['group-1'] = [make_page([
+        make_message(message_id=f'quote-{i}', body=f'报价{12 + 3*i}元 ' + '报价说明 ' * 240)
+        for i in range(2)
+    ])]
+    calls = []
+    reserve = ExecutionBudget.reserve
+    paused = False
+
+    def pause_after_bad_merge(budget, conn, account, operation):
+        nonlocal paused
+        if pause and not paused and any(len(p.get('candidates', [])) == 2 for p in calls):
+            paused = True
+            from wechat_agent.model.contracts import ModelCallError
+            raise ModelCallError('analysis_budget_paused')
+        reserve(budget, conn, account, operation)
+
+    monkeypatch.setattr(ExecutionBudget, 'reserve', pause_after_bad_merge)
+
+    def transport(request):
+        payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
+        calls.append(payload)
+        if 'candidates' in payload:
+            result = payload['candidates'][0]
+        else:
+            seen = {span['message_id'] for span in payload.get('history_unit', {}).get('primary_spans', [])}
+            if not seen:
+                seen = {row['message_id'] for row in payload['messages']}
+                if {'quote-0', 'quote-1'} <= seen:
+                    return httpx.Response(200, json={'model': 'synthetic', 'choices': [{'finish_reason': 'length'}]})
+            result = {'contact_id': 'merchant-a'}
+            for i in range(2):
+                if f'quote-{i}' in seen:
+                    result = candidate(f'报价{12 + 3*i}元', f'quote-{i}')
+                    break
+        return httpx.Response(200, json={'model': 'synthetic', 'choices': [{
+            'finish_reason': 'stop', 'message': {'content': json.dumps(result)}
+        }]})
+
+    client.app.state.services.model_transport = httpx.MockTransport(transport)
+    run = await sync(client, 'quotes')
+    if pause:
+        assert run.error_code == 'analysis_budget_paused'
+        run = await sync(client, 'resume-quotes')
+    assert run.state == 'succeeded', run.error_code
+    assert sum(payload.get('history_unit', {}).get('field') == 'all' for payload in calls) == 1
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        version = conn.execute('SELECT * FROM profile_versions').fetchone()
+        snapshot = ContextSnapshot.model_validate_json(conn.execute(
+            'SELECT manifest_json FROM snapshots WHERE snapshot_id=?', (version['snapshot_id'],),
+        ).fetchone()[0])
+        ledger = conn.execute('SELECT output_json FROM history_reduction_nodes').fetchall()
+        merged = [AnalysisResult.model_validate_json(row[0]) for row in ledger]
+        price = AnalysisResult.model_validate_json(version['result_json']).logistics.price
+        assert price.value == '报价12元；报价15元'
+        assert any(result.logistics.price == price for result in merged)
+        reader = ContextReader(conn, snapshot)
+        assert all(str(12 + 3*i) in reader.resolve(ref)['body'] for i, ref in enumerate(price.sources))

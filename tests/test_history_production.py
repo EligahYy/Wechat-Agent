@@ -1,4 +1,6 @@
 import json
+from contextlib import closing
+from tests.test_single_customer_flow import open_existing_db
 import httpx
 import pytest
 from tests.test_single_customer_flow import flow,sync
@@ -15,7 +17,7 @@ def prepare(client):
     def transport(request):
         p=json.loads(json.loads(request.content)['messages'][-1]['content']);seen.append(p)
         unit=p.get('history_unit',{})
-        if state['fail'] and any(s['message_id']=='history-05' for s in unit.get('primary_spans',[])):return httpx.Response(503)
+        if state['fail'] and any(s['message_id']=='history-05' for s in unit.get('primary_spans',[])):return httpx.Response(state.get('status', 503), headers=state.get('headers'))
         if unit.get('phase')=='merge':candidate=p['candidates'][0]
         else:
             messages=p.get('messages',[]);row=next((m for m in messages if '12' in m['body'] and m['kind']=='text'),None)
@@ -33,18 +35,40 @@ async def test_production_large_history_publishes_and_keeps_progress_then_skips_
     assert op.counts['analysis_chunks_completed']==op.counts['analysis_chunks_total']
     assert op.counts['analysis_merge_completed']>0
     assert op.counts['analysis_material_completed']==op.counts['analysis_material_total']
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        count_before = conn.execute('SELECT COUNT(*) FROM snapshots').fetchone()[0]
     count=len(seen);again=await sync(client,'history-unchanged')
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        assert conn.execute('SELECT COUNT(*) FROM snapshots').fetchone()[0] == count_before
     assert again.report.analysis_outcome=='unchanged' and len(seen)==count
 
+@pytest.mark.parametrize('status,legacy', [(429, False), (503, False), (503, True)])
 @pytest.mark.asyncio
-async def test_production_retry_reuses_good_chunks_instead_of_repaying_for_them(flow):
-    client,_,_=flow;seen,state=prepare(client);state['fail']=True
+async def test_production_retry_reuses_good_chunks_instead_of_repaying_for_them(flow, monkeypatch, status, legacy):
+    from wechat_agent.model import gateway
+    clock = [1000.]
+    monkeypatch.setattr(gateway, "time", lambda: clock[0])
+    client,_,_=flow;seen,state=prepare(client);state.update(fail=True, status=status, headers={'Retry-After': '0'})
     failed=await sync(client,'failure')
     assert failed.source_state=='succeeded' and failed.state=='failed'
     assert failed.counts.get('analysis_chunks_completed',0)>0
     assert failed.counts.get('analysis_chunks_failed',0)>0
+    clock[0] += 6
+    failed_again = await sync(client, 'failure-again')
+    assert failed_again.state == 'failed'
     state['fail']=False;seen.clear()
+    if legacy:
+        # Recreate the durable evidence schema 18 left after six failures.
+        with closing(open_existing_db(client.app.state.database_path)) as conn, conn:
+            conn.execute("UPDATE history_checkpoints SET requests=6 WHERE error_code='model_temporary_error'")
+            conn.execute('DELETE FROM history_retry_windows')
+            assert conn.execute("SELECT COUNT(*) FROM model_calls WHERE status='model_temporary_error'").fetchone()[0] == 6
+    else:
+        cooling = await sync(client, 'cooling')
+        assert cooling.error_code == 'model_retry_cooling_down'
+        assert seen == []
+        clock[0] += 6
     done=await sync(client,'recovered')
-    assert done.report.analysis_outcome=='updated'
+    assert done.report.analysis_outcome=='updated', done.error_code
     assert done.counts['analysis_chunks_reused']>0
     assert done.counts['analysis_chunks_completed']==done.counts['analysis_chunks_total']

@@ -40,14 +40,23 @@ def material_dependencies(payload):
     return sorted(refs)
 
 
-def register_unit(conn,snapshot,token,request,primary,ordinal,config):
+def unit_cache_key(snapshot, request, primary):
     payload = json.loads(request.messages[-1].content)
     reads_previous_profile = request.phase != 'extract' or 'history_unit' not in payload
-    key=digest({'policy':'chunked-text-v1','account':snapshot.key.account_id,'contact':snapshot.key.contact_id,
+    versions = snapshot.versions
+    if request.phase == 'extract' and versions.get('strategy') == 'workflow-v4':
+        # V4 changes merge and publication. Identical extraction requests
+        # retain their validated results and cross-operation retry history.
+        versions = {**versions, 'strategy': 'workflow-v3'}
+    return digest({'policy':'chunked-text-v1','account':snapshot.key.account_id,'contact':snapshot.key.contact_id,
         'role':snapshot.role_version,'manual':snapshot.manual_version,'scope':snapshot.scope_version,
-        'profile':snapshot.profile_version if reads_previous_profile else None,'versions':snapshot.versions,'coverage':snapshot.coverage.model_dump() if reads_previous_profile and snapshot.coverage else None,
+        'profile':snapshot.profile_version if reads_previous_profile else None,'versions':versions,'coverage':snapshot.coverage.model_dump() if reads_previous_profile and snapshot.coverage else None,
         'phase':request.phase,'messages':[m.model_dump() for m in request.messages],
         'schema':request.output_schema,'output':request.output_tokens,'primary':[asdict(s) for s in primary]})
+
+def register_unit(conn,snapshot,token,request,primary,ordinal,config):
+    key = unit_cache_key(snapshot, request, primary)
+    payload = json.loads(request.messages[-1].content)
     unit='h:'+digest([snapshot.id,token.operation_id,key])
     request=request.model_copy(update={'unit_id':unit,'call_id':unit,'checkpoint_key':key})
     dependencies = material_dependencies(payload)

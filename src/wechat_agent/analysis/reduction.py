@@ -49,6 +49,15 @@ def preserves_candidate(result, candidate):
     return True
 
 
+def communication_status(items):
+    dated = [item for item in items if item.last_business_at is not None]
+    stamp = max((item.last_business_at for item in dated), default=None)
+    tagged = [item for item in items if item.tags]
+    latest = max((item.last_business_at for item in tagged if item.last_business_at), default=None)
+    statuses = {tuple(sorted(item.tags)) for item in tagged if item.last_business_at == latest}
+    return list(next(iter(statuses))) if len(statuses) == 1 else [], stamp, len(statuses) > 1
+
+
 def record_reduction(conn, snapshot, token, label, candidates, result):
     input_ids = sorted({digest(candidate) for candidate in candidates})
     parsed = [AnalysisResult.model_validate(candidate) for candidate in candidates]
@@ -58,6 +67,14 @@ def record_reduction(conn, snapshot, token, label, candidates, result):
         for value, candidate in zip(candidates, parsed)
         if preserves_candidate(result, candidate)
     }
+    communications = [candidate.communication for candidate in parsed
+                      if candidate.communication.summary.value]
+    if communications:
+        tags, stamp, conflict = communication_status(communications)
+        if (sorted(result.communication.tags) != tags
+                or result.communication.last_business_at != stamp
+                or (conflict and 'communication.status_conflict' not in result.gaps)):
+            raise ModelCallError('history_merge_incomplete')
     if not expected or references(result) != expected or set(dispositions) != set(input_ids):
         raise ModelCallError('history_merge_incomplete')
     with transaction(conn):
@@ -83,6 +100,8 @@ def shared_metadata(facts):
 
 def combine_field(label, candidates, contact_id):
     """Preserve competing values and all verified references for field conflicts."""
+    if len(candidates) == 1 and label != 'shipments':
+        return AnalysisResult.model_validate(candidates[0])
     if label == 'communication':
         values = [AnalysisResult.model_validate(candidate).communication for candidate in candidates]
         summaries = list(dict.fromkeys(item.summary.value for item in values if item.summary.value))
@@ -92,10 +111,15 @@ def combine_field(label, candidates, contact_id):
         body = '；'.join(summaries)
         if len(body) > 16_000:
             raise ModelCallError('history_merge_unit_too_large')
+        tags, stamp, conflict = communication_status(values)
         return AnalysisResult(
             contact_id=contact_id,
-            communication={'summary': Fact(value=body, state='uncertain', sources=list(refs.values()),
-                                           **shared_metadata([item.summary for item in values]))},
+            communication={
+                'summary': Fact(value=body, state='uncertain', sources=list(refs.values()),
+                                **shared_metadata([item.summary for item in values])),
+                'tags': tags, 'last_business_at': stamp,
+            },
+            gaps=['communication.status_conflict'] if conflict else [],
         )
     if not label.startswith(('goods.', 'logistics.')):
         return None
@@ -106,13 +130,12 @@ def combine_field(label, candidates, contact_id):
             for fact in facts for ref in fact.sources}
     if not values or not refs:
         return None
-    if len(facts) == 1:
-        return AnalysisResult.model_validate(candidates[0])
     value = '；'.join(values)
     gaps = []
     if len(value) > 16_000:
         raise ModelCallError('history_merge_unit_too_large')
     if len(values) > 1:
         gaps.append(f'{label}:conflicting_candidates')
-    fact = Fact(value=value, state='uncertain', sources=list(refs.values()), **shared_metadata(facts))
+    state = 'known' if len(values) == 1 and all(f.state == 'known' for f in facts) else 'uncertain'
+    fact = Fact(value=value, state=state, sources=list(refs.values()), **shared_metadata(facts))
     return AnalysisResult(contact_id=contact_id, **{group: {field: fact}}, gaps=gaps)

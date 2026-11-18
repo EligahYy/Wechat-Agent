@@ -13,7 +13,8 @@ def supersede(conn,snapshot,token,parent,children,progress):
     with transaction(conn):
         if cancellation_requested(conn,account,token):raise ModelCallError('model_cancelled')
         old=conn.execute('SELECT * FROM history_run_units WHERE account_id=? AND snapshot_id=? AND unit_id=?',(account,snapshot.id,parent.unit_id)).fetchone()
-        if not old or old['error_code'] not in {'output_truncated','model_timeout'}:raise ModelCallError('refinement_invalid')
+        if not old or not (old['error_code'] in {'output_truncated', 'model_timeout'}
+                           or (old['phase'] == 'merge' and old['error_code'] == 'history_merge_incomplete')):raise ModelCallError('refinement_invalid')
         rows=[]
         for child in children:
             row=conn.execute('SELECT * FROM history_run_units WHERE account_id=? AND snapshot_id=? AND unit_id=?',(account,snapshot.id,child.unit_id)).fetchone()

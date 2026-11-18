@@ -111,3 +111,36 @@ def test_snapshot_retains_authorized_cross_conversation_reply_context(db):
     original=reader.resolve({'message_id':reply['reply_to'],'revision':1})
     assert original['conversation_id']=='dm-a'
     assert not any('reply_unavailable:cross-room-reply'==gap for gap in current.gaps)
+
+
+@pytest.mark.parametrize('extra_messages', [1, 1_000, 10_000])
+def test_unchanged_published_snapshot_skips_body_reads_and_duplicates(db, extra_messages, record_property):
+    from time import perf_counter
+    from tests.profile_seed import seed_profile
+    from wechat_agent.context.builder import build_snapshot
+
+    seed_case(db)
+    for start in range(0, extra_messages, 500):
+        archive_page(db, make_page([
+            make_message(message_id=f'bulk-{index}', body='合成业务材料')
+            for index in range(start, min(start + 500, extra_messages))
+        ]))
+    first = perf_counter()
+    seed_profile(db, reuse_published=True)
+    record_property('build_and_publish_ms', round((perf_counter() - first) * 1000, 2))
+    snapshot_id = db.execute('SELECT snapshot_id FROM snapshots').fetchone()[0]
+    statements = []
+    db.set_trace_callback(statements.append)
+    first = perf_counter()
+    try:
+        frozen = build_snapshot(db, KEY, CUTOFF, reuse_published=True)
+    finally:
+        db.set_trace_callback(None)
+    record_property('reuse_ms', round((perf_counter() - first) * 1000, 2))
+    assert frozen.id == snapshot_id
+    assert db.execute('SELECT COUNT(*) FROM snapshots').fetchone()[0] == 1
+    assert not any('message_revisions r JOIN' in sql or 'payload_json' in sql for sql in statements)
+    assert sum('FROM attachments a JOIN' in sql for sql in statements) == 2
+
+    archive_page(db, make_page([make_message(message_id='bulk-0', body='已修订', source_revision='2')]))
+    assert build_snapshot(db, KEY, CUTOFF, reuse_published=True).id != frozen.id

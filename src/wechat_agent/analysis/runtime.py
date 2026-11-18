@@ -5,7 +5,7 @@ from ..model.budget import reviewed_capabilities
 from ..model.contracts import ModelCallError
 from ..model.gateway import ModelGateway
 from ..model.credentials import CredentialStore
-from .history import WorkflowV3
+from .history import WorkflowV4
 from .execution import ExecutionBudget
 from ..discovery.classifier import DiscoveryStrategy
 
@@ -18,7 +18,7 @@ class RuntimeSession:
     async def __aenter__(self):
         self.client=httpx.AsyncClient(transport=self.services.model_transport,trust_env=False)
         gateway=ModelGateway(self.conn,self.config,self.client,self.services.credential_store or CredentialStore(), execution_budget=ExecutionBudget())
-        self.workflow=WorkflowV3(self.conn,gateway)
+        self.workflow=WorkflowV4(self.conn,gateway)
         self.discovery=DiscoveryStrategy(self.conn,gateway)
         return self
     async def __aexit__(self,*args):await self.client.aclose()

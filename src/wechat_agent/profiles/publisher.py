@@ -79,6 +79,18 @@ def _publish(conn,snapshot,result,cancellation):
                 if not candidate.communication.summary.value and original_old.communication.summary.value:
                     if not old or not old.communication.summary.value:return PublishResult(reason='retained_evidence_unavailable')
                     candidate.communication=old.communication
+                elif old and snapshot.versions.get('strategy') == 'workflow-v4':
+                    communication = candidate.communication
+                    previous_is_later = old.communication.last_business_at is not None and (
+                        communication.last_business_at is None
+                        or old.communication.last_business_at > communication.last_business_at
+                    )
+                    if 'communication.status_conflict' not in candidate.gaps and (
+                        not communication.tags or (previous_is_later and old.communication.tags)
+                    ):
+                        communication.tags = old.communication.tags
+                    if previous_is_later:
+                        communication.last_business_at = old.communication.last_business_at
             # Restore only prior fields still authorized by this input snapshot.
             for path in issues if old is not None else []:
                 name=path.split(':')[0];parts=name.split('.')

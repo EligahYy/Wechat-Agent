@@ -43,7 +43,7 @@ def analysis_issue(raw,contact):
     return OperationIssue(code=code,field_path=field,stage=stage,severity='warning',scope='contact',contact_id=contact)
 
 def suggested_action(code):
-    if code in {'model_timeout','model_temporary_error','model_retry_limit','rate_limited','retry_after_exceeds_deadline'}:return 'retry_sync'
+    if code in {'model_timeout','model_temporary_error','model_retry_limit','rate_limited','retry_after_exceeds_deadline','model_retry_cooling_down'}:return 'retry_sync'
     if code in {'scope_excluded','scope_changed','contact_changed','retained_evidence_unavailable'}:return 'review_contact'
     if code in {'context_requires_chunking','history_merge_unit_too_large','context_reference_too_large','context_message_overhead_exceeded'}:return 'none'
     if code.startswith('model_') or code in {'capability_not_ready','authentication_failed','credential_unavailable','credential_store_unsupported','request_invalid'}:return 'open_model_settings'

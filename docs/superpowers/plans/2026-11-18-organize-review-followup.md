@@ -1,6 +1,6 @@
 # M3 整理链路审查修复计划
 
-**状态**　待开发。基线为 `cdf72d7`、workflow-v3、schema 18。按下列顺序串行实施，完成云端回归后进入 M3 附件获取与解析。真实微信和模型质量在 Mac 单独记录。
+**状态**　workflow-v4 已完成云端开发。下列任务记录本轮设计与测试目标，已运行用例和兼容边界见[验收记录](../../verification/organize-review-followup.md)。基线为 `cdf72d7`、workflow-v3、schema 18。按下列顺序串行实施，完成云端回归后进入 M3 附件获取与解析。真实微信和模型质量在 Mac 单独记录。
 
 **目标**　让已验证的事实可靠进入档案，让失败的长历史任务在恢复后取得新进展，并降低零变更整理的本地开销。沿用 Python、SQLite、现有 worker 和 React 整理记录。[上轮交付与验收](../../verification/organize-reliability-v3.md) · [模型执行方案](../../MODEL_EXECUTION.md)
 

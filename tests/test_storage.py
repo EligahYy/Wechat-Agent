@@ -14,7 +14,7 @@ def test_schema_is_repeatable_and_isolated(tmp_path):
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert 0 < conn.execute("PRAGMA busy_timeout").fetchone()[0] <= 5000
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 18
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 19
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"accounts", "contacts", "conversations", "members", "messages", "message_revisions",
                 "attachments", "sync_cursors", "sync_attempts", "operations", "operation_items", "settings"} <= tables
@@ -150,8 +150,11 @@ def test_schema15_upgrade_preserves_archive_profiles_and_operations(tmp_path,mon
         tables=['messages','message_revisions','profile_heads','profile_versions','operations','operation_items','snapshots']
         before={name:[tuple(r) for r in conn.execute(f'SELECT * FROM {name} ORDER BY rowid')] for name in tables}
         storage.migrate(conn);storage.migrate(conn)
-        assert conn.execute('SELECT version FROM schema_version').fetchone()[0]==18
-        assert {name:[tuple(r) for r in conn.execute(f'SELECT * FROM {name} ORDER BY rowid')] for name in tables}==before
+        assert conn.execute('SELECT version FROM schema_version').fetchone()[0]==19
+        after = {name: [tuple(r) for r in conn.execute(f'SELECT * FROM {name} ORDER BY rowid')] for name in tables}
+        assert all(row[-1] is None for row in after['snapshots'])
+        after['snapshots'] = [row[:-1] for row in after['snapshots']]
+        assert after == before
         assert conn.execute('SELECT COUNT(*) FROM history_checkpoints').fetchone()[0]==0
 
 def test_schema16_upgrade_preserves_checkpoint_request_budget(tmp_path,monkeypatch):

@@ -15,16 +15,18 @@ from ..operations.service import now
 
 
 def unchanged(conn,snapshot):
-    previous=conn.execute('''SELECT s.manifest_json,s.payload_json FROM profile_heads h JOIN profile_versions p
+    previous=conn.execute('''SELECT s.snapshot_id,s.manifest_json FROM profile_heads h JOIN profile_versions p
         ON p.account_id=h.account_id AND p.contact_id=h.contact_id AND p.version=h.version
         JOIN snapshots s ON s.account_id=p.account_id AND s.snapshot_id=p.snapshot_id
         WHERE h.account_id=? AND h.contact_id=?''',(snapshot.key.account_id,snapshot.key.contact_id)).fetchone()
     if not previous:return False
+    if previous['snapshot_id'] == snapshot.id:return True
     manifest=json.loads(previous['manifest_json'])
+    current_manifest = snapshot.model_dump(mode='json')
     for field in ('role_version','scope_version','manual_version','versions','gaps','coverage'):
-        if manifest.get(field)!=json.loads(snapshot.model_dump_json()).get(field):return False
+        if manifest.get(field)!=current_manifest.get(field):return False
     current=ContextReader(conn,snapshot)
-    payload=json.loads(previous['payload_json'])
+    payload=json.loads(conn.execute('SELECT payload_json FROM snapshots WHERE account_id=? AND snapshot_id=?', (snapshot.key.account_id, previous['snapshot_id'])).fetchone()[0])
     return payload['messages']==current.messages() and payload['actors']==current.actors() and payload['conversations']==current.conversations() and payload.get('manual',{'fields':{},'notes':{}})==current.manual()
 
 
@@ -57,10 +59,10 @@ async def analyze(conn,operation,owner,session,targets):
                     if i.code == NUMBERLESS_MESSAGE and i.severity == 'warning' and i.conversation_id
                 ),
             ) if item else None
-            snapshot=build_snapshot(conn,ContactKey(account_id=operation.scope.account_id,contact_id=contact),datetime.now(timezone.utc),coverage=coverage,versions={'template':'profile-v1','strategy':getattr(session.workflow,'strategy_version','workflow-v1'),'output_schema':'1','model_config':session.config.version})
-            if coverage and (set(coverage.required_conversation_ids)!=set(ContextReader(conn,snapshot).conversations()) or any(gap.split(':',1)[0] in {'source_not_complete','source_gap','source_issue','message_time_invalid','message_author_unverified'} for gap in snapshot.gaps)):
-                raise ModelCallError('source_not_complete')
+            snapshot=build_snapshot(conn,ContactKey(account_id=operation.scope.account_id,contact_id=contact),datetime.now(timezone.utc),coverage=coverage,reuse_published=True,versions={'template':'profile-v1','strategy':getattr(session.workflow,'strategy_version','workflow-v1'),'output_schema':'1','model_config':session.config.version})
             same_input = unchanged(conn, snapshot)
+            if not same_input and coverage and (set(coverage.required_conversation_ids)!=set(ContextReader(conn,snapshot).conversations()) or any(gap.split(':',1)[0] in {'source_not_complete','source_gap','source_issue','message_time_invalid','message_author_unverified'} for gap in snapshot.gaps)):
+                raise ModelCallError('source_not_complete')
             record_stage(conn, operation.scope.account_id, operation.id, 'prepare', preparing)
             if same_input:
                 skipped=True

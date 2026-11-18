@@ -11,8 +11,8 @@ from wechat_agent.operations.service import create_operation
 from wechat_agent.operations.contracts import OperationScope,CancellationToken
 from wechat_agent.profiles.publisher import publish
 
-def seed_profile(conn):
-    snapshot=build_snapshot(conn,ContactKey(account_id='acct-1',contact_id='merchant-a'),datetime.now(timezone.utc))
+def seed_profile(conn, *, reuse_published=False):
+    snapshot=build_snapshot(conn,ContactKey(account_id='acct-1',contact_id='merchant-a'),datetime.now(timezone.utc), reuse_published=reuse_published)
     operation=SimpleNamespace(id=str(uuid4()),generation=1)
     # A fixture is not a queued user intention: reserve it atomically so the
     # real background worker cannot claim/recover it between creation/publish.

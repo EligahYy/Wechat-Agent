@@ -12,7 +12,7 @@ from ..model.contracts import ModelRequest,ModelMessage,ModelCallError
 from ..profiles.contracts import AnalysisResult,analysis_result_schema
 from ..profiles.publisher import check_inputs
 from ..source.repository import transaction
-from .checkpoints import create_run,register_unit,checkpoint,set_unit,RunProgress
+from .checkpoints import create_run,register_unit,checkpoint,set_unit,RunProgress,unit_cache_key
 from .coverage import compute_coverage
 from .refinement import supersede,MAX_DEPTH
 from .extraction import ExtractedFacts, normalize_extraction
@@ -40,7 +40,7 @@ class WorkflowV2:
                     for row in payload['messages']
                 ]}
                 prompt += '\n引用原文可使用该消息的 source_alias 作为 message_id，revision 保持原值。省略没有证据的字段。'
-        uses_sparse_schema = self.strategy_version == 'workflow-v3' and phase == 'extract'
+        uses_sparse_schema = self.strategy_version in {'workflow-v3', 'workflow-v4'} and phase == 'extract'
         if uses_sparse_schema:
             prompt += '\n输出只需包含有证据的字段。若返回 processed_primary_ids，逐一列出主材料消息编号，每个编号只出现一次。'
         material_key = 'messages' if phase == 'extract' else 'candidates'
@@ -73,7 +73,11 @@ class WorkflowV2:
                     record_reduction(self.conn, snapshot, token, label, candidates, result)
                 set_unit(self.conn,snapshot,token,request,'succeeded',reused=True,progress=progress)
                 return result
-            if saved['error_code'] in {'output_truncated','model_timeout'}:raise ModelCallError(saved['error_code'])
+            saved_error = saved['error_code']
+            if (saved_error in {'output_truncated', 'model_timeout'}
+                    or (saved_error == 'history_merge_incomplete' and request.phase == 'merge'
+                        and self.strategy_version == 'workflow-v4' and label != 'shipments')):
+                raise ModelCallError(saved_error)
             set_unit(self.conn,snapshot,token,request,'running',progress=progress)
             response=await self.gateway.generate(request,token)
             aliases = build_aliases(allowed) if request.phase == 'extract' else {}
@@ -196,7 +200,7 @@ class WorkflowV2:
             if direct_failed:
                 yield direct_failed
                 return
-            if self.strategy_version == 'workflow-v3':
+            if self.strategy_version in {'workflow-v3', 'workflow-v4'}:
                 windows = {}
                 for row in rows:
                     key = (row['conversation_id'], row['sent_at'][:7])
@@ -234,7 +238,7 @@ class WorkflowV2:
             nonlocal refinement_nodes
             try:return [await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in chunk.messages},reader=reader.restrict(chunk.messages),progress=progress)]
             except ModelCallError as error:
-                if error.code not in {'output_truncated','model_timeout'} or depth>=MAX_DEPTH or refinement_nodes>=8:raise
+                if error.code not in {'output_truncated','model_timeout'} or depth>=MAX_DEPTH:raise
             primary=[]
             for span in chunk.spans:
                 row=originals[span.message_id]
@@ -247,9 +251,32 @@ class WorkflowV2:
             try:smaller=await asyncio.to_thread(plan_chunks,primary,planned,self.gateway.config,input_limit=limit,context_messages=rows,max_primary_messages=max(1,len(primary)//2))
             except ModelCallError:raise ModelCallError('output_truncated') from None
             if len(smaller)>4 or (len(smaller)==1 and smaller[0].spans==chunk.spans):raise ModelCallError('output_truncated')
-            children=[register_unit(self.conn,snapshot,cancellation,extraction(list(c.messages),[asdict(s) for s in c.spans]),c.spans,c.ordinal,self.gateway.config) for c in smaller]
+            planned_children = [
+                (c, extraction(list(c.messages), [asdict(span) for span in c.spans]))
+                for c in smaller
+            ]
+            child_keys = {unit_cache_key(snapshot, request, chunk.spans)
+                          for chunk, request in planned_children}
+            prior = {}
+            for row in self.conn.execute(
+                """SELECT e.snapshot_id,p.unit_id,c.cache_key FROM history_refinements e
+                   JOIN history_run_units p ON p.account_id=e.account_id
+                     AND p.snapshot_id=e.snapshot_id AND p.unit_id=e.parent_id
+                   JOIN history_run_units c ON c.account_id=e.account_id
+                     AND c.snapshot_id=e.snapshot_id AND c.unit_id=e.child_id
+                   WHERE p.account_id=? AND p.contact_id=? AND p.cache_key=?""",
+                (snapshot.key.account_id, snapshot.key.contact_id, req.checkpoint_key),
+            ):
+                prior.setdefault((row[0], row[1]), set()).add(row[2])
+            replay = any(keys == child_keys for keys in prior.values())
+            if refinement_nodes >= 8 and (not replay or self.strategy_version != 'workflow-v4'):
+                if self.strategy_version == 'workflow-v4':
+                    raise ModelCallError('analysis_budget_paused')
+                raise ModelCallError('output_truncated')
+            children = [register_unit(self.conn, snapshot, cancellation, request, c.spans, c.ordinal, self.gateway.config)
+                        for c, request in planned_children]
             supersede(self.conn,snapshot,cancellation,req,children,progress)
-            refinement_nodes+=1
+            refinement_nodes += int(not replay or self.strategy_version != 'workflow-v4')
             results=[];failure=None
             for child,request in zip(smaller,children):
                 try:results.extend(await extract_tree(child,request,depth+1))
@@ -277,7 +304,7 @@ class WorkflowV2:
         merge_target = pinned_target(
             self.conn, snapshot.key.account_id, snapshot.key.contact_id,
             self.gateway.config.version, '', str(snapshot.profile_version), phase='merge',
-        ) if self.strategy_version == 'workflow-v3' else INPUT_TARGET
+        ) if self.strategy_version in {'workflow-v3', 'workflow-v4'} else INPUT_TARGET
         all_candidates=deduplicate(meaningful)
         aggregate_budget = request_budget(merge_request('all', all_candidates), self.gateway.config)
         if aggregate_budget.fits and aggregate_budget.input_tokens <= merge_target:
@@ -306,9 +333,13 @@ class WorkflowV2:
                        for ref in source_refs(AnalysisResult.model_validate(c))}
             try:
                 result = await self.unit(snapshot, cancellation, req, allowed, label, candidates,
-                                         reader=reader, progress=progress, require_coverage=covered)
+                                         reader=reader, progress=progress,
+                                         require_coverage=covered or self.strategy_version == 'workflow-v4')
             except ModelCallError as error:
-                if error.code not in {'output_truncated', 'model_timeout'}:
+                if error.code not in {'output_truncated', 'model_timeout'} and not (
+                    error.code == 'history_merge_incomplete' and self.strategy_version == 'workflow-v4'
+                    and label != 'shipments'
+                ):
                     raise
                 return await split_merge(label, candidates, depth=depth, parent=req)
             return [(label, result)], [req]
@@ -377,6 +408,10 @@ class WorkflowV2:
             raise first_error
         if not compute_coverage(self.conn,snapshot.key.account_id,snapshot.id).complete:raise ModelCallError('history_coverage_incomplete')
         result=combine(merged,snapshot.key.contact_id)
+        if self.strategy_version == 'workflow-v4':
+            timestamps = [item.communication.last_business_at for item in results if item.communication.last_business_at]
+            if timestamps:
+                result.communication.last_business_at = max(timestamps)
         result.gaps=sorted(set(result.gaps)|set(gaps))
         return result
 
@@ -384,3 +419,7 @@ class WorkflowV2:
 class WorkflowV3(WorkflowV2):
     """Stable per-conversation windows with feedback-based workload targets."""
     strategy_version = 'workflow-v3'
+
+
+class WorkflowV4(WorkflowV3):
+    strategy_version = 'workflow-v4'

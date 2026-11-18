@@ -25,8 +25,12 @@ test(`large history assembles complete results: ${mode}`,async({page,request})=>
  if(mode==='source-failure'){
  await expect(status.getByText('消息已同步，整理未完成',{exact:true})).toBeVisible();
  await expect(status.getByText('已完成分段已保留，重新同步将复用有效结果。')).toBeVisible();
- await request.post('/api/__test__/history-recover');
- await customer.getByRole('button',{name:'同步并整理此客户',exact:true}).click();
+ const {retry_at}=await (await request.post('/api/__test__/history-recover')).json();
+ await status.getByRole('button',{name:'查看同步详情',exact:true}).click();
+ const failed=page.getByRole('dialog',{name:'整理记录'});
+ await expect.poll(()=>Date.now()/1000,{timeout:7000}).toBeGreaterThanOrEqual(retry_at);
+ await failed.getByRole('button',{name:'重新同步',exact:true}).click();
+ await failed.getByRole('button',{name:'关闭弹窗',exact:true}).click();
  }
  if(mode==='pause-resume'){
    await expect(status.getByText('整理已暂停，可继续',{exact:true})).toBeVisible();

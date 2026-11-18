@@ -287,3 +287,49 @@ async def test_history_units_share_one_authorized_reader_and_do_not_rescan_progr
     db.set_trace_callback(None)
     assert len(constructed)==1
     assert len(scans)<=3
+
+
+@pytest.mark.asyncio
+async def test_v4_resume_reuses_split_trees_and_reaches_ninth_window(db, history_env):
+    from wechat_agent.analysis.coverage import compute_coverage
+    from wechat_agent.analysis.history import WorkflowV4
+    from wechat_agent.model.contracts import ModelResponse
+
+    e = history_env
+    for month in range(1, 10):
+        archive_page(db, make_page([
+            make_message(message_id=f'window-{month}-{index}', body='需要处理的资料 ' * 85,
+                         sent_at=datetime(2026, month, 11, 10, index, tzinfo=timezone.utc))
+            for index in range(2)
+        ]))
+    e.gateway.config = e.config.model_copy(update={
+        'capabilities': e.config.capabilities.model_copy(update={'context_tokens': 80_000}),
+    })
+    calls = []
+
+    async def generate(request, token):
+        payload = json.loads(request.messages[-1].content)
+        primary = [span['message_id'] for span in payload.get('history_unit', {}).get('primary_spans', [])]
+        windows = [identifier for identifier in primary if identifier.startswith('window-')]
+        calls.append(windows)
+        if len(windows) == 2:
+            raise ModelCallError('output_truncated')
+        return ModelResponse(payload={'contact_id': 'merchant-a'}, finish_reason='stop', model_id='synthetic', usage={})
+
+    e.gateway.generate = generate
+    def freeze():
+        old = e.snapshot
+        return build_snapshot(db, old.key, old.cutoff, versions={**old.versions, 'strategy': 'workflow-v4'})
+
+    async with e.client:
+        e.snapshot = freeze()
+        with pytest.raises(ModelCallError) as paused:
+            await WorkflowV4(db, e.gateway).run(e.snapshot, None, e.token)
+        assert paused.value.code == 'analysis_budget_paused', calls
+        assert sum(len(unit) == 1 for unit in calls) == 16
+        e.retry('ninth-window')
+        e.snapshot = freeze()
+        calls.clear()
+        await WorkflowV4(db, e.gateway).run(e.snapshot, None, e.token)
+        assert [unit for unit in calls if unit] == [['window-9-0'], ['window-9-1']]
+        assert compute_coverage(db, 'acct-1', e.snapshot.id).complete

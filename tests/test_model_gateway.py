@@ -171,3 +171,19 @@ async def test_transport_timeouts_keep_their_classification(setup_gateway):
     async with client:
         with pytest.raises(ModelCallError) as error:await gateway.generate(request,token)
     assert error.value.code=='model_timeout' and len(calls)==2
+
+
+@pytest.mark.asyncio
+async def test_retry_after_beyond_remaining_deadline_does_not_timeout(setup_gateway, monkeypatch):
+    from wechat_agent.model import gateway as gateway_module
+    from wechat_agent.model.contracts import ModelCallError
+
+    gateway, request, token, responses, calls, delays, client = setup_gateway
+    clock = iter([0, 0, 25, 25])
+    monkeypatch.setattr(gateway_module, 'monotonic', lambda: next(clock))
+    responses.append(httpx.Response(429, headers={'Retry-After': '100'}))
+    async with client:
+        with pytest.raises(ModelCallError) as error:
+            await gateway.generate(request, token)
+    assert error.value.code == 'retry_after_exceeds_deadline'
+    assert len(calls) == 1 and delays == []

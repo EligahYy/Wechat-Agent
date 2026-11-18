@@ -3,8 +3,9 @@ import asyncio
 from datetime import datetime,timezone
 from email.utils import parsedate_to_datetime
 import json
+from math import isfinite
 import random
-from time import monotonic
+from time import monotonic, time
 import httpx
 from referencing import Registry
 from referencing.exceptions import NoSuchResource,Unresolvable
@@ -12,6 +13,23 @@ from jsonschema import Draft202012Validator,ValidationError as SchemaError,Schem
 from .contracts import ModelConfig,ModelRequest,ModelResponse,ModelCallError
 from ..source.repository import transaction,cancellation_requested
 from ..context.tokens import request_budget,wire_payload
+
+TEMPORARY_FAILURES = {'rate_limited', 'model_temporary_error'}
+
+
+def retry_delay(response, retry):
+    delay = (2**retry) * random.uniform(.8, 1.2)
+    if response is None or not (value := response.headers.get('Retry-After')):
+        return delay
+    try:
+        wait = float(value)
+    except ValueError:
+        try:
+            wait = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            return delay
+    return max(0, wait) if isfinite(wait) else delay
+
 
 class ModelGateway:
     def __init__(self,conn,config,client,credentials,*,sleep=asyncio.sleep,execution_budget=None):
@@ -59,6 +77,34 @@ class ModelGateway:
             if self.execution_budget is not None:
                 self.execution_budget.reserve(self.conn, account, token.operation_id)
             if request.checkpoint_key:
+                if self.execution_budget is not None:
+                    identity = (account, contact, request.checkpoint_key)
+                    retry = self.conn.execute(
+                        'SELECT operation_id,retry_at FROM history_retry_windows WHERE account_id=? AND contact_id=? AND cache_key=?',
+                        identity,
+                    ).fetchone()
+                    legacy = retry is None and self.conn.execute(
+                        """SELECT 1 FROM history_checkpoints c
+                           WHERE c.account_id=? AND c.contact_id=? AND c.cache_key=? AND c.requests=6
+                             AND 6=(SELECT COUNT(*) FROM history_run_units u JOIN model_calls m
+                               ON m.account_id=u.account_id AND m.unit_id=u.unit_id
+                               WHERE u.account_id=c.account_id AND u.contact_id=c.contact_id
+                                 AND u.cache_key=c.cache_key AND m.status IN ('rate_limited','model_temporary_error'))""",
+                        identity,
+                    ).fetchone()
+                    if legacy or (retry and retry['retry_at'] > 0 and retry['operation_id'] != token.operation_id):
+                        if retry and time() < retry['retry_at']:
+                            raise ModelCallError('model_retry_cooling_down')
+                        self.conn.execute(
+                            'UPDATE history_checkpoints SET requests=0 WHERE account_id=? AND contact_id=? AND cache_key=?',
+                            identity,
+                        )
+                        self.conn.execute(
+                            """INSERT INTO history_retry_windows(account_id,contact_id,cache_key,operation_id,retry_at,rounds)
+                               VALUES(?,?,?,?,0,1) ON CONFLICT(account_id,contact_id,cache_key) DO UPDATE SET
+                               operation_id=excluded.operation_id,retry_at=0,rounds=rounds+1""",
+                            (*identity, token.operation_id),
+                        )
                 reserved=self.conn.execute('''UPDATE history_checkpoints SET requests=requests+1
                     WHERE account_id=? AND contact_id=? AND cache_key=? AND requests<6''',
                     (account,contact,request.checkpoint_key))
@@ -69,13 +115,30 @@ class ModelGateway:
                 VALUES(?,?,?,?,?,?,?,?,?,?)''',(account,contact,request.snapshot_id,request.unit_id,request.call_id,request.phase,self.config.version,number,'started',self.config.model_id))
         return number
 
-    def _audit(self,account,request,attempt,status,reason=None,usage=None,*,started):
+    def _audit(self,account,request,attempt,status,reason=None,usage=None,*,started,retry_at=None):
         elapsed_ms = max(0, round((monotonic()-started)*1000))
         with transaction(self.conn):
             self.conn.execute('''UPDATE model_calls SET status=?,finish_reason=?,usage_json=?,elapsed_ms=? WHERE account_id=? AND unit_id=? AND attempt=?''',
                 (status,reason,json.dumps({**(usage or {}),'requested_output_tokens':request.output_tokens}),elapsed_ms,account,request.unit_id,attempt))
             owner=self.conn.execute('SELECT operation_id FROM analysis_units WHERE account_id=? AND unit_id=?',(account,request.unit_id)).fetchone()
             if owner:
+                if request.checkpoint_key and self.execution_budget is not None:
+                    identity = (account, request.snapshot_id, request.unit_id)
+                    if retry_at is not None:
+                        self.conn.execute(
+                            """INSERT INTO history_retry_windows(account_id,contact_id,cache_key,operation_id,retry_at,failure_code)
+                               SELECT account_id,contact_id,cache_key,?,?,? FROM history_run_units
+                               WHERE account_id=? AND snapshot_id=? AND unit_id=?
+                               ON CONFLICT(account_id,contact_id,cache_key) DO UPDATE SET
+                               operation_id=excluded.operation_id,retry_at=excluded.retry_at,failure_code=excluded.failure_code""",
+                            (owner[0], retry_at, status, *identity),
+                        )
+                    elif status not in TEMPORARY_FAILURES and status != 'model_cancelled':
+                        self.conn.execute(
+                            """UPDATE history_retry_windows SET retry_at=0 WHERE account_id=? AND cache_key=?
+                               AND contact_id=(SELECT contact_id FROM history_run_units WHERE account_id=? AND snapshot_id=? AND unit_id=?)""",
+                            (account, request.checkpoint_key, *identity),
+                        )
                 row=self.conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',(account,owner[0])).fetchone()
                 if row:
                     counts=json.loads(row[0]);counts['model_last_output_limit']=request.output_tokens
@@ -116,9 +179,10 @@ class ModelGateway:
         budget=request_budget(request,self.config)
         if request.output_tokens>self.config.capabilities.max_output_tokens or not budget.fits:
             raise ModelCallError('context_requires_chunking')
+        deadline = monotonic() + 120
         try:
             async with asyncio.timeout(120):
-                return await self._generate(request,cancellation,account,contact)
+                return await self._generate(request,cancellation,account,contact,deadline)
         except TimeoutError:
             if request.checkpoint_key and self.execution_budget is not None:
                 from ..analysis.adaptive import observe_attempt
@@ -127,7 +191,7 @@ class ModelGateway:
                                     'model_timeout', 120_000, {}, request.output_tokens)
             raise ModelCallError('model_timeout') from None
 
-    async def _generate(self,request,token,account,contact):
+    async def _generate(self,request,token,account,contact,deadline):
         key=self.credentials.get(self.config.credential_ref)
         repaired=False
         accepted_output=None
@@ -191,7 +255,10 @@ class ModelGateway:
                     status='model_temporary_error'
                 except ModelCallError as error:
                     status=error.code
-                self._audit(account,request,attempt,status,reason if reason in ('stop','length') else None,usage,started=started)
+                delay = retry_delay(response, retry) if status in TEMPORARY_FAILURES | {'model_timeout'} else None
+                cooldown = time() + max(5, delay) if status in TEMPORARY_FAILURES else None
+                self._audit(account,request,attempt,status,reason if reason in ('stop','length') else None,
+                            usage,started=started,retry_at=cooldown)
                 if status=='model_output_limit_rejected' and request.allow_output_growth and accepted_output is not None:
                     self.output_ceiling=min(self.output_ceiling,accepted_output)
                     raise ModelCallError('output_truncated')
@@ -206,14 +273,8 @@ class ModelGateway:
                     break
                 if status not in ('rate_limited','model_temporary_error','model_timeout') or retry==2 or (status=='model_timeout' and retry>=1):raise ModelCallError(status)
                 self._cancel(account,token)
-                delay=(2**retry)*random.uniform(.8,1.2)
-                if response is not None and response.headers.get('Retry-After'):
-                    value=response.headers['Retry-After']
-                    try:delay=float(value)
-                    except ValueError:
-                        try:delay=(parsedate_to_datetime(value)-datetime.now(timezone.utc)).total_seconds()
-                        except (ValueError,TypeError):delay=2**retry
-                    if not 0<=delay<300:raise ModelCallError('retry_after_exceeds_deadline')
+                if not 0 <= delay < deadline - monotonic():
+                    raise ModelCallError('retry_after_exceeds_deadline')
                 waiting = monotonic()
                 await self.sleep(delay)
                 from ..analysis.telemetry import record_stage

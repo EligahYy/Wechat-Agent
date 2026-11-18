@@ -113,5 +113,7 @@ def app_factory():
     @app.post('/api/__test__/history-recover')
     def recover_history():
         app.state.history_failure=False
-        return {'status':'ok'}
+        with closing(open_db(app.state.database_path)) as conn:
+            retry_at = conn.execute('SELECT MAX(retry_at) FROM history_retry_windows').fetchone()[0]
+        return {'status':'ok', 'retry_at': retry_at}
     return app
