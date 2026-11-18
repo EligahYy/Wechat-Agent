@@ -235,3 +235,32 @@ def test_document_link_does_not_cross_accounts(flow):
             max_output_tokens=8192,api_key='test-key'),client.app.state.services.credential_store)
         assert saved['budget_reference'] is None
         assert saved['budget_review'] is None and not saved['runtime_ready']
+
+
+@pytest.mark.asyncio
+async def test_empty_analysis_is_visible_in_customer_list_and_next_success_replaces_it(flow):
+    client, _, _ = flow
+    review(client)
+    services = client.app.state.services
+    successful_transport = services.model_transport
+
+    def profile_status():
+        contacts = client.get('/api/contacts', params={'account_id': 'acct-1', 'q': '甲'}).json()
+        return contacts['items'][0]['profile_status']
+
+    assert profile_status() == 'pending'
+    services.model_transport = httpx.MockTransport(lambda _: httpx.Response(200, json={
+        'model': 'synthetic',
+        'choices': [{'finish_reason': 'stop', 'message': {'content': '{"contact_id":"merchant-a"}'}}],
+    }))
+    empty = await sync(client, 'empty-analysis')
+    assert empty.source_state == 'succeeded' and empty.error_code == 'empty_result'
+    assert profile_status() == 'no_findings'
+
+    from tests.factories import make_message, make_page
+    from wechat_agent.source.repository import archive_page
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        archive_page(conn, make_page([make_message(message_id='followup', body='补充业务资料')]))
+    services.model_transport = successful_transport
+    assert (await sync(client, 'updated-with-facts')).state == 'succeeded'
+    assert profile_status() in {'ready', 'incomplete'}

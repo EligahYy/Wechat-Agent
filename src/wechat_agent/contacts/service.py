@@ -76,6 +76,53 @@ def _source_gaps(conn, account_id, contact_id):
     return sorted(gaps)
 
 
+def _organization_status(conn, account_id, contact, profile):
+    contact_id = contact['contact_id']
+    attempt = conn.execute(
+        """SELECT o.state AS operation_state, o.phase AS operation_phase, o.error_code AS operation_error,
+                  i.state AS item_state, i.error_code AS item_error
+           FROM operations o LEFT JOIN operation_items i
+             ON i.account_id=o.account_id AND i.operation_id=o.id AND i.item_id=?
+             AND i.contact_id=? AND i.phase='analysis'
+           WHERE o.account_id=? AND o.action='sync_and_organize'
+             AND (o.contact_id=? OR (o.contact_id IS NULL AND i.item_id IS NOT NULL))
+             AND (i.role_version IS NULL OR i.role_version=?)
+           ORDER BY o.created_at DESC, o.rowid DESC LIMIT 1""",
+        ('analysis:' + contact_id, contact_id, account_id, contact_id, contact['role_version']),
+    ).fetchone()
+    if attempt:
+        state = attempt['item_state'] or attempt['operation_state']
+        reason = attempt['item_error'] if attempt['item_state'] else attempt['operation_error']
+        if state != 'succeeded':
+            if reason in {'analysis_budget_paused', 'operation_interrupted'} or (
+                state in {'queued', 'running'} and attempt['operation_error'] == 'analysis_budget_paused'
+            ):
+                return 'paused'
+            if state in {'queued', 'running'} and attempt['operation_state'] in {'stopped', 'stop_requested'}:
+                state = attempt['operation_state']
+            if state == 'stopped':
+                return 'stopped'
+            if state == 'stop_requested':
+                return 'stopping'
+            if reason == 'empty_result':
+                return 'no_findings'
+            if reason == 'source_not_complete' or (state == 'failed' and attempt['operation_phase'] == 'source'):
+                return 'source_incomplete'
+            if state == 'failed':
+                return 'failed'
+            if state == 'queued':
+                return 'queued'
+            if state == 'running':
+                return 'organizing' if attempt['item_state'] or attempt['operation_phase'] == 'analysis' else 'syncing'
+    if profile['pending']:
+        return 'pending'
+    if profile['model']:
+        return 'ready' if profile['complete'] else 'incomplete'
+    if profile['manual']['fields'] or profile['manual']['notes']:
+        return 'manual'
+    return 'pending' if contact['last_message_at'] else 'no_data'
+
+
 def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, scope="all", membership="all"):
     from .scope import decisions
     if scope not in ("all", "business") or membership not in ("all", "included", "excluded"):
@@ -156,9 +203,7 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, s
             effective=profile['effective']
             summary={group:' · '.join(fact['value'] for fact in effective[group].values() if fact.get('value')) or None for group in ('goods','logistics')}
             summary.update(communication=effective['communication']['summary']['value'],tags=effective['communication']['tags'])
-        profile_status=None
-        if profile:
-            profile_status='pending' if profile['pending'] else 'ready' if profile['complete'] else 'incomplete' if profile['model'] else 'manual' if profile['manual']['fields'] or profile['manual']['notes'] else 'pending' if row['last_message_at'] else 'no_data'
+        profile_status = _organization_status(conn, account_id, row, profile) if profile else None
         items.append({"key": {"account_id": account_id, "contact_id": row["contact_id"]},
                       **presentation, "business_scope": scope_decisions[row["contact_id"]].model_dump(),
                       "role": row["role"], "role_version": row["role_version"], "sources": sources,

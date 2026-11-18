@@ -611,7 +611,10 @@ export function ContactsPage({
                           <td><span>{contact.profile_summary?.goods||"—"}</span>{contact.profile_summary?.logistics&&<span className="source-line">{contact.profile_summary.logistics}</span>}</td>
                           <td>
                             <span className="info-chip">
-                              {{pending:"待整理",ready:"已更新",incomplete:"整理不完整",manual:"人工资料",no_data:"暂无资料"}[contact.profile_status||"no_data"]}
+                              {{pending:"待整理",ready:"已更新",incomplete:"整理不完整",manual:"人工资料",no_data:"暂无资料",
+                                queued:"已排队",syncing:"正在同步",organizing:"正在整理",stopping:"正在停止",
+                                stopped:"已停止",paused:"整理已暂停",no_findings:"未提取到可发布资料",
+                                source_incomplete:"来源同步未完成",failed:"整理未完成"}[contact.profile_status||"no_data"]}
                             </span>
                             {contact.profile_summary?.communication&&<span className="source-line">{contact.profile_summary.communication}</span>}
                             {contact.source_gaps.length > 0 && (

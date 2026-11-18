@@ -394,3 +394,29 @@ def test_name_search_does_not_rank_unrelated_message_history(db):
         db.set_progress_handler(None,0)
     assert after['items']==before['items']
     assert after['total']==before['total']==1
+
+
+def test_batch_organization_projects_each_customer_outcome(contacts_client):
+    with archive(contacts_client) as conn, conn:
+        conn.execute("""
+            INSERT INTO operations(account_id,id,action,state,phase,idempotency_key,error_code)
+            VALUES('acct-1','batch','sync_and_organize','failed','analysis','batch','analysis_budget_paused')
+        """)
+        conn.executemany("""
+            INSERT INTO operation_items(account_id,operation_id,item_id,contact_id,phase,state,role_version,error_code)
+            VALUES('acct-1','batch',?,?,'analysis',?,1,?)
+        """, [
+            ('analysis:merchant-a', 'merchant-a', 'failed', 'empty_result'),
+            ('analysis:merchant-b', 'merchant-b', 'queued', None),
+        ])
+    result = fetch(contacts_client, role='merchant').json()
+    statuses = {item['key']['contact_id']: item['profile_status'] for item in result['items']}
+    assert statuses['merchant-a'] == 'no_findings'
+    assert statuses['merchant-b'] == 'paused'
+    assert list(statuses.values()).count('paused') == 1
+    with archive(contacts_client) as conn, conn:
+        conn.execute("UPDATE operations SET state='stopped',error_code='user_stopped' WHERE id='batch'")
+    statuses = {item['key']['contact_id']: item['profile_status']
+                for item in fetch(contacts_client, role='merchant').json()['items']}
+    assert statuses['merchant-a'] == 'no_findings'
+    assert statuses['merchant-b'] == 'stopped'
