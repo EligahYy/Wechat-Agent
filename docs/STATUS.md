@@ -1,5 +1,7 @@
 # 当前实施状态
 
+2026-11-18审查：当前优先推进[M3文本效率与可靠性方案](superpowers/plans/2026-11-18-organize-reliability.md)，7项任务待实施；先解决短历史延迟、缺口分类与长历史恢复，再推进附件。
+
 更新：2026-11-16（北京时间）。本页是唯一执行位置入口；依据当前代码、主计划及交付记录核对。
 
 来源恢复补充：2026-11-16完成[接入／刷新／同步整理审查](verification/source-refresh-review.md)。统一同步前刷新、stale与failed分开、接受请求前置running并合并在途刷新；来源工具升级`.2`，Mac须按[升级步骤](MAC_SETUP.md#source-refresh-v2)更新来源及重启应用。Python完整回归503通过；Rust来源服务36通过，release构建及干净补丁重复安装校验通过；Mac恢复未验收。
