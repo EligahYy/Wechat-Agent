@@ -22,7 +22,7 @@ class ContextChunk:
     def model_dump(self):return asdict(self)
 
 
-def plan_chunks(messages,request_factory,config,*,input_limit=None,context_messages=None,max_primary_messages=None):
+def plan_chunks(messages,request_factory,config,*,input_limit=None,context_messages=None,max_primary_messages=None,soft_input_target=None):
     originals={m['message_id']:m for m in (context_messages or messages)}
     groups=defaultdict(list)
     def budget(rows):return request_budget(request_factory(list(rows)),config)
@@ -30,17 +30,42 @@ def plan_chunks(messages,request_factory,config,*,input_limit=None,context_messa
         value=budget(rows)
         return value.fits and (input_limit is None or value.input_tokens<=input_limit)
     if not fits([]):raise ModelCallError('context_fixed_overhead_exceeded')
-    def identity(row):
-        span=row.get('body_fragment',{})
-        return row['message_id'],row['revision'],span.get('start',0),span.get('end',len(row['body']))
+    # Schema and mandatory metadata can themselves exceed the soft target.
+    target = None if soft_input_target is None else max(soft_input_target, budget([]).input_tokens + 1024)
+    def fits_target(rows, limit=target):
+        value = budget(rows)
+        return value.fits and (input_limit is None or value.input_tokens <= input_limit) and (
+            limit is None or value.input_tokens <= limit
+        )
     def include(primary,previous=()):
-        ids={m['message_id'] for m in primary}
-        required={m['reply_to'] for m in primary if m.get('reply_to') and m['reply_to'] not in ids and m['reply_to'] in originals}
+        ids = {row['message_id'] for row in primary}
+        complete = {
+            row['message_id'] for row in primary
+            if not row.get('body_fragment')
+            or (row['body_fragment']['start'] == 0 and row['body_fragment']['end'] == row['body_fragment']['total'])
+        }
+        required = ({row.get('reply_to') for row in primary} & originals.keys()) - complete
+        # A fragment cannot stand in for the full original of a reply. Keep
+        # the reply in a separate chunk so its context has one unambiguous row.
+        if required & ids:
+            return None
         context=[originals[key] for key in sorted(required)]
-        if not fits([*context,*primary]):return None
+        required_rows = [*context, *primary]
+        if not fits_target(required_rows):
+            if len(primary) != 1:
+                return None
+            # Make headroom for mandatory context, not the whole primary body.
+            # A long primary still gets split when its reply target is short.
+            if target is not None:
+                minimum = budget([*context, {**primary[0], 'body': ''}]).input_tokens
+                limit = max(target, minimum + 1024)
+                if len(primary[0]['body']) > 1 and not fits_target(required_rows, limit):
+                    return None
+            if not fits(required_rows):
+                return None
         for row in reversed(previous[-2:]):
-            if identity(row) in {identity(m) for m in [*context,*primary]}:continue
-            if fits([row,*context,*primary]):context.insert(0,row)
+            if row['message_id'] in {m['message_id'] for m in [*context, *primary]}:continue
+            if fits_target([row,*context,*primary]):context.insert(0,row)
         return [*context,*primary]
     # Split a large single message using Unicode character offsets. Every primary
     # span is later covered exactly once; copies of neighbours/replies are context.

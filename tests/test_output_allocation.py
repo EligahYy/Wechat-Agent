@@ -60,12 +60,13 @@ async def test_bad_citation_gets_one_scoped_repair_then_validates(db,history_env
   payload=json.loads(json.loads(request.content)['messages'][-1]['content']);seen.append(payload)
   if len(seen)==1:
    return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':json.dumps({'contact_id':'merchant-a','goods':{'volume':{'value':'12方','state':'known','sources':[{'message_id':'invented-source','revision':1}]}}})}}]})
-  assert payload['_source_correction']['allowed_sources']
+  if len(seen)==2:
+   assert payload['_source_correction']['allowed_sources']
   return await original(request)
  async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
   e.gateway.client=client
   result=await WorkflowV2(db,e.gateway).run(e.snapshot,None,e.token)
- assert len(seen)==2
+ assert sum('_source_correction' in payload for payload in seen)==1
  assert publish(db,e.snapshot,result,e.token).version==1
  counts=json.loads(db.execute('SELECT counts_json FROM operations WHERE id=?',(e.token.operation_id,)).fetchone()[0])
  assert counts['model_source_unknown']>0
@@ -75,12 +76,16 @@ async def test_citation_repair_does_not_accept_unknown_refs_or_loop(db,history_e
  e=history_env;seen=[]
  e.gateway.config=e.config.model_copy(update={'capabilities':e.config.capabilities.model_copy(update={'context_tokens':500000})})
  async def response(request):
-  seen.append(request)
+  seen.append(json.loads(json.loads(request.content)['messages'][-1]['content']))
   return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':json.dumps({'contact_id':'merchant-a','goods':{'volume':{'value':'12方','state':'known','sources':[{'message_id':'unknown','revision':1}]}}})}}]})
  async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
   e.gateway.client=client
   with pytest.raises(ModelCallError) as error:await WorkflowV2(db,e.gateway).run(e.snapshot,None,e.token)
- assert error.value.code=='chunk_source_outside_unit' and len(seen)==2
+ assert error.value.code=='chunk_source_outside_unit'
+ primary=[p for p in seen if '_source_correction' not in p]
+ repairs=[p for p in seen if '_source_correction' in p]
+ assert len(primary)==len(repairs)>0
+ assert [p['history_unit'] for p in primary]==[p['history_unit'] for p in repairs]
  assert db.execute('SELECT COUNT(*) FROM profile_versions').fetchone()[0]==0
 
 @pytest.mark.asyncio

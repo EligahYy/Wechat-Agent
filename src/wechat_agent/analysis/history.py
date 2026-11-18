@@ -16,14 +16,28 @@ from .refinement import supersede,MAX_DEPTH
 from .facts import validate_unit,source_refs,deduplicate,merge_groups,combine,enforce_merge_scope
 
 
+# Workload targets are independent of provider capacity. Oversized mandatory
+# context may exceed the target when it still fits the actual window.
+INPUT_TARGET = 24_000
+
+
 class WorkflowV2:
     strategy_version="workflow-v2"
     def __init__(self,conn,gateway):self.conn=conn;self.gateway=gateway
 
     def request(self,snapshot,payload,prompt,phase='extract'):
+        material_key = 'messages' if phase == 'extract' else 'candidates'
+        material = payload.get(material_key)
+        output_target = 8192
+        if material:
+            # Workload heuristic, not a token conversion. Include both the
+            # number of records and size so dense individual records count.
+            material_bytes = len(json.dumps(material, ensure_ascii=False).encode('utf-8'))
+            base, per_record = (2048, 64) if phase == 'extract' else (1024, 128)
+            output_target = min(8192, base + per_record * len(material) + material_bytes // 16)
         request=ModelRequest(allow_output_growth=True,call_id='planning',unit_id='planning',snapshot_id=snapshot.id,phase=phase,
             model_config_version=self.gateway.config.version,messages=[ModelMessage(role='system',content=prompt),ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))],
-            output_schema=analysis_result_schema(),output_tokens=min(8192,self.gateway.config.capabilities.max_output_tokens))
+            output_schema=analysis_result_schema(),output_tokens=min(output_target,self.gateway.config.capabilities.max_output_tokens))
         fixed={**payload,**{key:[] for key in ('messages','candidates') if key in payload}}
         probe=request.model_copy(update={'messages':[request.messages[0],ModelMessage(role='user',content=json.dumps(fixed,ensure_ascii=False))]})
         budget=request_budget(probe,self.gateway.config)
@@ -84,9 +98,16 @@ class WorkflowV2:
             'gaps':list(snapshot.gaps),'existing_shipments':batches,'manual_constraints':reader.manual()}
         rows=reader.messages()
         prompt=files('wechat_agent.model').joinpath('prompts/profile-v1.md').read_text()
-        direct=self.request(snapshot,{**base,'messages':rows},prompt)
-        direct_failed=None
-        if request_budget(direct,self.gateway.config).fits:
+        direct = None
+        direct_failed = None
+        # Raw body bytes are a lower bound for this estimator. Avoid building
+        # and reserializing a full request that cannot meet the direct target.
+        if sum(len(row['body'].encode('utf-8')) for row in rows) <= INPUT_TARGET:
+            candidate = self.request(snapshot, {**base, 'messages': rows}, prompt)
+            direct_budget = request_budget(candidate, self.gateway.config)
+            if direct_budget.fits and direct_budget.input_tokens <= INPUT_TARGET:
+                direct = candidate
+        if direct is not None:
             create_run(self.conn,snapshot,cancellation,'direct',self.gateway.config,messages=rows)
             spans=tuple(MessageSpan(r['message_id'],r['revision'],0,len(r['body']),len(r['body'])) for r in rows)
             req=register_unit(self.conn,snapshot,cancellation,direct,spans,0,self.gateway.config)
@@ -115,7 +136,10 @@ class WorkflowV2:
         requests=[]
         if direct_failed:requests=[direct_failed]
         else:
-            chunks=await asyncio.to_thread(plan_chunks,rows,planned,self.gateway.config)
+            chunks=await asyncio.to_thread(
+                plan_chunks, rows, planned, self.gateway.config,
+                soft_input_target=INPUT_TARGET,
+            )
             for chunk in chunks:
                 req=extraction(list(chunk.messages),[asdict(s) for s in chunk.spans])
                 requests.append((chunk,register_unit(self.conn,snapshot,cancellation,req,chunk.spans,chunk.ordinal,self.gateway.config)))
@@ -161,19 +185,31 @@ class WorkflowV2:
         if first_error:raise first_error
         gaps=sorted({gap for r in results for gap in r.gaps})
         meaningful=[r for r in results if any(source_refs(r))]
-        if not meaningful:return AnalysisResult(contact_id=snapshot.key.contact_id,gaps=gaps)
+        if not meaningful:
+            if not compute_coverage(self.conn, snapshot.key.account_id, snapshot.id).complete:
+                raise ModelCallError('history_coverage_incomplete')
+            return AnalysisResult(contact_id=snapshot.key.contact_id, gaps=gaps)
         def merge_request(label,candidates):
             return self.request(snapshot,{**base,'history_unit':{'phase':'merge','field':label},'candidates':candidates},prompt,'merge')
         all_candidates=deduplicate(meaningful)
-        if request_budget(merge_request('all',all_candidates),self.gateway.config).fits:groups=[('all',all_candidates)]
+        aggregate_budget = request_budget(merge_request('all', all_candidates), self.gateway.config)
+        if aggregate_budget.fits and aggregate_budget.input_tokens <= INPUT_TARGET:
+            groups = [('all', all_candidates)]
         else:groups=merge_groups(meaningful,snapshot.key.contact_id)
         merges=[]
+        merged=[]
         for ordinal,(label,candidates) in enumerate(groups):
             req=merge_request(label,candidates)
-            if not request_budget(req,self.gateway.config).fits:raise ModelCallError('history_merge_unit_too_large')
+            if not request_budget(req,self.gateway.config).fits:
+                # merge_groups already coalesces equal field values including
+                # all their validated references. A single fact needs no model.
+                if len(candidates) == 1 and label.startswith(('goods.', 'logistics.')):
+                    merged.append((label, AnalysisResult.model_validate(candidates[0])))
+                    continue
+                raise ModelCallError('history_merge_unit_too_large')
             merges.append((label,candidates,register_unit(self.conn,snapshot,cancellation,req,(),ordinal,self.gateway.config)))
         progress.load(merge_only=True);progress.persist()
-        merged=[];first_error=None
+        first_error=None
         async def merge_one(label,candidates,req):
             allowed={(ref.message_id,ref.revision) for c in candidates for ref in source_refs(AnalysisResult.model_validate(c))}
             try:return [(label,await self.unit(snapshot,cancellation,req,allowed,label,candidates,reader=reader,progress=progress))]

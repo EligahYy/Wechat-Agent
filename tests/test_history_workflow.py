@@ -190,7 +190,7 @@ async def test_merge_falls_back_to_bounded_field_units_without_recursive_summari
     assert len(result.goods.products.sources)>1
 
 @pytest.mark.asyncio
-async def test_a_single_field_too_large_retains_extraction_without_sending_truncated_merge(db,history_env):
+async def test_oversized_identical_field_is_assembled_without_another_model_call(db,history_env):
     from wechat_agent.analysis.history import WorkflowV2
     e=history_env;calls=[]
     async def transport(request):
@@ -200,11 +200,11 @@ async def test_a_single_field_too_large_retains_extraction_without_sending_trunc
         return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':json.dumps(result)}}]})
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as client:
         e.gateway.client=client
-        with pytest.raises(ModelCallError) as error:await WorkflowV2(db,e.gateway).run(e.snapshot,None,e.token)
-    assert error.value.code=='history_merge_unit_too_large'
+        result=await WorkflowV2(db,e.gateway).run(e.snapshot,None,e.token)
     assert all(p['history_unit']['phase']=='extract' for p in calls)
-    assert db.execute("SELECT COUNT(*) FROM history_checkpoints WHERE phase='extract' AND state='succeeded'").fetchone()[0]>0
-    assert db.execute('SELECT COUNT(*) FROM profile_versions').fetchone()[0]==0
+    assert len(result.goods.products.sources)>1
+    assert publish(db,e.snapshot,result,e.token).version==1
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('change',['role','model'])
