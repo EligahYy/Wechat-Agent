@@ -19,7 +19,7 @@ const gapLabels: Record<string, string> = {
     "发送人标识异常：异常原文已隔离，需修复来源解析后重读。",
   message_sender_missing: "部分消息缺少发送人，尚未归入联系人。",
   message_contract_invalid: "部分消息格式不符合约定，原始数据已保留。",
-  source_message_id_unavailable: "微信来源未提供部分消息的稳定编号。重试会重新读取受影响会话；若编号仍缺失，相关原文会保留为待核对。",
+  source_message_id_unavailable: "微信来源未提供部分消息的稳定编号。这些记录待补齐，可重新读取相关会话。",
   source_contact_identity_invalid:
     "联系人元数据包含异常标识，已隔离并保留原始数据。",
   source_rows_skipped: "来源跳过了部分记录，本次读取存在缺口。",

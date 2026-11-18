@@ -7,6 +7,7 @@ from ..profiles.contracts import SourceRef
 from ..profiles.manual import read_manual
 from ..source.contracts import ContactKey
 from ..source.repository import transaction
+from ..source.coverage import NUMBERLESS_MESSAGE
 
 
 def build_snapshot(conn,key:ContactKey,cutoff:datetime,*,versions:dict[str,str]|None=None,coverage:ContextCoverage|None=None)->ContextSnapshot:
@@ -65,11 +66,19 @@ def build_snapshot(conn,key:ContactKey,cutoff:datetime,*,versions:dict[str,str]|
             if message['reply_to'] and message['reply_to'] not in ids:gaps.add('reply_unavailable:'+message['message_id'])
         for room in sorted(rooms):
             cursor=conn.execute('SELECT complete,gaps_json FROM sync_cursors WHERE account_id=? AND conversation_id=?',(account,room)).fetchone()
-            if cursor is None or not cursor['complete']:gaps.add('source_not_complete:'+room)
-            if cursor:
-                for gap in json.loads(cursor['gaps_json']):gaps.add('source_gap:'+room+':'+gap)
-            for issue in conn.execute('SELECT DISTINCT code FROM source_issues WHERE account_id=? AND conversation_id=? AND resolved=0',(account,room)):
-                gaps.add('source_issue:'+room+':'+issue['code'])
+            cursor_gaps = set(json.loads(cursor['gaps_json'])) if cursor else set()
+            issue_codes = {issue['code'] for issue in conn.execute(
+                'SELECT DISTINCT code FROM source_issues WHERE account_id=? AND conversation_id=? AND resolved=0',
+                (account, room),
+            )}
+            known_partial = coverage and room in coverage.numberless_conversation_ids
+            if known_partial and cursor and (cursor_gaps | issue_codes) == {NUMBERLESS_MESSAGE}:
+                gaps.add(f'{NUMBERLESS_MESSAGE}:{room}')
+                continue
+            if cursor is None or not cursor['complete']:
+                gaps.add('source_not_complete:'+room)
+            gaps.update(f'source_gap:{room}:{code}' for code in cursor_gaps)
+            gaps.update(f'source_issue:{room}:{code}' for code in issue_codes)
         head=conn.execute('SELECT version,manual_version FROM profile_heads WHERE account_id=? AND contact_id=?',(account,contact)).fetchone()
         override=conn.execute('SELECT version FROM business_scope_overrides WHERE account_id=? AND contact_id=?',(account,contact)).fetchone()
         snapshot=ContextSnapshot(coverage=coverage,id=str(uuid4()),key=key,cutoff=cutoff,

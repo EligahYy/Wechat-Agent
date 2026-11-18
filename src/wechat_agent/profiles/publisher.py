@@ -8,6 +8,7 @@ from ..context.reader import ContextReader
 from ..context.contracts import SnapshotError
 from ..contacts.scope import business_scope_allows_analysis
 from ..source.repository import transaction,cancellation_requested
+from ..source.coverage import NUMBERLESS_MESSAGE
 
 class PublishResult(BaseModel):
     version:int|None=None
@@ -111,7 +112,9 @@ def _publish(conn,snapshot,result,cancellation):
             UNION SELECT conversation_id FROM messages WHERE account_id=? AND sender_id=?''',(account,contact,account,contact))}
         refs={ref.message_id for ref in snapshot.material_refs}
         pending=any(row[0] not in refs for room in rooms for row in conn.execute('SELECT message_id FROM messages WHERE account_id=? AND conversation_id=?',(account,room)))
-        gaps=sorted(set(snapshot.gaps)|set(candidate.gaps)|set(issues))
+        # Source coverage notices come from the archive, never model output.
+        model_gaps = {gap for gap in candidate.gaps if gap.partition(':')[0] != NUMBERLESS_MESSAGE}
+        gaps=sorted(set(snapshot.gaps)|model_gaps|set(issues))
         complete=not gaps
         version=(head['version'] if head else 0)+1
         conn.execute('INSERT INTO profile_heads(account_id,contact_id,version) VALUES(?,?,?) ON CONFLICT(account_id,contact_id) DO UPDATE SET version=excluded.version',(account,contact,version))

@@ -1,7 +1,7 @@
 """Account-scoped durable execution facts; no provider bodies or message text."""
 from typing import Literal
 from pydantic import BaseModel,Field
-from ..source.coverage import OperationIssue,ContactCoverage,WARNINGS
+from ..source.coverage import OperationIssue,ContactCoverage,WARNINGS,NUMBERLESS_MESSAGE
 
 class ContactOutcome(ContactCoverage):
     name_snapshot:str|None=None
@@ -66,7 +66,11 @@ def finalize_report(conn,account_id,operation_id):
     for item in items:
         outcome=contacts.setdefault(item.contact_id,ContactOutcome(contact_id=item.contact_id))
         outcome.reason=item.error_code
-        normalized=[analysis_issue(gap,item.contact_id) for gap in item.gaps]
+        verified_source_gaps = {
+            f'{i.code}:{i.conversation_id}' for i in outcome.issues
+            if i.code == NUMBERLESS_MESSAGE and i.conversation_id and i.severity == 'warning'
+        }
+        normalized = [analysis_issue(gap, item.contact_id) for gap in item.gaps if gap not in verified_source_gaps]
         for issue in normalized:
             if not any(i.code==issue.code and i.field_path==issue.field_path for i in outcome.issues):outcome.issues.append(issue)
         field_incomplete=item.error_code=='analysis_incomplete' and any(i.stage=='publication' for i in normalized)
@@ -74,6 +78,9 @@ def finalize_report(conn,account_id,operation_id):
             stage='publication' if item.error_code in {'manual_changed','material_changed','profile_changed','scope_changed','contact_changed','retained_evidence_unavailable','scope_excluded','participants_changed','snapshot_not_authorized'} else 'context' if item.error_code in {'source_not_complete','context_requires_chunking','context_fixed_overhead_exceeded','context_reference_too_large','context_message_overhead_exceeded','history_merge_unit_too_large','history_merge_incomplete','history_coverage_incomplete','chunk_source_outside_unit','merge_scope_invalid','checkpoint_invalid'} else 'model'
             issue=OperationIssue(code=item.error_code,stage=stage,severity='blocker',scope='contact',contact_id=item.contact_id,suggested_action=suggested_action(item.error_code))
             if not any(i.code==issue.code for i in outcome.issues):outcome.issues.append(issue)
+        if item.state == 'succeeded' and any(i.code == NUMBERLESS_MESSAGE and i.severity == 'warning' for i in outcome.issues):
+            outcome.analysis_outcome = 'unchanged' if item.counts.get('skipped') else 'partial'
+            continue
         outcome.analysis_outcome='not_started' if item.error_code=='source_not_complete' else 'failed' if item.state=='failed' else 'stopped' if item.state=='stopped' else 'unchanged' if item.counts.get('skipped') else 'partial' if item.state=='succeeded' and field_incomplete else 'updated' if item.state=='succeeded' else 'running'
     report.contacts=list(contacts.values())
     if any(c.failed_conversation_ids or c.reason=='source_not_complete' for c in report.contacts):report.source_outcome='partial'
@@ -93,6 +100,13 @@ def finalize_report(conn,account_id,operation_id):
     if operation.state=='failed' and operation.error_code and operation.phase=='analysis' and not any(i.code==operation.error_code for i in [*report.issues,*[i for c in report.contacts for i in c.issues]]):
         report.issues.append(OperationIssue(code=operation.error_code,stage='model',severity='blocker',scope='operation',suggested_action=suggested_action(operation.error_code)))
     save_report(conn,account_id,operation_id,report)
-    if ('failed' in states or report.source_outcome in {'partial','failed'}) and operation.state=='succeeded':
+    all_issues = [*report.issues, *(issue for contact in report.contacts for issue in contact.issues)]
+    known_partial = (
+        report.source_outcome == 'partial'
+        and states & {'updated', 'unchanged', 'partial'}
+        and any(i.code == NUMBERLESS_MESSAGE and i.severity == 'warning' for i in all_issues)
+        and not any(i.severity == 'blocker' for i in all_issues)
+    )
+    if ('failed' in states or (report.source_outcome in {'partial','failed'} and not known_partial)) and operation.state=='succeeded':
         conn.execute("UPDATE operations SET state='failed',error_code='analysis_partial' WHERE account_id=? AND id=?",(account_id,operation_id))
     return report

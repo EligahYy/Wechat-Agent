@@ -44,7 +44,16 @@ async def analyze(conn,operation,owner,session,targets):
             report=load_report(conn,operation.scope.account_id,operation.id)
             item=next((c for c in report.contacts if c.contact_id==contact),None) if report else None
             if report and (not item or not item.can_analyze):raise ModelCallError('source_not_complete')
-            coverage=ContextCoverage(required_conversation_ids=tuple(item.required_conversation_ids),completed_conversation_ids=tuple(item.completed_conversation_ids),warning_codes=tuple(sorted({i.code for i in item.issues if i.severity=='warning'}))) if item else None
+            from ..source.coverage import NUMBERLESS_MESSAGE
+            coverage = ContextCoverage(
+                required_conversation_ids=tuple(item.required_conversation_ids),
+                completed_conversation_ids=tuple(item.completed_conversation_ids),
+                warning_codes=tuple(i.code for i in item.issues if i.severity == 'warning'),
+                numberless_conversation_ids=tuple(
+                    i.conversation_id for i in item.issues
+                    if i.code == NUMBERLESS_MESSAGE and i.severity == 'warning' and i.conversation_id
+                ),
+            ) if item else None
             snapshot=build_snapshot(conn,ContactKey(account_id=operation.scope.account_id,contact_id=contact),datetime.now(timezone.utc),coverage=coverage,versions={'template':'profile-v1','strategy':getattr(session.workflow,'strategy_version','workflow-v1'),'output_schema':'1','model_config':session.config.version})
             if coverage and (set(coverage.required_conversation_ids)!=set(ContextReader(conn,snapshot).conversations()) or any(gap.split(':',1)[0] in {'source_not_complete','source_gap','source_issue','message_time_invalid','message_author_unverified'} for gap in snapshot.gaps)):
                 raise ModelCallError('source_not_complete')

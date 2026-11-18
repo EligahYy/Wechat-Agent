@@ -52,3 +52,38 @@ async def test_account_scope_keeps_the_same_unknown_coverage_warning(flow):
     with closing(open_existing_db(client.app.state.database_path)) as conn:
         manifest=json.loads(conn.execute("SELECT manifest_json FROM snapshots WHERE account_id='acct-1' AND contact_id='merchant-a' ORDER BY rowid DESC LIMIT 1").fetchone()[0])
         assert 'source_group_membership_unverified' in manifest['coverage']['warning_codes']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('additional_gap', [None, 'source_shards_unavailable'])
+async def test_numberless_rows_allow_only_the_verified_archive_to_publish(flow, additional_gap):
+    import json
+    from wechat_agent.source.contracts import SourceIssue
+
+    client, calls, payload = flow
+    payload['gaps'] = ['source_message_id_unavailable:invented-room']
+    review(client)
+    source = client.app.state.services.source
+    page = source.pages['group-1'][0]
+    code = 'source_message_id_unavailable'
+    issue = SourceIssue(code=code, raw={'talker':'group-1', 'server_id':0, 'content':'quarantined row'})
+    source.pages['group-1'] = [page.model_copy(update={
+        'gaps': [code] + ([additional_gap] if additional_gap else []),
+        'complete': False,
+        'issues': [issue],
+    })]
+    result = await sync(client)
+    profile = client.get('/api/contacts/merchant-a/profile?account_id=acct-1').json()
+    assert result.report.source_outcome == 'partial'
+    if additional_gap:
+        assert not calls and profile['model_version'] == 0
+        assert result.state == 'failed'
+        return
+    assert len(calls) == 1 and profile['model_version'] == 1
+    assert result.state == 'succeeded'
+    assert result.report.analysis_outcome == 'partial'
+    assert 'quarantined row' not in json.dumps(calls)
+    assert 'source_message_id_unavailable:group-1' in profile['issues']
+    assert 'source_message_id_unavailable:invented-room' not in profile['issues']
+    assert any(i.code == code and i.conversation_id == 'group-1'
+               and i.severity == 'warning' for i in result.report.contacts[0].issues)

@@ -10,10 +10,11 @@ class ContextCoverage(BaseModel):
     model_config=ConfigDict(extra="forbid",frozen=True)
     required_conversation_ids:tuple[str,...]=()
     completed_conversation_ids:tuple[str,...]=()
+    numberless_conversation_ids:tuple[str,...]=Field(default=(), exclude_if=lambda value: not value)
     warning_codes:tuple[str,...]=()
     policy_version:Literal['known-scope-v1']='known-scope-v1'
 
-    @field_validator('required_conversation_ids','completed_conversation_ids','warning_codes')
+    @field_validator('required_conversation_ids','completed_conversation_ids','numberless_conversation_ids','warning_codes')
     @classmethod
     def canonical(cls,value):return tuple(sorted(set(value)))
 

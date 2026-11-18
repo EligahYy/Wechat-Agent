@@ -28,3 +28,14 @@ it('colors final task outcomes without treating coverage hints as a failed task'
  expect(presentOperation(operation({state:'running',report:null})).tone).toBe('active');
  expect(presentOperation(operation({state:'stopped',report:null})).tone).toBe('neutral');
 });
+
+it('shows published partial-source results with a sync action',()=>{
+ const result = presentOperation(operation({report:{
+  version:1, scope_label:'商家', source_outcome:'partial', analysis_outcome:'partial',
+  contacts:[], issues:[{code:'source_message_id_unavailable',severity:'warning',stage:'messages',
+   scope:'conversation',conversation_id:'room',suggested_action:'retry_sync'}],
+ }}));
+ expect(result.title).toBe('已整理可确认消息，部分来源待补齐');
+ expect(result.tone).toBe('warning');
+ expect(result.action).toBe('retry_sync');
+});
