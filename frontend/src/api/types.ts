@@ -1,5 +1,8 @@
 export type Role = "merchant" | "provider" | "platform" | "unknown";
 export type ContactKey = { account_id: string; contact_id: string };
+export type ProfileStatus = "no_data" | "pending" | "no_findings" | "manual" | "ready" | "incomplete" | "needs_update";
+export type OrganizationStatus = "queued" | "syncing" | "organizing" | "stop_requested" | "stopped" | "paused"
+  | "no_findings" | "source_incomplete" | "failed" | "updated" | "unchanged" | "partial" | "not_applicable";
 export type Contact = {
   key: ContactKey;
   business_scope: {included:boolean;reasons:string[];provisional:boolean;version:number};
@@ -24,9 +27,8 @@ export type Contact = {
   }[];
   last_message_at: string | null;
   last_business_at: string | null;
-  profile_status: "pending" | "no_data" | "manual" | "ready" | "incomplete"
-    | "queued" | "syncing" | "organizing" | "stopping" | "stopped" | "paused"
-    | "no_findings" | "source_incomplete" | "failed" | null;
+  profile_status: ProfileStatus | null;
+  organization_attempt?: {operation_id:string; status:OrganizationStatus; reason:string|null} | null;
   profile_summary?:{goods:string|null;logistics:string|null;communication:string|null;tags:string[]};
   profile_updated_at: string | null;
   source_gaps: string[];

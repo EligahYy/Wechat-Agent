@@ -76,55 +76,9 @@ def _source_gaps(conn, account_id, contact_id):
     return sorted(gaps)
 
 
-def _organization_status(conn, account_id, contact, profile):
-    contact_id = contact['contact_id']
-    attempt = conn.execute(
-        """SELECT o.state AS operation_state, o.phase AS operation_phase, o.error_code AS operation_error,
-                  i.state AS item_state, i.error_code AS item_error
-           FROM operations o LEFT JOIN operation_items i
-             ON i.account_id=o.account_id AND i.operation_id=o.id AND i.item_id=?
-             AND i.contact_id=? AND i.phase='analysis'
-           WHERE o.account_id=? AND o.action='sync_and_organize'
-             AND (o.contact_id=? OR (o.contact_id IS NULL AND i.item_id IS NOT NULL))
-             AND (i.role_version IS NULL OR i.role_version=?)
-           ORDER BY o.created_at DESC, o.rowid DESC LIMIT 1""",
-        ('analysis:' + contact_id, contact_id, account_id, contact_id, contact['role_version']),
-    ).fetchone()
-    if attempt:
-        state = attempt['item_state'] or attempt['operation_state']
-        reason = attempt['item_error'] if attempt['item_state'] else attempt['operation_error']
-        if state != 'succeeded':
-            if reason in {'analysis_budget_paused', 'operation_interrupted'} or (
-                state in {'queued', 'running'} and attempt['operation_error'] == 'analysis_budget_paused'
-            ):
-                return 'paused'
-            if state in {'queued', 'running'} and attempt['operation_state'] in {'stopped', 'stop_requested'}:
-                state = attempt['operation_state']
-            if state == 'stopped':
-                return 'stopped'
-            if state == 'stop_requested':
-                return 'stopping'
-            if reason == 'empty_result':
-                return 'no_findings'
-            if reason == 'source_not_complete' or (state == 'failed' and attempt['operation_phase'] == 'source'):
-                return 'source_incomplete'
-            if state == 'failed':
-                return 'failed'
-            if state == 'queued':
-                return 'queued'
-            if state == 'running':
-                return 'organizing' if attempt['item_state'] or attempt['operation_phase'] == 'analysis' else 'syncing'
-    if profile['pending']:
-        return 'pending'
-    if profile['model']:
-        return 'ready' if profile['complete'] else 'incomplete'
-    if profile['manual']['fields'] or profile['manual']['notes']:
-        return 'manual'
-    return 'pending' if contact['last_message_at'] else 'no_data'
-
-
-def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, scope="all", membership="all"):
+def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, scope="all", membership="all", profile_status="all"):
     from .scope import decisions
+    from ..profiles.status import latest_organization, profile_status_for_row
     if scope not in ("all", "business") or membership not in ("all", "included", "excluded"):
         raise ContactError("invalid_contact_query", 422)
     if role not in ("all", *ROLES) or not 1 <= page_size <= 20 or page < 1:
@@ -156,6 +110,11 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, s
     message_scope = """AND (sender_id IN (SELECT contact_id FROM eligible) OR conversation_id IN (
         SELECT s.conversation_id FROM members s JOIN eligible c
         ON c.account_id=s.account_id AND c.contact_id=s.contact_id))""" if q.strip() else ""
+    offset = (page - 1) * page_size
+    # Filter the ordered candidates before selecting the page. Only the visible
+    # rows need full profiles, human-readable summaries and operation details.
+    limit = 'LIMIT ? OFFSET ?' if profile_status == 'all' else ''
+    paging = [page_size, offset] if limit else []
     rows = conn.execute(f"""WITH eligible AS (SELECT c.* FROM contacts c WHERE {where}),
         latest AS (SELECT conversation_id,sender_id,sent_at,message_id,
             ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY julianday(sent_at) DESC,message_id DESC) AS conversation_position,
@@ -172,17 +131,28 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, s
         recent AS (SELECT contact_id,sent_at,ROW_NUMBER() OVER (
             PARTITION BY contact_id ORDER BY julianday(sent_at) DESC,message_id DESC) AS position FROM related)
         SELECT c.*,r.sent_at AS last_message_at,
+            pv.created_at AS profile_updated_at, pv.complete AS profile_complete,
+            pv.pending AS profile_pending, ps.manifest_json AS profile_manifest,
+            COALESCE(ph.manual_version,0) AS profile_manual_version,
+            (EXISTS(SELECT 1 FROM json_each(pm.value_json,'$.fields'))
+                OR EXISTS(SELECT 1 FROM json_each(pm.value_json,'$.notes'))) AS profile_has_manual,
             COALESCE(json_extract(pm.value_json,'$.fields."communication.last_business_at"'),json_extract(pv.result_json,'$.communication.last_business_at')) AS business_at
         FROM eligible c LEFT JOIN profile_heads ph ON ph.account_id=c.account_id AND ph.contact_id=c.contact_id
         LEFT JOIN profile_versions pv ON pv.account_id=c.account_id AND pv.contact_id=c.contact_id AND pv.version=ph.version
+        LEFT JOIN snapshots ps ON ps.account_id=pv.account_id AND ps.snapshot_id=pv.snapshot_id
         LEFT JOIN profile_manual pm ON pm.account_id=c.account_id AND pm.contact_id=c.contact_id
         LEFT JOIN recent r
             ON r.contact_id=c.contact_id AND r.position=1
         ORDER BY julianday(COALESCE(business_at,r.sent_at)) DESC,
             COALESCE(NULLIF(trim(c.remark),''),NULLIF(trim(c.nickname),''),'') COLLATE NOCASE,c.contact_id
-        LIMIT ? OFFSET ?""", [*params, account_id, page_size, (page - 1) * page_size]).fetchall()
+        {limit}""", [*params, account_id, *paging]).fetchall()
+    results = [(row, profile_status_for_row(conn, row, scope_decisions[row['contact_id']].version)) for row in rows]
+    if profile_status != 'all':
+        results = [(row, status) for row, status in results if status == profile_status]
+        total = len(results)
+        results = results[offset:offset + page_size]
     items = []
-    for row in rows:
+    for row, status in results:
         presentation = resolve_name(row, catalog[row['contact_id']])
         sources = [dict(source) for source in conn.execute("""SELECT v.conversation_id,v.kind,v.title,v.provenance,v.title_state,
                       EXISTS(SELECT 1 FROM messages m WHERE m.account_id=v.account_id
@@ -196,20 +166,19 @@ def list_contacts(conn, account_id, *, q="", role="all", page=1, page_size=20, s
         profile=None
         if row['role']=='merchant':
             from ..profiles.manual import read_profile
-            profile=read_profile(conn,ContactKey(account_id=account_id,contact_id=row['contact_id']))
-        published=conn.execute('SELECT v.created_at FROM profile_heads h JOIN profile_versions v ON v.account_id=h.account_id AND v.contact_id=h.contact_id AND v.version=h.version WHERE h.account_id=? AND h.contact_id=?',(account_id,row['contact_id'])).fetchone() if profile and profile['model'] else None
+            profile=read_profile(conn,ContactKey(account_id=account_id,contact_id=row['contact_id']), known_status=status)
         summary={'goods':None,'logistics':None,'communication':None,'tags':[]}
         if profile:
             effective=profile['effective']
             summary={group:' · '.join(fact['value'] for fact in effective[group].values() if fact.get('value')) or None for group in ('goods','logistics')}
             summary.update(communication=effective['communication']['summary']['value'],tags=effective['communication']['tags'])
-        profile_status = _organization_status(conn, account_id, row, profile) if profile else None
         items.append({"key": {"account_id": account_id, "contact_id": row["contact_id"]},
                       **presentation, "business_scope": scope_decisions[row["contact_id"]].model_dump(),
                       "role": row["role"], "role_version": row["role_version"], "sources": sources,
                       "last_message_at": row["last_message_at"], "last_business_at": row["business_at"], "profile_summary":summary,
-                      "profile_status": profile_status,
-                      "profile_updated_at": published['created_at'] if published else None, "source_gaps": _source_gaps(conn, account_id, row["contact_id"])})
+                      "profile_status": status,
+                      "organization_attempt": latest_organization(conn, row) if profile else None,
+                      "profile_updated_at": row['profile_updated_at'] if profile else None, "source_gaps": _source_gaps(conn, account_id, row["contact_id"])})
     quality = identity_quality(conn, account_id, catalog, presentations)
     return {"items": items, "total": total, "page": page, "page_size": page_size,
             "scope_totals": scope_totals, "role_counts": {"all": sum(counts.values()), **counts}, "identity_quality": quality,

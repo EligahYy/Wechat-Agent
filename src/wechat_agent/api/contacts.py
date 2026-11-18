@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictBool, model_validator
 
 from ..accounts import authorize_account as check_account
+from ..profiles.status import ProfileFilter
 from ..contacts.service import ContactError, Role, list_contacts, set_roles
 from ..source.contracts import ContactKey
 from ..storage.db import open_existing_db
@@ -45,12 +46,14 @@ def contacts(request: Request, account_id: str = Query(min_length=1, max_length=
              q: str = Query(default="", max_length=256),
              role: Literal["all", "merchant", "provider", "platform", "unknown"] = "all",
              scope: Literal["all", "business"] = "all", membership: Literal["all", "included", "excluded"] = "all",
+             profile_status: ProfileFilter = "all",
              page: int = Query(default=1, ge=1, le=1000000), page_size: int = Query(default=20, ge=1, le=20)):
     try:
         with closing(open_existing_db(request.app.state.database_path, readonly=True)) as conn, conn:
             conn.execute("BEGIN")
             authorize_account(request, conn, account_id)
-            return list_contacts(conn, account_id, q=q, role=role, page=page, page_size=page_size, scope=scope, membership=membership)
+            return list_contacts(conn, account_id, q=q, role=role, page=page, page_size=page_size, scope=scope, membership=membership,
+                                 profile_status=profile_status)
     except sqlite3.Error:
         raise ContactError("database_unavailable", 503) from None
 

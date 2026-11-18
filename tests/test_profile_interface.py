@@ -89,3 +89,34 @@ def test_historical_reference_without_a_visible_current_fact_or_batch_is_not_rea
         db.execute("DELETE FROM shipment_anchors WHERE account_id='acct-1' AND contact_id='merchant-a'")
         db.execute("DELETE FROM shipments WHERE account_id='acct-1' AND contact_id='merchant-a'")
     assert client.get('/api/contacts/merchant-a/profile/evidence',params={'account_id':'acct-1','message_id':'fixture:dm-a:1','revision':1}).status_code==404
+
+
+def test_failed_refresh_keeps_published_profile_and_new_material_marks_it_stale(client):
+    from tests.factories import make_message, make_page
+    from wechat_agent.source.repository import archive_page
+
+    ready(client)
+    def listing():
+        return client.get('/api/contacts', params={'account_id': 'acct-1', 'q': '商家甲'}).json()['items'][0]
+
+    initial = listing()
+    assert initial['profile_status'] == 'incomplete'
+    with closing(open_existing_db(client.app.state.database_path)) as db, db:
+        db.execute("""
+            INSERT INTO operations(account_id,id,contact_id,action,state,phase,error_code,idempotency_key)
+            VALUES('acct-1','failed-update','merchant-a','sync_and_organize','failed','analysis','model_timeout','failed-update')
+        """)
+    failed = listing()
+    assert failed['profile_status'] == initial['profile_status']
+    assert failed['profile_summary'] == initial['profile_summary']
+    assert failed['organization_attempt']['status'] == 'failed'
+
+    with closing(open_existing_db(client.app.state.database_path)) as db:
+        archive_page(db, make_page([make_message(message_id='newer-material', body='补充报价')]))
+    stale = listing()
+    assert stale['profile_status'] == 'needs_update'
+    assert stale['profile_updated_at'] == initial['profile_updated_at']
+    assert stale['profile_summary'] == initial['profile_summary']
+    detail = client.get('/api/contacts/merchant-a/profile', params={'account_id': 'acct-1'}).json()
+    assert detail['profile_status'] == 'needs_update'
+    assert detail['pending'] is True

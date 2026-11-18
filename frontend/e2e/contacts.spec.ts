@@ -417,3 +417,21 @@ test("contact search is limited to names and remarks", async ({page}) => {
   await expect(page.getByRole("button",{name:"查看 商家甲",exact:true})).toBeVisible();
   await expect(page.locator("tbody tr[data-contact]")).toHaveCount(1);
 });
+
+test("资料状态筛选与商家列表主标签一致", async ({ page }) => {
+  const table = page.getByRole("table", { name: "商家列表" });
+  await expect(table.getByText("商家甲", {exact: true})).toBeVisible();
+  const filter = page.getByRole("combobox", {name: "资料状态"});
+  await filter.click();
+  const filtered = page.waitForResponse(response =>
+    response.url().includes("/api/contacts?") && response.url().includes("profile_status=pending") && response.ok()
+  );
+  await page.getByRole("option", {name: "待整理", exact: true}).click();
+  const result = await (await filtered).json();
+  await expect(table.locator("tbody tr[data-contact]")).toHaveCount(result.items.length);
+  expect(result.items.length).toBeGreaterThan(0);
+  await expect(table.getByText("待整理", {exact: true})).toHaveCount(result.items.length);
+  await filter.click();
+  await page.getByRole("option", {name: "全部资料", exact: true}).click();
+  await expect(filter).toHaveText("全部资料");
+});

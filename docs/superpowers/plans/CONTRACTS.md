@@ -48,6 +48,7 @@
 - 联系人响应 `{items, total, page, page_size}`，最大 20；每行含稳定 `key`、`display_name`、`role`、`role_version`、`sources` 和资料状态。
 - GET `/api/contacts` 查询参数为 `account_id`、`q`、`role`（all／四类身份）、`page`、`page_size`。响应另含 `role_counts`（搜索结果的身份分布，不随身份筛选改变）；来源用 `{conversation_id,kind,title}`。每行包含 `display_name_source`、`copy_name`、`last_message_at`、`last_business_at`、`profile_status`、`profile_updated_at` 及 `source_gaps`。名称按真实备注→昵称选择，缺失则明确标记，`copy_name=None`，不能复制wxid替代；中文子串、百分号、下划线、星号和反斜线按字面检索。
 - M1按相关归档材料的原消息时间排序（含时区换算），不是同步或模型处理时间，也不是已确认业务时间；last_business_at、profile_updated_at暂为None。商家有材料为pending，无材料为no_data；非商家profile_status=None。M2接入实际档案后再更新业务字段；不能先生成演示摘要。
+- 当前 `GET /api/contacts` 支持 `profile_status`。默认 `all`，其余值与资料状态枚举一致，筛选在分页前执行。行级 `organization_attempt` 包含 `operation_id`、`status`、`reason`。商家详情也返回 `profile_status`。[状态映射](../../PRODUCT_DESIGN.md#7-同步整理与资料状态)
 - M2 扩展联系人行的 `goods_route`、`communication`、`last_business_at`、`profile_updated_at`，不另写一份虚构商家列表；商家视图按 last_business_at，未整理回退最近归档消息时间。
 - `frontend/src/api/types.ts` 随后端契约保持一致；`api/client.ts: request<T>(path: string, init?: RequestInit): Promise<T>` 只访问同源 `/api`。
 

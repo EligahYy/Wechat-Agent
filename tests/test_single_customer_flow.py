@@ -256,11 +256,17 @@ async def test_empty_analysis_is_visible_in_customer_list_and_next_success_repla
     empty = await sync(client, 'empty-analysis')
     assert empty.source_state == 'succeeded' and empty.error_code == 'empty_result'
     assert profile_status() == 'no_findings'
+    filtered = client.get('/api/contacts', params={'account_id': 'acct-1', 'profile_status': 'no_findings'}).json()
+    assert filtered['total'] == 1
+    assert filtered['items'][0]['organization_attempt']['status'] == 'no_findings'
+    detail = client.get('/api/contacts/merchant-a/profile', params={'account_id': 'acct-1'}).json()
+    assert detail['profile_status'] == 'no_findings'
 
     from tests.factories import make_message, make_page
     from wechat_agent.source.repository import archive_page
     with closing(open_existing_db(client.app.state.database_path)) as conn:
         archive_page(conn, make_page([make_message(message_id='followup', body='补充业务资料')]))
+    assert profile_status() == 'pending'
     services.model_transport = successful_transport
     assert (await sync(client, 'updated-with-facts')).state == 'succeeded'
     assert profile_status() in {'ready', 'incomplete'}

@@ -1,3 +1,5 @@
+import { organizationStatusLabels, profileStatusLabels } from "../profile/statusLabels";
+import { reasonLabels } from "../../app/operationOutcome";
 import { ProfileDialog } from "../profile/ProfileDialog";
 import { AnimatePresence } from "motion/react";
 import { SelectField } from "../../components/SelectField";
@@ -40,6 +42,11 @@ import type {
   Operation,
   ContactKey,
 } from "../../api/types";
+const profileFilters = [
+  {value: "all", label: "全部资料"},
+  ...Object.entries(profileStatusLabels).map(([value, label]) => ({value, label})),
+];
+
 const initialCounts = {
   all: 0,
   merchant: 0,
@@ -79,6 +86,7 @@ export function ContactsPage({
   const [view, setView] = useState<"merchants" | "all">(management?"all":"merchants"),
     [role, setRole] = useState<Role | "all">("all"),
     [query, setQuery] = useState(""),
+    [profileFilter, setProfileFilter] = useState("all"),
     [page, setPage] = useState(1);
   const [scopeResult,setScopeResult]=useState("");
   const [membership,setMembership]=useState("all");
@@ -136,6 +144,7 @@ export function ContactsPage({
           page: String(page),
           page_size: "20",
         });
+        if (view === "merchants" && profileFilter !== "all") params.set("profile_status", profileFilter);
         request<ContactPage>(`/api/contacts?${params}`, {
           signal: controller.signal,
         })
@@ -164,7 +173,7 @@ export function ContactsPage({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [account, query, role, page, view, refresh, revision, management, membership]);
+  }, [account, query, role, page, view, refresh, revision, management, membership, profileFilter]);
   const rows = data?.items || [];
   const selectedOnPage = rows.filter((person) =>
     selected.has(person.key.contact_id),
@@ -406,17 +415,15 @@ export function ContactsPage({
                 }))}
               />
             ) : (
-              <div className="field">
-                <label>资料状态</label>
-                <button
-                  type="button"
-                  className="button secondary"
-                  disabled
-                  title="档案整理接入后开放筛选"
-                >
-                  全部资料 <ChevronDown size={15} />
-                </button>
-              </div>
+              <SelectField
+                label="资料状态"
+                value={profileFilter}
+                options={profileFilters}
+                onValueChange={value => {
+                  setProfileFilter(value);
+                  setPage(1);
+                }}
+              />
             )}
           </div>
           <div className="table-meta" aria-live="polite">
@@ -611,11 +618,15 @@ export function ContactsPage({
                           <td><span>{contact.profile_summary?.goods||"—"}</span>{contact.profile_summary?.logistics&&<span className="source-line">{contact.profile_summary.logistics}</span>}</td>
                           <td>
                             <span className="info-chip">
-                              {{pending:"待整理",ready:"已更新",incomplete:"整理不完整",manual:"人工资料",no_data:"暂无资料",
-                                queued:"已排队",syncing:"正在同步",organizing:"正在整理",stopping:"正在停止",
-                                stopped:"已停止",paused:"整理已暂停",no_findings:"未提取到可发布资料",
-                                source_incomplete:"来源同步未完成",failed:"整理未完成"}[contact.profile_status||"no_data"]}
+                              {profileStatusLabels[contact.profile_status || "no_data"]}
                             </span>
+                            {contact.organization_attempt &&
+                              !["updated", "unchanged", "not_applicable"].includes(contact.organization_attempt.status) &&
+                              contact.organization_attempt.status !== contact.profile_status && (
+                                <span className="source-line" title={reasonLabels[contact.organization_attempt.reason || ""]}>
+                                  {organizationStatusLabels[contact.organization_attempt.status]}
+                                </span>
+                              )}
                             {contact.profile_summary?.communication&&<span className="source-line">{contact.profile_summary.communication}</span>}
                             {contact.source_gaps.length > 0 && (
                               <span className="source-line">来源有缺口</span>

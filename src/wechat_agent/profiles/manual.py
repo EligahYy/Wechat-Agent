@@ -44,7 +44,7 @@ def contact_key(account,contact):
 
 
 def _contact(conn,key,*,editing=False):
-    row=conn.execute("SELECT role FROM contacts WHERE account_id=? AND contact_id=? AND identity_state='active' AND is_self=0",(key.account_id,key.contact_id)).fetchone()
+    row=conn.execute("SELECT role,role_version FROM contacts WHERE account_id=? AND contact_id=? AND identity_state='active' AND is_self=0",(key.account_id,key.contact_id)).fetchone()
     if not row or (editing and row['role']!='merchant'):raise OperationError('profile_not_found',404)
     return row
 
@@ -88,7 +88,7 @@ def save_manual(conn,key:ContactKey,patch:dict,expected_version:int)->int:
         return version
 
 
-def read_profile(conn,key:ContactKey):
+def read_profile(conn,key:ContactKey,*,known_status=None):
     key=ContactKey.model_validate(key);person=_contact(conn,key)
     head=conn.execute('SELECT * FROM profile_heads WHERE account_id=? AND contact_id=?',(key.account_id,key.contact_id)).fetchone()
     version=head['version'] if head else 0;manual_version=head['manual_version'] if head else 0
@@ -117,23 +117,29 @@ def read_profile(conn,key:ContactKey):
     for row in conn.execute('SELECT * FROM shipments WHERE account_id=? AND contact_id=? ORDER BY shipment_id',(key.account_id,key.contact_id)):
         shipments.append({'shipment_id':row['shipment_id'],'stage':row['stage'],'details':json.loads(row['payload_json']),'numbers':json.loads(row['numbers_json']),'numbers_origin':row['numbers_origin'],'version':row['version']})
     effective['shipments']=shipments
-    pending=bool(published['pending']) if published else False
-    if published:
-        manifest=conn.execute('SELECT manifest_json FROM snapshots WHERE account_id=? AND snapshot_id=?',(key.account_id,published['snapshot_id'])).fetchone()
-        frozen=json.loads(manifest[0])
-        pending|=manual_version!=frozen['manual_version']
-        expected={(ref['message_id'],ref['revision']) for ref in frozen['material_refs']}
-        current={(row[0],row[1]) for row in conn.execute('''SELECT message_id,revision FROM messages
-            WHERE account_id=? AND conversation_id IN (SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?)
-            UNION SELECT message_id,revision FROM messages WHERE account_id=? AND sender_id=?''',
-            (key.account_id,key.account_id,key.contact_id,key.account_id,key.contact_id))}
-        pending|=current!=expected
+    status = known_status
+    if person['role'] == 'merchant' and status is None:
+        from .status import archive_status
+        manifest = conn.execute(
+            'SELECT manifest_json FROM snapshots WHERE account_id=? AND snapshot_id=?',
+            (key.account_id, published['snapshot_id']),
+        ).fetchone() if published else None
+        scope = conn.execute(
+            'SELECT version FROM business_scope_overrides WHERE account_id=? AND contact_id=?',
+            (key.account_id, key.contact_id),
+        ).fetchone()
+        status = archive_status(
+            conn, key, manifest=manifest[0] if manifest else None, has_manual=bool(manual['fields'] or manual['notes']),
+            complete=bool(published and published['complete']), pending=bool(published and published['pending']),
+            role_version=person['role_version'], manual_version=manual_version, scope_version=scope[0] if scope else 0,
+        )
+    pending = status == 'needs_update'
     from dataclasses import asdict
     from .issues import classify_issues
     issues = json.loads(published['issues_json']) if published else []
     return {'account_id':key.account_id,'contact_id':key.contact_id,'applicable':person['role']=='merchant','model_version':version,'manual_version':manual_version,
         'model':model,'manual':{**manual,'origin':'manual'},'effective':effective,'field_origins':origins,'conflicts':conflicts,'shipments':shipments,
-        'complete':bool(published['complete']) and not pending if published else False,'pending':pending,'issues':issues,'issues_detail':[asdict(issue) for issue in classify_issues(issues)]}
+        'profile_status':status,'complete':bool(published['complete']) and not pending if published else False,'pending':pending,'issues':issues,'issues_detail':[asdict(issue) for issue in classify_issues(issues)]}
 
 
 def save_numbers(conn,key:ContactKey,shipment_id:str,numbers:list[str],expected_version:int):

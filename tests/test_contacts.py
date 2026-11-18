@@ -409,14 +409,28 @@ def test_batch_organization_projects_each_customer_outcome(contacts_client):
             ('analysis:merchant-a', 'merchant-a', 'failed', 'empty_result'),
             ('analysis:merchant-b', 'merchant-b', 'queued', None),
         ])
-    result = fetch(contacts_client, role='merchant').json()
-    statuses = {item['key']['contact_id']: item['profile_status'] for item in result['items']}
-    assert statuses['merchant-a'] == 'no_findings'
-    assert statuses['merchant-b'] == 'paused'
-    assert list(statuses.values()).count('paused') == 1
+    def entries():
+        result = fetch(contacts_client, role='merchant').json()
+        return {item['key']['contact_id']: item for item in result['items']}
+
+    rows = entries()
+    assert rows['merchant-a']['profile_status'] == 'pending'
+    assert rows['merchant-a']['organization_attempt']['status'] == 'no_findings'
+    assert rows['merchant-b']['organization_attempt']['status'] == 'paused'
+    assert sum(row['organization_attempt'] is not None for row in rows.values()) == 2
     with archive(contacts_client) as conn, conn:
         conn.execute("UPDATE operations SET state='stopped',error_code='user_stopped' WHERE id='batch'")
-    statuses = {item['key']['contact_id']: item['profile_status']
-                for item in fetch(contacts_client, role='merchant').json()['items']}
-    assert statuses['merchant-a'] == 'no_findings'
-    assert statuses['merchant-b'] == 'stopped'
+    rows = entries()
+    assert rows['merchant-a']['organization_attempt']['status'] == 'no_findings'
+    assert rows['merchant-b']['organization_attempt']['status'] == 'stopped'
+
+
+def test_profile_status_filters_before_pagination(contacts_client):
+    expected = fetch(contacts_client, role='merchant').json()['items']
+    without_data = [row['key'] for row in expected if row['profile_status'] == 'no_data']
+    assert len(without_data) >= 2
+    for index, key in enumerate(without_data, 1):
+        result = fetch(contacts_client, role='merchant', profile_status='no_data', page_size=1, page=index).json()
+        assert result['total'] == len(without_data)
+        assert [row['key'] for row in result['items']] == [key]
+    assert fetch(contacts_client, profile_status='invalid').status_code == 422
