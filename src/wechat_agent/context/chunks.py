@@ -22,7 +22,7 @@ class ContextChunk:
     def model_dump(self):return asdict(self)
 
 
-def plan_chunks(messages,request_factory,config,*,input_limit=None,context_messages=None,max_primary_messages=None,soft_input_target=None):
+def plan_chunks(messages,request_factory,config,*,input_limit=None,context_messages=None,max_primary_messages=None,soft_input_target=None,soft_material_target=None):
     originals={m['message_id']:m for m in (context_messages or messages)}
     groups=defaultdict(list)
     def budget(rows):return request_budget(request_factory(list(rows)),config)
@@ -32,6 +32,8 @@ def plan_chunks(messages,request_factory,config,*,input_limit=None,context_messa
     if not fits([]):raise ModelCallError('context_fixed_overhead_exceeded')
     # Schema and mandatory metadata can themselves exceed the soft target.
     target = None if soft_input_target is None else max(soft_input_target, budget([]).input_tokens + 1024)
+    if soft_material_target is not None:
+        target = budget([]).input_tokens + soft_material_target
     def fits_target(rows, limit=target):
         value = budget(rows)
         return value.fits and (input_limit is None or value.input_tokens <= input_limit) and (

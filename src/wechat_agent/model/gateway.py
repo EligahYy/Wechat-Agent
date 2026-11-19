@@ -146,8 +146,9 @@ class ModelGateway:
                     counts[key] = counts.get(key, 0) + elapsed_ms
                     counts['model_requests'] = counts.get('model_requests', 0) + 1
                     if request.checkpoint_key and self.execution_budget is not None:
-                        from ..analysis.adaptive import observe_attempt
-                        observe_attempt(self.conn, account, self.config.version, request.phase,
+                        from ..analysis.adaptive import EXTRACT_MATERIAL_PHASE, observe_attempt
+                        phase = EXTRACT_MATERIAL_PHASE if request.phase == 'extract' else request.phase
+                        observe_attempt(self.conn, account, self.config.version, phase,
                                         status, elapsed_ms, usage or {}, request.output_tokens)
                     counts['model_output_truncations']=counts.get('model_output_truncations',0)+int(status=='output_truncated')
                     for field in ('completion_tokens','reasoning_tokens'):
@@ -185,9 +186,10 @@ class ModelGateway:
                 return await self._generate(request,cancellation,account,contact,deadline)
         except TimeoutError:
             if request.checkpoint_key and self.execution_budget is not None:
-                from ..analysis.adaptive import observe_attempt
+                from ..analysis.adaptive import EXTRACT_MATERIAL_PHASE, observe_attempt
                 with transaction(self.conn):
-                    observe_attempt(self.conn, account, self.config.version, request.phase,
+                    phase = EXTRACT_MATERIAL_PHASE if request.phase == 'extract' else request.phase
+                    observe_attempt(self.conn, account, self.config.version, phase,
                                     'model_timeout', 120_000, {}, request.output_tokens)
             raise ModelCallError('model_timeout') from None
 

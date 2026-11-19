@@ -4,6 +4,9 @@ from dataclasses import dataclass, replace
 from ..source.repository import transaction
 
 
+EXTRACT_MATERIAL_PHASE = "extract-material-v1"
+
+
 @dataclass(frozen=True)
 class WorkPolicy:
     target: int = 24_000

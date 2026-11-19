@@ -7,8 +7,8 @@ from tests.test_single_customer_flow import flow,sync
 from tests.factories import make_message,make_page
 
 
-def prepare(client):
-    changed=client.put('/api/model',json={'account_id':'acct-1','expected_version':1,'endpoint':'https://synthetic.example/chat/completions','model_id':'synthetic','response_mode':'json_object','context_tokens':24000,'max_output_tokens':1024})
+def prepare(client, *, context_tokens=24000):
+    changed=client.put('/api/model',json={'account_id':'acct-1','expected_version':1,'endpoint':'https://synthetic.example/chat/completions','model_id':'synthetic','response_mode':'json_object','context_tokens':context_tokens,'max_output_tokens':1024})
     assert changed.status_code==200
     assert client.post('/api/model/check',json={'account_id':'acct-1','expected_version':2}).status_code==200
     assert client.post('/api/model/budget-review',json={'account_id':'acct-1','expected_version':2,'reference':'https://docs.example/budget','acknowledged':True}).status_code==200
@@ -72,3 +72,53 @@ async def test_production_retry_reuses_good_chunks_instead_of_repaying_for_them(
     assert done.report.analysis_outcome=='updated', done.error_code
     assert done.counts['analysis_chunks_reused']>0
     assert done.counts['analysis_chunks_completed']==done.counts['analysis_chunks_total']
+
+
+@pytest.mark.asyncio
+async def test_resume_repacks_untouched_history_without_repaying_completed_units(flow, monkeypatch):
+    from wechat_agent.analysis import runtime
+    from wechat_agent.analysis.execution import ExecutionBudget
+    from wechat_agent.analysis.history import WorkflowV4
+    from wechat_agent.context.chunks import plan_chunks
+    from tests.test_single_customer_flow import run_next
+
+    client, _, _ = flow
+    seen, _ = prepare(client, context_tokens=1_048_000)
+    pages = [make_page([
+        make_message(message_id=f'quote-{index:03}', body='确认12方，核对价格及到货时间。' * 4)
+        for index in range(278)
+    ])]
+    client.app.state.services.source.pages['group-1'] = pages
+    current = WorkflowV4.material_window
+
+    async def legacy(self, snapshot, room, window, rows, full_history, planned, extraction, target):
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO analysis_workload_plans VALUES(?,?,?,?,?,'extract',8000)
+                   ON CONFLICT DO NOTHING""",
+                (snapshot.key.account_id, snapshot.key.contact_id, self.gateway.config.version, room, window),
+            )
+        return plan_chunks(rows, planned, self.gateway.config, soft_input_target=8000, context_messages=full_history)
+
+    monkeypatch.setattr(WorkflowV4, 'material_window', legacy)
+    monkeypatch.setattr(runtime, 'ExecutionBudget', lambda: ExecutionBudget(max_calls=4))
+    paused = await sync(client, 'before-packing')
+    assert paused.error_code == 'analysis_budget_paused'
+    assert paused.counts['analysis_chunks_total'] > 30
+    completed = {span['message_id'] for row in seen for span in row.get('history_unit', {}).get('primary_spans', [])}
+
+    monkeypatch.setattr(WorkflowV4, 'material_window', current)
+    monkeypatch.setattr(runtime, 'ExecutionBudget', ExecutionBudget)
+    seen.clear()
+    queued = client.post('/api/operations', json={'action': 'resume', 'account_id': 'acct-1', 'operation_id': paused.id})
+    assert queued.status_code == 202
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        result = await run_next(conn, client.app.state.services)
+
+    assert result.state == 'succeeded', result.error_code
+    assert result.counts['analysis_chunks_reused'] == 4
+    assert len(seen) < 10
+    assert result.counts['analysis_material_completed'] == result.counts['analysis_material_total']
+    assert not completed.intersection(
+        span['message_id'] for row in seen for span in row.get('history_unit', {}).get('primary_spans', [])
+    )

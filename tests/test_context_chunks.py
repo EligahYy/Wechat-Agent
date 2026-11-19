@@ -56,3 +56,21 @@ def test_fixed_overhead_and_required_reply_cannot_be_silently_dropped():
     assert e.value.code=='context_fixed_overhead_exceeded'
     with pytest.raises(ModelCallError) as e:plan_chunks([message(0,body='超长引用'*5000),message(1,reply='0')],request,config())
     assert e.value.code=='context_reference_too_large'
+
+
+def test_material_target_does_not_spend_original_text_budget_on_fixed_rules():
+    from wechat_agent.context.chunks import plan_chunks
+
+    rows = [message(i, body='货物已到，核对报价与体积。' * 4) for i in range(278)]
+    def with_rules(items):
+        req = request(items)
+        req.messages[0].content = '固定规则' * 1400
+        return req
+
+    cfg = config(1_000_000)
+    legacy = plan_chunks(rows, with_rules, cfg, soft_input_target=8_000)
+    planned = plan_chunks(rows, with_rules, cfg, soft_material_target=24_000)
+    assert len(legacy) > 20
+    assert len(planned) <= 6
+    assert all(chunk.budget.fits for chunk in planned)
+    assert [span.message_id for chunk in planned for span in chunk.spans] == [row['message_id'] for row in rows]

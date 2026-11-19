@@ -6,7 +6,7 @@ import json
 from ..context.chunks import plan_chunks,MessageSpan,ContextChunk
 from ..context.reader import ContextReader
 from ..context.assembler import assemble_context
-from .adaptive import pinned_target
+from .adaptive import EXTRACT_MATERIAL_PHASE, pinned_target
 from ..context.tokens import request_budget
 from ..model.contracts import ModelRequest,ModelMessage,ModelCallError
 from ..profiles.contracts import AnalysisResult,analysis_result_schema
@@ -212,14 +212,22 @@ class WorkflowV2:
                 work = [('', '', rows)]
             ordinal = 0
             for room, window, selected in work:
-                target = pinned_target(
-                    self.conn, snapshot.key.account_id, snapshot.key.contact_id,
-                    self.gateway.config.version, room, window,
-                ) if room else INPUT_TARGET
-                chunks = await asyncio.to_thread(
-                    plan_chunks, selected, planned, self.gateway.config,
-                    soft_input_target=target, context_messages=rows,
-                )
+                target = INPUT_TARGET
+                if room:
+                    phase = EXTRACT_MATERIAL_PHASE if self.strategy_version == 'workflow-v4' else 'extract'
+                    target = pinned_target(
+                        self.conn, snapshot.key.account_id, snapshot.key.contact_id,
+                        self.gateway.config.version, room, window, phase=phase,
+                    )
+                if room and self.strategy_version == 'workflow-v4':
+                    chunks = await self.material_window(
+                        snapshot, room, window, selected, rows, planned, extraction, target,
+                    )
+                else:
+                    chunks = await asyncio.to_thread(
+                        plan_chunks, selected, planned, self.gateway.config,
+                        soft_input_target=target, context_messages=rows,
+                    )
                 requests = []
                 for chunk in chunks:
                     req = extraction(list(chunk.messages), [asdict(span) for span in chunk.spans])
@@ -423,3 +431,67 @@ class WorkflowV3(WorkflowV2):
 
 class WorkflowV4(WorkflowV3):
     strategy_version = 'workflow-v4'
+
+    async def material_window(self, snapshot, room, window, rows, full_history, planned, extraction, target):
+        config = self.gateway.config
+
+        async def plan(selected, **limits):
+            return await asyncio.to_thread(
+                plan_chunks, selected, planned, config, context_messages=full_history, **limits,
+            )
+
+        identity = (snapshot.key.account_id, snapshot.key.contact_id)
+        previous = self.conn.execute(
+            """SELECT target FROM analysis_workload_plans
+               WHERE account_id=? AND contact_id=? AND config_version=? AND conversation_id=?
+                 AND window_key=? AND phase='extract'""",
+            (*identity, config.version, room, window),
+        ).fetchone()
+        if previous is None:
+            return await plan(rows, soft_material_target=target)
+
+        legacy = await plan(rows, soft_input_target=previous[0])
+        saved_indices = set()
+        fragment_chunks = {}
+        for index, chunk in enumerate(legacy):
+            for span in chunk.spans:
+                if span.start or span.end != span.total:
+                    fragment_chunks.setdefault(span.message_id, set()).add(index)
+            request = extraction(list(chunk.messages), [asdict(span) for span in chunk.spans])
+            key = unit_cache_key(snapshot, request, chunk.spans)
+            saved = self.conn.execute(
+                """SELECT 1 FROM history_checkpoints WHERE account_id=? AND contact_id=? AND cache_key=?
+                   AND (state='succeeded' OR requests>0)""",
+                (*identity, key),
+            ).fetchone()
+            if saved:
+                saved_indices.add(index)
+
+        if not saved_indices:
+            return await plan(rows, soft_material_target=target)
+
+        # If an attempted unit contains a fragment, keep all units covering
+        # that original. Every other original can still be packed whole.
+        pending_fragments = list(saved_indices)
+        while pending_fragments:
+            index = pending_fragments.pop()
+            for span in legacy[index].spans:
+                neighbours = fragment_chunks.get(span.message_id, set()) - saved_indices
+                saved_indices.update(neighbours)
+                pending_fragments.extend(neighbours)
+
+        # Preserve exact requests for previously attempted spans. Consecutive
+        # unattempted messages can share the larger material allowance.
+        positions = {row['message_id']: index for index, row in enumerate(rows)}
+        chunks = []
+        start = 0
+        for index in sorted(saved_indices):
+            chunk = legacy[index]
+            left = positions[chunk.spans[0].message_id]
+            if start < left:
+                chunks.extend(await plan(rows[start:left], soft_material_target=target))
+            chunks.append(chunk)
+            start = positions[chunk.spans[-1].message_id] + 1
+        if start < len(rows):
+            chunks.extend(await plan(rows[start:], soft_material_target=target))
+        return chunks
