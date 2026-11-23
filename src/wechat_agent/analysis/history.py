@@ -3,11 +3,13 @@ import asyncio
 from dataclasses import asdict
 from importlib.resources import files
 import json
+from time import monotonic
 from ..context.chunks import plan_chunks,MessageSpan,ContextChunk
 from ..context.reader import ContextReader
 from ..context.assembler import assemble_context
 from .adaptive import EXTRACT_MATERIAL_PHASE, pinned_target
 from ..context.tokens import request_budget
+from ..model.gateway import MODEL_DEADLINE_SECONDS
 from ..model.contracts import ModelRequest,ModelMessage,ModelCallError
 from ..profiles.contracts import AnalysisResult,analysis_result_schema
 from ..profiles.publisher import check_inputs
@@ -98,7 +100,8 @@ class WorkflowV2:
                         and self.strategy_version in {'workflow-v4', 'workflow-v5'} and label != 'shipments')):
                 raise ModelCallError(saved_error)
             set_unit(self.conn,snapshot,token,request,'running',progress=progress)
-            response=await self.gateway.generate(request,token)
+            deadline = monotonic() + MODEL_DEADLINE_SECONDS
+            response=await self.gateway.generate(request,token,deadline=deadline)
             request_payload = json.loads(request.messages[-1].content)
             aliases = build_aliases({
                 (row['message_id'], row['revision']) for row in request_payload.get('messages', [])
@@ -122,30 +125,43 @@ class WorkflowV2:
                     counts=json.loads(row[0])
                     for key,value in details.items():counts[key]=counts.get(key,0)+value
                     self.conn.execute('UPDATE operations SET counts_json=? WHERE account_id=? AND id=?',(json.dumps(counts),snapshot.key.account_id,token.operation_id))
-                payload=json.loads(request.messages[-1].content)
-                payload['_source_correction']={'instruction':'Return one complete corrected result. Copy message_id and revision exactly from allowed_sources. Remove unsupported facts; do not invent identifiers or use any other sources.','allowed_sources':[{'message_id':identifier,'revision':revision} for identifier,revision in sorted(allowed)]}
-                correction=request.model_copy(update={'call_id':request.call_id+':refs','messages':[request.messages[0],ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))]})
-                if not request_budget(correction,self.gateway.config).fits:raise error
-                response=await self.gateway.generate(correction,token)
-                returned = resolve_aliases(response.payload, aliases)
-                if request.phase == 'extract':
-                    returned = normalize_extraction(returned, primary_ids, aliases)
-                try:
-                    result=validate_unit(self.conn,snapshot,returned,allowed,reader=reader)
-                except ModelCallError as correction_error:
-                    if correction_error.code != 'chunk_source_outside_unit' or request.phase != 'extract':
-                        raise
-                    parsed = AnalysisResult.model_validate(returned)
-                    outside = {r.message_id for r in source_refs(parsed) if (r.message_id, r.revision) not in allowed}
-                    if any(self.conn.execute(
+                if request.high_value_history and request.phase == 'extract' and not any(
+                    identifier not in versions and self.conn.execute(
                         'SELECT 1 FROM messages WHERE account_id=? AND message_id=?',
                         (snapshot.key.account_id, identifier),
-                    ).fetchone() and identifier not in versions for identifier in outside):
-                        raise
-                    clean = isolate_invalid_fields(parsed, allowed)
-                    result = validate_unit(self.conn, snapshot, clean.model_dump(), allowed, reader=reader)
-                    if not any(source_refs(result)):
-                        raise correction_error
+                    ).fetchone() for identifier, _ in refs
+                ):
+                    clean = isolate_invalid_fields(AnalysisResult.model_validate(returned), allowed)
+                    verified = validate_unit(self.conn, snapshot, clean.model_dump(), allowed, reader=reader)
+                else:
+                    verified = None
+                if verified and any(source_refs(verified)):
+                    result = verified
+                else:
+                    payload=json.loads(request.messages[-1].content)
+                    payload['_source_correction']={'instruction':'Return one complete corrected result. Copy message_id and revision exactly from allowed_sources. Remove unsupported facts; do not invent identifiers or use any other sources.','allowed_sources':[{'message_id':identifier,'revision':revision} for identifier,revision in sorted(allowed)]}
+                    correction=request.model_copy(update={'call_id':request.call_id+':refs','messages':[request.messages[0],ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))]})
+                    if not request_budget(correction,self.gateway.config).fits:raise error
+                    response=await self.gateway.generate(correction,token,deadline=deadline)
+                    returned = resolve_aliases(response.payload, aliases)
+                    if request.phase == 'extract':
+                        returned = normalize_extraction(returned, primary_ids, aliases)
+                    try:
+                        result=validate_unit(self.conn,snapshot,returned,allowed,reader=reader)
+                    except ModelCallError as correction_error:
+                        if correction_error.code != 'chunk_source_outside_unit' or request.phase != 'extract':
+                            raise
+                        parsed = AnalysisResult.model_validate(returned)
+                        outside = {r.message_id for r in source_refs(parsed) if (r.message_id, r.revision) not in allowed}
+                        if any(self.conn.execute(
+                            'SELECT 1 FROM messages WHERE account_id=? AND message_id=?',
+                            (snapshot.key.account_id, identifier),
+                        ).fetchone() and identifier not in versions for identifier in outside):
+                            raise
+                        clean = isolate_invalid_fields(parsed, allowed)
+                        result = validate_unit(self.conn, snapshot, clean.model_dump(), allowed, reader=reader)
+                        if not any(source_refs(result)):
+                            raise correction_error
             enforce_merge_scope(result,label,candidates)
             if require_coverage:
                 record_reduction(self.conn, snapshot, token, label, candidates, result)
@@ -290,7 +306,7 @@ class WorkflowV2:
                     yield unit
         originals={r['message_id']:r for r in rows}
         refinement_nodes=0
-        fatal={'model_cancelled','cancelled','authentication_failed','model_not_found','credential_unavailable','model_config_changed','checkpoint_scope_mismatch','refinement_invalid','analysis_budget_paused','material_changed'}
+        fatal={'model_cancelled','cancelled','authentication_failed','model_not_found','credential_unavailable','model_config_changed','checkpoint_scope_mismatch','refinement_invalid','analysis_budget_paused','material_changed','model_connect_timeout'}
         if evidence is not None:
             fatal.update({'model_timeout', 'model_reasoning_output_exhausted'})
 
@@ -397,21 +413,21 @@ class WorkflowV2:
             return meaningful[0].model_copy(update={'gaps': gaps})
         if evidence is not None:
             fields = merge_groups(meaningful, snapshot.key.contact_id)
-            if fields and all(len(values) == 1 and label != 'shipments' for label, values in fields):
-                # Identical typed values were already coalesced with all citations.
-                # A conflict, ambiguous batch or failed proof uses the regular reducer.
-                candidates = [r.model_dump(mode='json', exclude_defaults=True) for r in meaningful]
-                local = combine([(label, AnalysisResult.model_validate(values[0]))
-                                 for label, values in fields], snapshot.key.contact_id)
-                local.communication.last_business_at = max(
-                    (r.communication.last_business_at for r in meaningful if r.communication.last_business_at),
-                    default=None,
-                )
+            if fields and all(label != 'shipments' for label, _ in fields):
                 try:
+                    combined_fields = [(label, combine_field(label, values, snapshot.key.contact_id))
+                                       for label, values in fields]
+                    if any(result is None for _, result in combined_fields):
+                        raise ModelCallError('history_merge_incomplete')
+                    local = combine(combined_fields, snapshot.key.contact_id)
+                    candidates = [r.model_dump(mode='json', exclude_defaults=True) for r in meaningful]
                     local = validate_unit(self.conn, snapshot, local.model_dump(), evidence, reader=reader.restrict(rows))
                     record_reduction(self.conn, snapshot, cancellation, 'all', candidates, local)
+                    stamps = [r.communication.last_business_at for r in meaningful if r.communication.last_business_at]
+                    if stamps:
+                        local.communication.last_business_at = max(stamps)
                 except ModelCallError as error:
-                    if error.code != 'history_merge_incomplete':
+                    if error.code not in {'history_merge_incomplete', 'history_merge_unit_too_large'}:
                         raise
                 else:
                     if not compute_coverage(self.conn, snapshot.key.account_id, snapshot.id).complete:

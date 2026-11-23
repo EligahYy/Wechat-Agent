@@ -54,11 +54,13 @@ def get_operation(conn, account_id, operation_id, *, include_items=True, _row=No
         items=items, options=options, created_at=row["created_at"], updated_at=row["updated_at"])
 
 
-def create_operation(conn, action, scope, idempotency_key, *, options=None):
+def create_operation(conn, action, scope, idempotency_key, *, options=None, _continuation=False):
     if action not in {"sync", "sync_and_organize", 'refresh_contacts'}:
         raise OperationError("unsupported_action", 422)
     if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key)>256:
         raise OperationError("invalid_idempotency_key", 422)
+    if idempotency_key.startswith('resume:') and not _continuation:
+        raise OperationError('invalid_idempotency_key', 422)
     scope = OperationScope.model_validate(scope.model_dump())
     if action == 'refresh_contacts' and scope.contact_id is not None:
         raise OperationError('metadata_refresh_account_scope_required', 422)
@@ -125,7 +127,7 @@ def resume_operation(conn, account_id, operation_id):
     if 'resume' not in previous.available_actions:
         raise OperationError('operation_not_resumable')
     return create_operation(
-        conn, previous.action, previous.scope, f'resume:{operation_id}', options=previous.options,
+        conn, previous.action, previous.scope, f'resume:{operation_id}', options=previous.options, _continuation=True,
     )
 
 

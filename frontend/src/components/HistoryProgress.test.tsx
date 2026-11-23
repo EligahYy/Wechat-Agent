@@ -10,7 +10,7 @@ it('shows extraction, reduction and reuse independently of archive counts',()=>{
 });
 it('failed history explains checkpoints without claiming a new profile was published',()=>{
  render(<HistoryProgress counts={{analysis_chunks_total:5,analysis_chunks_completed:3,analysis_chunks_failed:1}} state="failed"/>);
- expect(screen.getByText(/已完成分段已保留/)).toBeVisible();
+ expect(screen.getByText(/已校验的分段已保存/)).toBeVisible();
  expect(screen.getByRole('progressbar',{name:'长历史提取进度'})).toHaveAttribute('value','3');
 });
 it('keeps the direct small-history interface compact',()=>{

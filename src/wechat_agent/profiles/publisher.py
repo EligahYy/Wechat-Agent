@@ -56,7 +56,8 @@ def _publish(conn,snapshot,result,cancellation):
         if reason:return PublishResult(reason=reason)
         account,contact=snapshot.key.account_id,snapshot.key.contact_id
         evidence_reader = reader
-        if snapshot.versions.get('strategy') == 'workflow-v5':
+        relevance = snapshot.versions.get('strategy') == 'workflow-v5'
+        if relevance:
             from ..analysis.relevance import load_relevance, selected_refs
 
             manifest = load_relevance(conn, account, snapshot.id)
@@ -66,16 +67,6 @@ def _publish(conn,snapshot,result,cancellation):
             evidence_reader = reader.restrict([
                 row for row in reader.messages() if (row['message_id'], row['revision']) in allowed
             ])
-            # Existing batches can remain visible without a candidate in this
-            # run. Require explicit review before carrying stale evidence forward.
-            from ..analysis.facts import source_refs
-            for row in conn.execute('SELECT payload_json FROM shipments WHERE account_id=? AND contact_id=?',
-                                    (account, contact)):
-                prior_batch = AnalysisResult(contact_id=contact, shipments=[
-                    ShipmentCandidate.model_validate_json(row[0])
-                ])
-                if any((ref.message_id, ref.revision) not in allowed for ref in source_refs(prior_batch)):
-                    return PublishResult(reason='retained_evidence_unavailable')
         validated=validate_result(conn,snapshot,result,reader=evidence_reader)
         if validated.reason:return PublishResult(reason=validated.reason,issues=validated.issues)
         previous=conn.execute('SELECT * FROM profile_versions WHERE account_id=? AND snapshot_id=?',(account,snapshot.id)).fetchone()
@@ -94,12 +85,19 @@ def _publish(conn,snapshot,result,cancellation):
                         previous=getattr(getattr(original_old,group),name)
                         if not current.value and previous.value:
                             retained=getattr(getattr(old,group),name) if old else None
-                            if retained is None or not retained.value:
+                            if retained is not None and retained.value:
+                                setattr(getattr(candidate,group),name,retained)
+                            elif relevance:
+                                issues.append(f'{group}.{name}:retained_evidence_unavailable')
+                            else:
                                 return PublishResult(reason='retained_evidence_unavailable')
-                            setattr(getattr(candidate,group),name,retained)
                 if not candidate.communication.summary.value and original_old.communication.summary.value:
-                    if not old or not old.communication.summary.value:return PublishResult(reason='retained_evidence_unavailable')
-                    candidate.communication=old.communication
+                    if old and old.communication.summary.value:
+                        candidate.communication=old.communication
+                    elif relevance:
+                        issues.append('communication.summary:retained_evidence_unavailable')
+                    else:
+                        return PublishResult(reason='retained_evidence_unavailable')
                 elif old and snapshot.versions.get('strategy') == 'workflow-v4':
                     communication = candidate.communication
                     previous_is_later = old.communication.last_business_at is not None and (
@@ -113,21 +111,31 @@ def _publish(conn,snapshot,result,cancellation):
                     if previous_is_later:
                         communication.last_business_at = old.communication.last_business_at
             # Restore only prior fields still authorized by this input snapshot.
-            for path in issues if old is not None else []:
+            for path in validated.issues if old is not None else []:
                 name=path.split(':')[0];parts=name.split('.')
                 if len(parts)==2 and parts[0] in ('goods','logistics'):setattr(getattr(candidate,parts[0]),parts[1],getattr(getattr(old,parts[0]),parts[1]))
                 if name=='communication.summary':candidate.communication=old.communication
         original=AnalysisResult.model_validate(result.model_dump() if isinstance(result,AnalysisResult) else result)
         indices={}
         for i,batch in enumerate(original.shipments):indices.setdefault(batch.candidate_key,i)
+        def shipment_needs_review(batch):
+            refs = [*batch.sources, *(ref for fact in [*batch.goods, *batch.logistics] for ref in fact.sources)]
+            return any((ref.message_id, ref.revision) not in allowed for ref in refs)
+
         def restore_batch(payload,batch):
-            prior=validate_result(conn,snapshot,AnalysisResult(contact_id=contact,shipments=[ShipmentCandidate.model_validate_json(payload)]),reader=evidence_reader)
             previous_batch=ShipmentCandidate.model_validate_json(payload)
+            if relevance and shipment_needs_review(previous_batch):
+                issues.append('prior_shipment_needs_review')
+                return None
+            prior=validate_result(conn,snapshot,AnalysisResult(contact_id=contact,shipments=[previous_batch]),reader=evidence_reader)
             if snapshot.coverage is not None:
                 restored=prior.result.shipments[0] if prior.result and prior.result.shipments else None
                 for group in ('goods','logistics'):
                     if not getattr(batch,group) and getattr(previous_batch,group):
-                        if not restored or len(getattr(restored,group)) != len(getattr(previous_batch,group)):
+                        if not restored or getattr(restored, group) != getattr(previous_batch, group):
+                            if relevance:
+                                issues.append('prior_shipment_needs_review')
+                                return None
                             raise RetentionError()
                         setattr(batch,group,getattr(restored,group))
             if prior.result and prior.result.shipments:
@@ -140,6 +148,14 @@ def _publish(conn,snapshot,result,cancellation):
                         setattr(batch,group,list({fact.model_dump_json():fact for fact in facts}.values()))
             return batch
         candidate.shipments,batch_issues=save_shipments(conn,snapshot.key,candidate.shipments,restore_batch);issues.extend(batch_issues)
+        if relevance:
+            # Keep existing rows available for review. Only candidate evidence
+            # validated against this run can update a shipment.
+            for row in conn.execute('SELECT payload_json FROM shipments WHERE account_id=? AND contact_id=?',
+                                    (account, contact)):
+                if shipment_needs_review(ShipmentCandidate.model_validate_json(row[0])):
+                    issues.append('prior_shipment_needs_review')
+                    break
         meaningful=any(getattr(getattr(candidate,group),name).value for group in ('goods','logistics') for name in type(getattr(candidate,group)).model_fields) or candidate.communication.summary.value
         if not candidate.shipments and not meaningful:return PublishResult(reason='empty_result',issues=issues)
         rooms={row[0] for row in conn.execute('''SELECT conversation_id FROM members WHERE account_id=? AND contact_id=?

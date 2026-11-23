@@ -76,10 +76,10 @@ def archive_status(conn, key, *, manifest, has_manual, complete, pending,
         """SELECT s.manifest_json
            FROM history_runs h JOIN operation_items i
              ON i.account_id=h.account_id AND i.operation_id=h.operation_id
-             AND i.item_id=? AND i.contact_id=h.contact_id AND i.state='failed'
+             AND i.item_id=? AND i.contact_id=h.contact_id
            JOIN operations o ON o.account_id=h.account_id AND o.id=h.operation_id
            JOIN snapshots s ON s.account_id=h.account_id AND s.snapshot_id=h.snapshot_id
-           WHERE h.account_id=? AND h.contact_id=? AND i.error_code='empty_result'
+           WHERE h.account_id=? AND h.contact_id=? AND i.error_code IN ('empty_result','no_findings')
            ORDER BY o.created_at DESC, o.rowid DESC LIMIT 1""",
         ('analysis:' + key.contact_id, key.account_id, key.contact_id),
     ).fetchone()
@@ -111,6 +111,8 @@ def latest_organization(conn, row):
     if state == 'succeeded':
         if attempt['item_state'] is None or reason == 'no_relevant_material':
             status = 'not_applicable'
+        elif reason == 'no_findings':
+            status = 'no_findings'
         elif attempt['skipped']:
             status = 'unchanged'
         else:

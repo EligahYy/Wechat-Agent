@@ -27,6 +27,8 @@ def classify_issues(legacy: list[str]) -> list[ProfileIssue]:
             counts[(path, 'coverage_notice', None, None)] += 1
         elif path in {'source_not_complete', 'source_issue', 'source_gap', 'source_message_id_unavailable'}:
             counts[(path, 'coverage_notice', None, reason or None)] += 1
+        elif path == 'prior_shipment_needs_review':
+            counts[(path, 'field_warning', None, None)] += 1
         elif path.startswith(('goods.', 'logistics.', 'communication.', 'shipments.')):
             counts[(reason or 'evidence_invalid', 'field_warning', path, None)] += 1
         elif entry.startswith(('事实尚未明确：', '事实尚未明确:', '未确认：', '未确认:')):

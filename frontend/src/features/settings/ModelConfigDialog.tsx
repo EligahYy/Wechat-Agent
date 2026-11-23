@@ -61,7 +61,7 @@ export function ModelConfigDialog({accountId,onClose,onChanged}:{accountId:strin
           <button className="button secondary" disabled={!!busy||dirty||state==='running'} onClick={()=>void check()}><RefreshCw size={16} className={busy==='checking'||state==='running'?'spin':undefined}/>检查连接</button>
         </div>
         {!dirty&&state==='failed'&&<p className="muted">{saved.connection.code==='model_authentication_failed'?'请检查 API 密钥及服务权限。':'请核对服务地址、模型 ID、响应格式及网络后重试。'}</p>}
-        <p className="field-hint">点击将发送一次不含客户资料的最小请求，可能产生少量费用。容量和视觉能力尚未验证。</p>
+        <p className="field-hint">检查使用与正式整理相同的连接和超时设置，并发送一条合成测试消息，可能产生少量费用。容量和视觉能力尚未验证。整理质量需用业务样本核对。</p>
         {dirty&&<p className="field-hint">请先保存修改，再检查连接。</p>}
       </section>}
       {saved?.configured&&state==='passed'&&<section className="import-preview"><h3>文本整理预算</h3>

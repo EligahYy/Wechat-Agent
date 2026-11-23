@@ -6,13 +6,13 @@ from ..source.coverage import OperationIssue,ContactCoverage,WARNINGS,NUMBERLESS
 class ContactOutcome(ContactCoverage):
     name_snapshot:str|None=None
     reason:str|None=None
-    analysis_outcome:Literal['not_started','running','updated','unchanged','partial','failed','not_applicable','stopped']='not_started'
+    analysis_outcome:Literal['not_started','running','updated','unchanged','partial','failed','not_applicable','no_findings','stopped']='not_started'
 
 class OperationReport(BaseModel):
     version:Literal[1]=1
     scope_label:str
     source_outcome:Literal['not_started','running','completed','partial','failed','stopped']='not_started'
-    analysis_outcome:Literal['not_started','running','updated','unchanged','partial','failed','not_applicable','stopped']='not_started'
+    analysis_outcome:Literal['not_started','running','updated','unchanged','partial','failed','not_applicable','no_findings','stopped']='not_started'
     started_at:str|None=None
     finished_at:str|None=None
     contacts:list[ContactOutcome]=Field(default_factory=list)
@@ -38,12 +38,13 @@ def analysis_issue(raw,contact):
     if path in coverage:code,stage,field=path,'context',None
     elif path in fields:code,stage,field='profile_field_invalid','publication',path
     elif re.fullmatch(r'shipments\.\d+(?:\.(?:goods|logistics))?',path):code,stage,field='shipment_field_invalid','publication',path
+    elif path == 'prior_shipment_needs_review':code,stage,field=path,'publication',None
     elif path in {'shipment_match_ambiguous','shipment_match_conflict','shipment_outside_contact','shipment_target_conflict'}:code,stage,field='shipment_field_invalid','publication',None
     else:code,stage,field='analysis_review_required','publication',None
     return OperationIssue(code=code,field_path=field,stage=stage,severity='warning',scope='contact',contact_id=contact)
 
 def suggested_action(code):
-    if code in {'model_timeout','model_temporary_error','model_retry_limit','rate_limited','retry_after_exceeds_deadline','model_retry_cooling_down'}:return 'retry_sync'
+    if code in {'model_timeout','model_connect_timeout','model_temporary_error','model_retry_limit','rate_limited','retry_after_exceeds_deadline','model_retry_cooling_down'}:return 'retry_sync'
     if code in {'scope_excluded','scope_changed','contact_changed','retained_evidence_unavailable'}:return 'review_contact'
     if code in {'context_requires_chunking','history_merge_unit_too_large','context_reference_too_large','context_message_overhead_exceeded'}:return 'none'
     if code.startswith('model_') or code in {'capability_not_ready','authentication_failed','credential_unavailable','credential_store_unsupported','request_invalid'}:return 'open_model_settings'
@@ -76,10 +77,13 @@ def finalize_report(conn,account_id,operation_id):
         for issue in normalized:
             if not any(i.code==issue.code and i.field_path==issue.field_path for i in outcome.issues):outcome.issues.append(issue)
         field_incomplete=item.error_code=='analysis_incomplete' and any(i.stage=='publication' for i in normalized)
-        if item.error_code and item.error_code not in {'analysis_incomplete','user_stopped','cancelled','analysis_budget_paused','no_relevant_material'}:
+        if item.error_code and item.error_code not in {'analysis_incomplete','user_stopped','cancelled','analysis_budget_paused','no_relevant_material','no_findings'}:
             stage='publication' if item.error_code in {'manual_changed','material_changed','profile_changed','scope_changed','contact_changed','retained_evidence_unavailable','scope_excluded','participants_changed','snapshot_not_authorized'} else 'context' if item.error_code in {'source_not_complete','context_requires_chunking','context_fixed_overhead_exceeded','context_reference_too_large','context_message_overhead_exceeded','history_merge_unit_too_large','history_merge_incomplete','history_coverage_incomplete','chunk_source_outside_unit','merge_scope_invalid','checkpoint_invalid'} else 'model'
             issue=OperationIssue(code=item.error_code,stage=stage,severity='blocker',scope='contact',contact_id=item.contact_id,suggested_action=suggested_action(item.error_code))
             if not any(i.code==issue.code for i in outcome.issues):outcome.issues.append(issue)
+        if item.error_code == 'no_findings':
+            outcome.analysis_outcome = 'no_findings'
+            continue
         if item.state == 'succeeded' and any(i.code == NUMBERLESS_MESSAGE and i.severity == 'warning' for i in outcome.issues):
             outcome.analysis_outcome = 'unchanged' if item.counts.get('skipped') else 'partial'
             continue
@@ -99,6 +103,7 @@ def finalize_report(conn,account_id,operation_id):
     elif 'updated' in states:report.analysis_outcome='updated'
     elif 'unchanged' in states:report.analysis_outcome='unchanged'
     elif operation.state=='stopped':report.analysis_outcome='stopped'
+    elif 'no_findings' in states:report.analysis_outcome='no_findings'
     elif operation.source_state=='succeeded':report.analysis_outcome='not_applicable'
     else:report.analysis_outcome='not_started'
     report.finished_at=operation.updated_at if operation.state in {'succeeded','failed','stopped'} else None
@@ -108,7 +113,7 @@ def finalize_report(conn,account_id,operation_id):
     all_issues = [*report.issues, *(issue for contact in report.contacts for issue in contact.issues)]
     known_partial = (
         report.source_outcome == 'partial'
-        and states & {'updated', 'unchanged', 'partial'}
+        and states & {'updated', 'unchanged', 'partial', 'no_findings'}
         and any(i.code == NUMBERLESS_MESSAGE and i.severity == 'warning' for i in all_issues)
         and not any(i.severity == 'blocker' for i in all_issues)
     )

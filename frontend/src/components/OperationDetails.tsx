@@ -51,12 +51,24 @@ export function OperationDetails({ operation,onAction,onReview }: { operation: O
     const presentation=presentOperation(operation);
     const unique=presentation.issues;
     const notApplicable=report.contacts.filter(c=>c.analysis_outcome==='not_applicable'&&c.reason&&reasonLabels[c.reason]);
+    const canContinue=operation.available_actions.includes("resume");
+    const attempts = [
+      ['首次请求', 'model_attempt_initial'], ['格式修复', 'model_attempt_format_repair'],
+      ['引用修复', 'model_attempt_reference_repair'], ['输出重试', 'model_attempt_output_retry'],
+      ['网络或限流重试', 'model_attempt_transport_retry'],
+    ].filter(([, key]) => operation.counts[key]);
+    const failures = [
+      ['格式无效','model_failure_output_invalid'], ['连接超时','model_failure_model_connect_timeout'],
+      ['响应超时','model_failure_model_timeout'], ['输出耗尽','model_failure_model_reasoning_output_exhausted'],
+      ['限流','model_failure_rate_limited'], ['临时服务错误','model_failure_model_temporary_error'],
+    ].filter(([, key]) => operation.counts[key]);
     return <section className="operation-detail"><h3>{operationTitle(operation)}</h3>
       <div className="operation-facts">
         <span className="info-chip">新增 {operation.counts.inserted||0}</span>
         <span className="info-chip">修订 {operation.counts.revised||0}</span>
         <span className="info-chip">不变 {operation.counts.unchanged||0}</span>
       </div>
+      {!!operation.counts.source_checkpoint_reused&&<p className="muted">本次复用已同步的原文。</p>}
       {operation.error_code==='analysis_budget_paused'&&<p>本次已到处理预算，继续整理时会复用已验证的分段。</p>}
       {Object.keys(operation.counts).some(key=>key.startsWith('timing_'))&&
         <p className="muted">{([
@@ -74,11 +86,14 @@ export function OperationDetails({ operation,onAction,onReview }: { operation: O
       {(unique.length>0||notApplicable.length>0||report.analysis_outcome==='failed'||presentation.action)&&<div className="operation-gaps"><h4>本次处理提示</h4>
       {notApplicable.map(c=><p key={c.contact_id}>{reasonLabels[c.reason!]}</p>)}
       {[...new Map(unique.map(i=>[i.code,i])).values()].slice(0,2).map((i,n)=><p key={n}>{i.severity==='warning'?(i.stage==='publication'?'待核对':'范围提示'):'原因'}：{reasonLabels[i.code]||gapLabels[i.code]||'本次处理遇到异常，可展开诊断详情查看。'}</p>)}
-      {report.analysis_outcome==='failed'&&<p>本次未更新的客户保留已有资料，可根据原因重新同步或检查模型设置。</p>}
-      {presentation.action&&onAction&&<button className="text-button" onClick={()=>onAction(presentation.action!)}>{presentation.action==='open_model_settings'?'检查模型设置':presentation.action==='review_contact'?'检查联系人':'重新同步'}</button>}
+      {report.analysis_outcome==='failed'&&<p>本次未更新的客户保留已有资料。</p>}
+      {presentation.action&&onAction&&!(canContinue&&presentation.action==='retry_sync')&&<button className="text-button" onClick={()=>onAction(presentation.action!)}>{presentation.action==='open_model_settings'?'检查模型设置':presentation.action==='review_contact'?'检查联系人':'重新同步'}</button>}
       </div>}
-      {report.contacts.length>1&&<ul className="operation-customer-results">{report.contacts.map(c=><li key={c.contact_id}>{c.name_snapshot||c.contact_id} · {c.analysis_outcome==='failed'?'未完成':c.analysis_outcome==='partial'?'已更新，需核对':c.analysis_outcome==='updated'?'已更新':c.analysis_outcome==='unchanged'?'无需更新':'未执行'}</li>)}</ul>}
-      <details className="operation-diagnostics"><summary>诊断详情</summary>{!!(operation.counts.model_source_unknown||operation.counts.model_source_revision_mismatch||operation.counts.model_source_other_unit)&&<p>引用问题：未知编号 {operation.counts.model_source_unknown||0} · 修订不符 {operation.counts.model_source_revision_mismatch||0} · 引用其他段 {operation.counts.model_source_other_unit||0}。仅按当前段合法清单尝试一次纠错，不放宽引用权限。</p>}{!!operation.counts.model_last_output_limit&&<p>最近请求输出上限 {operation.counts.model_last_output_limit} · 输出截断 {operation.counts.model_output_truncations||0} 次{operation.counts.model_last_completion_tokens!==undefined&&` · 返回用量 ${operation.counts.model_last_completion_tokens}`}{operation.counts.model_last_reasoning_tokens!==undefined&&` · 其中推理 ${operation.counts.model_last_reasoning_tokens}`}</p>}{!!operation.counts.analysis_context_tokens&&<p>上下文容量 {operation.counts.analysis_context_tokens} · 最大单元输入估算 {operation.counts.analysis_max_input_tokens||0} · 输出预留 {operation.counts.analysis_max_output_tokens||0} · 安全余量 10%。输入采用 UTF-8 保守上界，非精确 token 数。</p>}{unique.map((i,n)=><p key={n}>{i.stage} · <code>{i.code}</code> {i.field_path} {i.conversation_id}</p>)}{report.contacts.map(c=><p key={c.contact_id}>{c.contact_id} · {c.analysis_outcome} {c.reason}</p>)}</details>
+      {report.contacts.length>1&&<ul className="operation-customer-results">{report.contacts.map(c=><li key={c.contact_id}>{c.name_snapshot||c.contact_id} · {c.analysis_outcome==='failed'?'未完成':c.analysis_outcome==='partial'?'已更新，需核对':c.analysis_outcome==='updated'?'已更新':c.analysis_outcome==='unchanged'?'无需更新':c.analysis_outcome==='no_findings'?'暂无可确认事实':'未执行'}</li>)}</ul>}
+      <details className="operation-diagnostics"><summary>诊断详情</summary>
+        {attempts.length>0&&<p>{attempts.map(([label,key])=>`${label} ${operation.counts[key]} 次`).join(' · ')}</p>}
+        {failures.length>0&&<p>{failures.map(([label,key])=>`${label} ${operation.counts[key]} 次`).join(' · ')}</p>}
+        {!!(operation.counts.model_source_unknown||operation.counts.model_source_revision_mismatch||operation.counts.model_source_other_unit)&&<p>引用问题：未知编号 {operation.counts.model_source_unknown||0} · 修订不符 {operation.counts.model_source_revision_mismatch||0} · 引用其他段 {operation.counts.model_source_other_unit||0}。仅按当前段合法清单尝试一次纠错，不放宽引用权限。</p>}{!!operation.counts.model_last_output_limit&&<p>最近请求输出上限 {operation.counts.model_last_output_limit} · 输出截断 {operation.counts.model_output_truncations||0} 次{operation.counts.model_last_completion_tokens!==undefined&&` · 返回用量 ${operation.counts.model_last_completion_tokens}`}{operation.counts.model_last_reasoning_tokens!==undefined&&` · 其中推理 ${operation.counts.model_last_reasoning_tokens}`}</p>}{!!operation.counts.analysis_context_tokens&&<p>上下文容量 {operation.counts.analysis_context_tokens} · 最大单元输入估算 {operation.counts.analysis_max_input_tokens||0} · 输出预留 {operation.counts.analysis_max_output_tokens||0} · 安全余量 10%。输入采用 UTF-8 保守上界，非精确 token 数。</p>}{unique.map((i,n)=><p key={n}>{i.stage} · <code>{i.code}</code> {i.field_path} {i.conversation_id}</p>)}{report.contacts.map(c=><p key={c.contact_id}>{c.contact_id} · {c.analysis_outcome} {c.reason}</p>)}</details>
     </section>;
   }
   const metadataOnly = operation.action === "refresh_contacts";

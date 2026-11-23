@@ -55,13 +55,16 @@ async def test_account_scope_keeps_the_same_unknown_coverage_warning(flow):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('additional_gap', [None, 'source_shards_unavailable'])
-async def test_numberless_rows_allow_only_the_verified_archive_to_publish(flow, additional_gap):
+@pytest.mark.parametrize('additional_gap,empty', [(None,False),('source_shards_unavailable',False),(None,True)])
+async def test_numberless_rows_allow_only_the_verified_archive_to_publish(flow, additional_gap, empty):
     import json
     from wechat_agent.source.contracts import SourceIssue
 
     client, calls, payload = flow
     payload['gaps'] = ['source_message_id_unavailable:invented-room']
+    if empty:
+        payload.clear()
+        payload['contact_id'] = 'merchant-a'
     review(client)
     source = client.app.state.services.source
     page = source.pages['group-1'][0]
@@ -78,6 +81,12 @@ async def test_numberless_rows_allow_only_the_verified_archive_to_publish(flow, 
     if additional_gap:
         assert not calls and profile['model_version'] == 0
         assert result.state == 'failed'
+        return
+    if empty:
+        assert len(calls) == 1 and profile['model_version'] == 0
+        assert result.state == 'succeeded'
+        assert result.report.analysis_outcome == 'no_findings'
+        assert any(i.code == code and i.severity == 'warning' for i in result.report.contacts[0].issues)
         return
     assert len(calls) == 1 and profile['model_version'] == 1
     assert result.state == 'succeeded'

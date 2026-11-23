@@ -20,6 +20,8 @@ class ModelCapabilities(BaseModel):
 from typing import Literal
 from .probe import ModelProbeConfig
 
+MODEL_TIMEOUT_ERRORS = {'model_connect_timeout', 'model_timeout'}
+
 class ModelCallError(Exception):
     def __init__(self,code:str,message:str='模型请求未完成'):
         self.code=code

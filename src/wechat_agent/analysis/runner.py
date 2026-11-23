@@ -81,8 +81,18 @@ async def analyze(conn,operation,owner,session,targets):
                 result=publish(conn,snapshot,candidate,token)
                 record_stage(conn, operation.scope.account_id, operation.id, 'publish', publishing)
                 issues=result.issues
-                if result.reason:raise ModelCallError(result.reason)
-                incomplete=not result.complete;issues=result.issues
+                if result.reason == 'empty_result':
+                    from ..profiles.issues import classify_issues
+                    if any(issue.severity == 'field_warning' for issue in classify_issues([*issues, *candidate.gaps])):
+                        issues = sorted(set(issues) | set(candidate.gaps))
+                        raise ModelCallError('evidence_unverified')
+                    skipped = True
+                    skip_reason = 'no_findings'
+                elif result.reason:
+                    raise ModelCallError(result.reason)
+                else:
+                    incomplete = not result.complete
+                    issues = result.issues
         except RelevanceUnchanged as result:
             skipped = True
             if result.outcome == 'no_relevant_material':

@@ -28,7 +28,10 @@ def save_shipments(conn,key,candidates,restore=None):
     for identifier,anchor,old,candidate in plans:
         if targets[identifier]>1:
             issues.append('shipment_target_conflict:'+candidate.candidate_key);continue
-        if old and restore:candidate=restore(old['payload_json'],candidate)
+        if old and restore:
+            candidate = restore(old['payload_json'], candidate)
+            if candidate is None:
+                continue
         candidate=candidate.model_copy(update={'existing_id':identifier})
         # Model reruns never overwrite the separately editable human numbers.
         conn.execute('''INSERT INTO shipments(account_id,contact_id,shipment_id,stage,payload_json,numbers_json)

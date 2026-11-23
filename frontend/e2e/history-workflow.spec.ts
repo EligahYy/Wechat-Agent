@@ -24,7 +24,7 @@ test(`large history assembles complete results: ${mode}`,async({page,request})=>
  if(mode!=='citation-repair')await expect(status.getByRole('group',{name:'长历史整理进度'})).toBeVisible();
  if(mode==='source-failure'){
  await expect(status.getByText('消息已同步，整理未完成',{exact:true})).toBeVisible();
- await expect(status.getByText('已完成分段已保留，重新同步将复用有效结果。')).toBeVisible();
+ await expect(status.getByText('已校验的分段已保存，继续整理时可复用。')).toBeVisible();
  const {retry_at}=await (await request.post('/api/__test__/history-recover')).json();
  await status.getByRole('button',{name:'查看同步详情',exact:true}).click();
  const failed=page.getByRole('dialog',{name:'整理记录'});

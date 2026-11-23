@@ -254,7 +254,8 @@ async def test_empty_analysis_is_visible_in_customer_list_and_next_success_repla
         'choices': [{'finish_reason': 'stop', 'message': {'content': '{"contact_id":"merchant-a"}'}}],
     }))
     empty = await sync(client, 'empty-analysis')
-    assert empty.source_state == 'succeeded' and empty.error_code == 'empty_result'
+    assert empty.source_state == 'succeeded' and empty.state == 'succeeded'
+    assert empty.report.analysis_outcome == 'no_findings'
     assert profile_status() == 'no_findings'
     filtered = client.get('/api/contacts', params={'account_id': 'acct-1', 'profile_status': 'no_findings'}).json()
     assert filtered['total'] == 1

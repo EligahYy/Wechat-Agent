@@ -307,7 +307,7 @@ async def test_v4_resume_reuses_split_trees_and_reaches_ninth_window(db, history
     })
     calls = []
 
-    async def generate(request, token):
+    async def generate(request, token, *, deadline=None):
         payload = json.loads(request.messages[-1].content)
         primary = [span['message_id'] for span in payload.get('history_unit', {}).get('primary_spans', [])]
         windows = [identifier for identifier in primary if identifier.startswith('window-')]

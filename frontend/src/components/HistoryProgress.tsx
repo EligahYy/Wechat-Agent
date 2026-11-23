@@ -14,6 +14,6 @@ export function HistoryProgress({counts,state}:{counts:Record<string,number>;sta
    {!!counts.analysis_refinements&&<p>输出范围已拆小 {counts.analysis_refinements} 次</p>}
    {!!counts.analysis_merge_total&&<p>事实归纳 {counts.analysis_merge_completed||0} / {counts.analysis_merge_total}</p>}
    {!!counts.analysis_material_total&&<p className="muted">{counts.relevance_total===undefined?"已处理":"已整理高价值原文"} {counts.analysis_material_completed||0} / {counts.analysis_material_total} 条原文</p>}
-   {['failed','stopped','stop_requested'].includes(state)&&<p className="muted">已完成分段已保留，重新同步将复用有效结果。</p>}
+   {completed>0&&['failed','stopped','stop_requested'].includes(state)&&<p className="muted">已校验的分段已保存，继续整理时可复用。</p>}
  </div>;
 }

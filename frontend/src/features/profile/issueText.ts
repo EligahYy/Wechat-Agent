@@ -8,6 +8,8 @@ export type ProfileIssue = {
 
 export function issueText(issue:ProfileIssue):string {
   switch(issue.code){
+    case 'prior_shipment_needs_review':return '旧备货批次的部分来源需重新核对，已保留旧记录';
+    case 'retained_evidence_unavailable':return '该字段的旧来源需重新核对';
     case 'attachment_not_processed':return `${issue.count} 个附件尚未解析`;
     case 'history_complete_unverified':return '全部历史覆盖尚未验证';
     case 'reply_unavailable':return `${issue.count} 条引用消息暂不可用`;

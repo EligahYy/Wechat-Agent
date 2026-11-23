@@ -15,7 +15,7 @@ from ..source.adapter import SourceError
 from ..model.contracts import ModelCallError
 from ..source.coverage import assess_sync
 from ..source.repository import transaction
-from ..source.sync import sync_scope
+from ..source.sync import SyncResult, sync_scope
 from ..storage.db import open_existing_db
 
 
@@ -183,7 +183,7 @@ def _complete_source(conn, operation, owner, result, *, ready=False, error_code=
         prior = conn.execute('SELECT counts_json FROM operations WHERE account_id=? AND id=?',
                              (operation.scope.account_id, operation.id)).fetchone()
         counts.update({key: value for key, value in json.loads(prior[0]).items()
-                       if key.startswith(('model_', 'timing_model_', 'timing_retry_'))})
+                       if key == 'source_checkpoint_reused' or key.startswith(('model_', 'timing_model_', 'timing_retry_'))})
         counts["analysis_required"] = len(targets)+len(blocked)
         counts.update(analysis_completed=0,analysis_skipped=0,analysis_failed=len(targets) if not ready else 0,analysis_incomplete=0)
         conn.execute("""UPDATE operation_items SET state=?,error_code=NULL,gaps_json=?,counts_json=?
@@ -199,6 +199,59 @@ def _complete_source(conn, operation, owner, result, *, ready=False, error_code=
                       json.dumps(counts), error_code if (targets or pending_model) and not ready else None, now(), operation.scope.account_id, operation.id))
         if ready and targets:conn.execute('UPDATE operations SET worker_id=? WHERE account_id=? AND id=?',(owner,operation.scope.account_id,operation.id))
     return [row[0] for row in targets]
+
+
+def _resume_source_checkpoint(conn, operation):
+    contact = operation.scope.contact_id
+    if not contact or operation.action != 'sync_and_organize':
+        return None
+    account = operation.scope.account_id
+    saved = conn.execute(
+        """SELECT snapshots.manifest_json, source.checkpoint_json, parent.request_json
+           FROM operations o JOIN operations parent ON parent.account_id=o.account_id
+             AND o.idempotency_key='resume:'||parent.id AND o.contact_id=parent.contact_id
+           JOIN operation_items source ON source.account_id=parent.account_id
+             AND source.operation_id=parent.id AND source.item_id='source' AND source.state='succeeded'
+           JOIN history_runs run ON run.account_id=parent.account_id AND run.operation_id=parent.id
+             AND run.contact_id=o.contact_id
+           JOIN snapshots ON snapshots.account_id=run.account_id AND snapshots.snapshot_id=run.snapshot_id
+           WHERE o.account_id=? AND o.id=? AND parent.action=o.action
+             AND parent.state IN ('failed','stopped')
+           ORDER BY run.rowid DESC LIMIT 1""",
+        (account, operation.id),
+    ).fetchone()
+    if not saved:
+        return None
+    from ..context.contracts import ContextSnapshot
+    from ..profiles.publisher import check_inputs
+    from ..profiles.status import inputs_match
+    try:
+        if SyncOptions.model_validate_json(saved['request_json']) != operation.options:
+            return None
+        snapshot = ContextSnapshot.model_validate_json(saved['manifest_json'])
+        result = SyncResult.model_validate(json.loads(saved['checkpoint_json'])['source_result'])
+    except (ValueError, TypeError, KeyError):
+        return None
+    with transaction(conn):
+        token = CancellationToken(operation_id=operation.id, generation=operation.generation)
+        reader, head, reason = check_inputs(conn, snapshot, token)
+        if reason or (head['version'] if head else 0) != snapshot.profile_version:
+            return None
+        if not inputs_match(conn, snapshot.key, saved['manifest_json'],
+                            manual_version=snapshot.manual_version, role_version=snapshot.role_version,
+                            scope_version=snapshot.scope_version):
+            return None
+        coverage = assess_sync(conn, account, {contact}, result).contacts[contact]
+        if not coverage.can_analyze or set(coverage.required_conversation_ids) != set(reader.conversations()):
+            return None
+        for room in coverage.required_conversation_ids:
+            cursor = conn.execute(
+                'SELECT complete,gaps_json FROM sync_cursors WHERE account_id=? AND conversation_id=?',
+                (account, room),
+            ).fetchone()
+            if not cursor or not cursor['complete'] or json.loads(cursor['gaps_json']):
+                return None
+    return result.model_copy(update={'inserted':0, 'revised':0, 'unchanged':0, 'pages_processed':0, 'elapsed_ms':0})
 
 
 async def run_next(conn, services, *, account_id=None, on_claim=None):
@@ -222,17 +275,25 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
         except ValidationError:
             _fail_source(conn, operation, owner, "invalid_operation_request", ["invalid_operation_request"])
             return get_operation(conn, operation.scope.account_id, operation.id)
-        from time import monotonic
-        source_started = monotonic()
-        async with _source(services, operation.scope.account_id) as source:
-            result = await sync_scope(conn, source, operation.scope,
-                CancellationToken(operation_id=operation.id, generation=operation.generation),
-                **options.model_dump(exclude={'text_strategy', 'relevance_review_refs'}), metadata_only=operation.action == 'refresh_contacts',
-                on_progress=lambda value, target: _save_progress(conn, operation, owner, value, target))
-        result.elapsed_ms = round((monotonic() - source_started) * 1000)
-        from ..contacts.activity import refresh_activity
-        with transaction(conn):refresh_activity(conn,operation.scope.account_id)
+        result = _resume_source_checkpoint(conn, operation) if runtime is not None else None
+        reused_source = result is not None
+        if result is None:
+            from time import monotonic
+            source_started = monotonic()
+            async with _source(services, operation.scope.account_id) as source:
+                result = await sync_scope(conn, source, operation.scope,
+                    CancellationToken(operation_id=operation.id, generation=operation.generation),
+                    **options.model_dump(exclude={'text_strategy', 'relevance_review_refs'}), metadata_only=operation.action == 'refresh_contacts',
+                    on_progress=lambda value, target: _save_progress(conn, operation, owner, value, target))
+            result.elapsed_ms = round((monotonic() - source_started) * 1000)
+            from ..contacts.activity import refresh_activity
+            with transaction(conn):
+                refresh_activity(conn,operation.scope.account_id)
         _save_progress(conn, operation, owner, result, None)
+        if reused_source:
+            with transaction(conn):
+                conn.execute("""UPDATE operations SET counts_json=json_set(counts_json,'$.source_checkpoint_reused',1)
+                                WHERE account_id=? AND id=?""", (operation.scope.account_id,operation.id))
         if result.stopped:
             _stop(conn, operation, owner)
         elif (result.gaps and operation.action != 'sync_and_organize') or assess_sync(conn,operation.scope.account_id,set(),result).global_blocked:
@@ -250,7 +311,8 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
                         conn.execute("UPDATE operations SET phase='analysis',updated_at=? WHERE account_id=? AND id=?",(now(),operation.scope.account_id,operation.id))
                 async with runtime as session:
                     try:
-                        await discover(conn,operation,owner,session.discovery,sync_result=result)
+                        if not reused_source and options.text_strategy != 'relevance':
+                            await discover(conn,operation,owner,session.discovery,sync_result=result)
                     except ModelCallError as error:
                         if error.code != 'analysis_budget_paused':
                             raise

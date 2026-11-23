@@ -86,7 +86,7 @@ async def run_scenario(conn,case):
     session=None
     class Gateway:
         def __init__(self,db):self.db=db;self.config=SimpleNamespace(version='1',capabilities=SimpleNamespace(max_output_tokens=8192))
-        async def generate(self,request,token):
+        async def generate(self,request,token,*,deadline=None):
             if g.get('context_size')=='over_budget':
                 assert 'TAIL-MUST-REMAIN' in request.messages[-1].content
                 raise ModelCallError('context_requires_chunking')

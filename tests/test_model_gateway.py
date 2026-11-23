@@ -187,3 +187,43 @@ async def test_retry_after_beyond_remaining_deadline_does_not_timeout(setup_gate
             await gateway.generate(request, token)
     assert error.value.code == 'retry_after_exceeds_deadline'
     assert len(calls) == 1 and delays == []
+
+
+@pytest.mark.asyncio
+async def test_unit_deadline_records_timeout_and_format_repair(setup_gateway, db):
+    from asyncio import sleep, get_running_loop
+    from wechat_agent.model.contracts import ModelCallError
+
+    gateway, request, token, _, _, _, client = setup_gateway
+    calls = []
+
+    async def post(*args, **kwargs):
+        calls.append(kwargs['json'])
+        if len(calls) == 1:
+            return answer('invalid json')
+        await sleep(1)
+
+    gateway.client.post = post
+    async with client:
+        with pytest.raises(ModelCallError) as error:
+            await gateway.generate(request, token, deadline=get_running_loop().time() + .08)
+    assert error.value.code == 'model_timeout'
+    audit = db.execute('SELECT status FROM model_calls ORDER BY attempt').fetchall()
+    assert [row[0] for row in audit] == ['output_invalid', 'model_timeout']
+    counts = json.loads(db.execute('SELECT counts_json FROM operations WHERE id=?', (token.operation_id,)).fetchone()[0])
+    assert counts['model_attempt_format_repair'] == 1
+    assert counts['model_failure_output_invalid'] == counts['model_failure_model_timeout'] == 1
+
+
+@pytest.mark.asyncio
+async def test_connect_timeout_is_distinguished_from_provider_response_timeout(setup_gateway, db):
+    from wechat_agent.model.contracts import ModelCallError
+
+    gateway, request, token, responses, calls, _, client = setup_gateway
+    responses.append(httpx.ConnectTimeout('connect stalled'))
+    async with client:
+        with pytest.raises(ModelCallError) as error:
+            await gateway.generate(request.model_copy(update={'high_value_history': True}), token)
+    assert error.value.code == 'model_connect_timeout'
+    assert len(calls) == 1
+    assert db.execute('SELECT status FROM model_calls').fetchone()[0] == 'model_connect_timeout'

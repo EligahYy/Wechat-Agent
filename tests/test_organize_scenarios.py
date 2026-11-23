@@ -47,7 +47,7 @@ async def test_complete_scenario_pipeline(db,case):
             codes.update(i.code for i in op.report.issues)
             codes.update(c.reason for c in op.report.contacts)
             codes.update(i.code for c in op.report.contacts for i in c.issues)
-        aliases={'coverage_unverified':{'source_group_membership_unverified'},'scope_changed':{'scope_changed','scope_excluded'},'invalid_evidence':{'empty_result','source_invalid'},'user_stopped':{'user_stopped','cancelled','source_sync_stopped'}}
+        aliases={'coverage_unverified':{'source_group_membership_unverified'},'scope_changed':{'scope_changed','scope_excluded'},'invalid_evidence':{'evidence_unverified','source_invalid'},'user_stopped':{'user_stopped','cancelled','source_sync_stopped'}}
         if expected=='legacy_reason_unavailable':assert op.report is None
         elif expected=='metadata_only':assert op.action=='refresh_contacts'
         elif expected=='user_stopped':assert op.state=='stopped'

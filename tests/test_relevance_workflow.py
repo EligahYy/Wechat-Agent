@@ -238,8 +238,10 @@ async def test_prior_quote_cannot_be_retained_after_reply_loses_attribution(flow
         assert final.state == 'succeeded', final.error_code
         assert profile['effective']['logistics']['price']['sources'][0]['message_id'] == 'new'
     else:
-        assert final.error_code == 'retained_evidence_unavailable'
-        assert profile['model_version'] == 1 and profile['profile_status'] == 'needs_update'
+        assert final.state == 'succeeded' and final.report.analysis_outcome == 'partial'
+        assert profile['model_version'] == 2 and profile['profile_status'] == 'incomplete'
+        assert profile['effective']['logistics']['price']['value'] is None
+        assert profile['effective']['goods']['volume']['value'] == '20 方'
 
 
 @pytest.mark.asyncio
@@ -313,11 +315,12 @@ async def test_focused_timeout_stops_after_one_attempt_and_next_run_can_recover(
 
 
 @pytest.mark.asyncio
-async def test_truncated_compact_pack_uses_two_balanced_children_and_combines_compatible_fields(flow):
+@pytest.mark.parametrize("conflicting", [False, True])
+async def test_truncated_compact_pack_uses_two_balanced_children_and_combines_compatible_fields(flow, conflicting):
     client, _, _ = flow
     review(client)
     client.app.state.services.source.pages['group-1'] = [make_page([
-        make_message(message_id=f'price-{i}', body='确认报价 12 元') for i in range(34)
+        make_message(message_id=f'price-{i}', body='确认报价 12 元或 13 元') for i in range(34)
     ])]
     sent = []
     def transport(request):
@@ -326,9 +329,9 @@ async def test_truncated_compact_pack_uses_two_balanced_children_and_combines_co
         if len(sent) == 1:
             choice = {'finish_reason': 'length'}
         elif 'messages' in payload:
-            row = next((row for row in payload['messages'] if row['body'] == '确认报价 12 元'), None)
+            row = next((row for row in payload['messages'] if row['body'] == '确认报价 12 元或 13 元'), None)
             result = {'contact_id':'merchant-a'} if row is None else {'contact_id': 'merchant-a', 'logistics': {'price': {
-                'state':'known', 'value':'12 元',
+                'state':'known', 'value':'13 元' if conflicting and len(sent) == 3 else '12 元',
                 'sources':[{'message_id':row['source_alias'], 'revision':row['revision']}],
             }}}
             if row is not None:
@@ -344,7 +347,10 @@ async def test_truncated_compact_pack_uses_two_balanced_children_and_combines_co
     assert result.counts['analysis_material_completed'] == 37
     assert result.counts['model_requests_started'] == result.counts['model_requests'] == 3
     profile = client.get('/api/contacts/merchant-a/profile', params={'account_id':'acct-1'}).json()
-    assert len(profile['effective']['logistics']['price']['sources']) == 2
+    fact = profile['effective']['logistics']['price']
+    assert len(fact['sources']) == 2
+    assert fact['value'] == ('12 元；13 元' if conflicting else '12 元')
+    assert fact['state'] == ('uncertain' if conflicting else 'known')
     from datetime import datetime
     assert datetime.fromisoformat(profile['effective']['communication']['last_business_at']) == make_message().sent_at
 
@@ -434,3 +440,107 @@ async def test_existing_split_is_preserved_on_continue_and_replanned_for_new_run
         assert [len(p['history_unit']['primary_spans']) for p in calls] == [18, 19]
     assert result.state == 'succeeded'
     assert result.counts['analysis_material_completed'] == 37
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('archive_change', [None, 'message', 'cursor'])
+async def test_continue_after_timeout_renews_quota_and_only_syncs_changed_archive(flow, monkeypatch, archive_change):
+    client, _, _ = flow
+    review(client)
+    client.app.state.services.source.pages['group-1'] = [
+        make_page([make_message(message_id='price', body='确认报价 12 元')])
+    ]
+    def timeout(request):
+        raise httpx.ReadTimeout('provider stalled', request=request)
+    client.app.state.services.model_transport = httpx.MockTransport(timeout)
+    stalled = await run(client, 'repeat-timeout')
+    assert stalled.error_code == 'model_timeout'
+    forged = client.post('/api/operations', json=request_body('resume:' + stalled.id, from_start=True))
+    assert forged.status_code == 422
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        conn.execute('UPDATE history_checkpoints SET requests=6')
+        conn.commit()
+        if archive_change == 'message':
+            archive_page(conn, make_page([make_message(message_id='new-price', body='确认报价 12 元')]))
+        elif archive_change == 'cursor':
+            archive_page(conn, make_page([], complete=False, next_cursor='page:1'))
+            client.app.state.services.source.pages['group-1'].append(make_page([]))
+    from wechat_agent.operations import worker
+    real_sync = worker.sync_scope
+    synced = []
+    async def sync_scope(*args, **kwargs):
+        synced.append(True)
+        return await real_sync(*args, **kwargs)
+    monkeypatch.setattr(worker, 'sync_scope', sync_scope)
+    calls = provider(client)
+    response = client.post('/api/operations', json={'action':'resume','account_id':'acct-1','operation_id':stalled.id})
+    assert response.status_code == 202, response.text
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        result = await run_next(conn, client.app.state.services)
+    assert result.state == 'succeeded', result.error_code
+    assert bool(synced) == bool(archive_change)
+    assert bool(result.counts.get('source_checkpoint_reused')) != bool(archive_change)
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_high_value_keeps_verified_fields_when_other_reference_is_invalid(flow):
+    client, _, _ = flow
+    review(client)
+    client.app.state.services.source.pages['group-1'] = [
+        make_page([make_message(message_id='price', body='确认报价 12 元')])
+    ]
+    calls = []
+    def respond(request):
+        calls.append(request)
+        if len(calls) != 1:
+            raise httpx.ReadTimeout('repair would stall', request=request)
+        fact = {'value':'12 元','state':'known','sources':[{'message_id':'price','revision':1}]}
+        bad = {**fact, 'sources':[{'message_id':'missing','revision':1}]}
+        return httpx.Response(200,json={'model':'synthetic','choices':[{
+            'finish_reason':'stop','message':{'content':json.dumps({
+                'contact_id':'merchant-a','logistics':{'price':fact,'concerns':bad}
+            })}
+        }]})
+    client.app.state.services.model_transport = httpx.MockTransport(respond)
+    result = await run(client, 'one-field-invalid')
+    assert result.state == 'succeeded', result.error_code
+    assert result.report.analysis_outcome == 'partial'
+    assert len(calls) == 1
+    profile = client.get('/api/contacts/merchant-a/profile', params={'account_id':'acct-1'}).json()
+    assert profile['effective']['logistics']['price']['value'] == '12 元'
+    assert profile['effective']['logistics']['concerns']['value'] is None
+
+
+@pytest.mark.asyncio
+async def test_prior_batch_needing_review_does_not_block_new_fields(flow):
+    from wechat_agent.profiles.contracts import ShipmentCandidate
+    from wechat_agent.profiles.shipments import save_shipments
+    from wechat_agent.source.contracts import ContactKey
+    from wechat_agent.source.repository import transaction
+
+    client, _, _ = flow
+    review(client)
+    provider(client)
+    older = make_message(message_id='previous-batch', body='已安排备货')
+    current = make_message(message_id='price', body='确认报价 12 元')
+    client.app.state.services.source.pages['group-1'] = [make_page([current])]
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        archive_page(conn, make_page([older]))
+        with transaction(conn):
+            batches, _ = save_shipments(conn, ContactKey(account_id='acct-1', contact_id='merchant-a'), [
+                ShipmentCandidate(candidate_key='old-batch', stage='备货', sources=[
+                    {'message_id':'previous-batch','revision':1}
+                ])
+            ])
+    replacement = older.model_copy(update={'source_revision':'v2','body':'早上好'})
+    client.app.state.services.source.pages['group-1'] = [make_page([replacement, current])]
+    result = await run(client, 'new-price-old-batch')
+    assert result.state == 'succeeded'
+    assert result.report.analysis_outcome == 'partial'
+    assert any(i.code == 'prior_shipment_needs_review' for c in result.report.contacts for i in c.issues)
+    profile = client.get('/api/contacts/merchant-a/profile', params={'account_id':'acct-1'}).json()
+    assert profile['effective']['logistics']['price']['value'] == '12 元'
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        old = conn.execute('SELECT payload_json FROM shipments WHERE shipment_id=?', (batches[0].existing_id,)).fetchone()
+        assert ShipmentCandidate.model_validate_json(old[0]) == batches[0]
