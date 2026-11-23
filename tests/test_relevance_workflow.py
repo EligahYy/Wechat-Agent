@@ -146,6 +146,7 @@ async def test_revoked_material_blocks_unchanged(flow):
 async def test_pause_resumes_relevance_and_reuses_completed_extraction(flow, monkeypatch):
     from wechat_agent.analysis import runtime
     from wechat_agent.analysis.execution import ExecutionBudget
+    from wechat_agent.analysis.history import WorkflowV5
 
     client, _, _ = flow
     review(client)
@@ -153,8 +154,11 @@ async def test_pause_resumes_relevance_and_reuses_completed_extraction(flow, mon
     client.app.state.services.source.pages['group-1'] = [make_page([
         make_message(message_id='price', body='确认报价 12 元'),
     ])]
+    original_pack = WorkflowV5.compact_unit
+    monkeypatch.setattr(WorkflowV5, 'compact_unit', lambda *args: None)
     monkeypatch.setattr(runtime, 'ExecutionBudget', lambda: ExecutionBudget(max_calls=1))
     first = await run(client, 'focused-pause')
+    monkeypatch.setattr(WorkflowV5, 'compact_unit', original_pack)
     assert first.error_code == 'analysis_budget_paused'
     sent = [payload['history_unit']['primary_spans'] for payload in calls]
     response = client.post('/api/operations', json={
@@ -236,3 +240,51 @@ async def test_prior_quote_cannot_be_retained_after_reply_loses_attribution(flow
     else:
         assert final.error_code == 'retained_evidence_unavailable'
         assert profile['model_version'] == 1 and profile['profile_status'] == 'needs_update'
+
+
+@pytest.mark.asyncio
+async def test_37_high_messages_across_months_fit_one_request(flow):
+    from datetime import datetime
+
+    client, _, _ = flow
+    review(client)
+    calls = provider(client)
+    client.app.state.services.source.pages['group-1'] = [make_page([
+        *[make_message(message_id=f'greeting-{n}', body='早上好') for n in range(302)],
+        *[make_message(message_id=f'price-{n}', body='确认报价 12 元',
+                       sent_at=datetime.fromisoformat(f'2026-{8+n%3:02}-11T09:00:00+08:00'))
+          for n in range(34)],
+    ])]
+    result = await run(client, 'short-relevance')
+    assert result.state == 'succeeded', result.error_code
+    assert result.counts['relevance_high'] == 37
+    assert result.counts['analysis_material_completed'] == 37
+    assert len(calls) == 1
+    assert len(calls[0]['history_unit']['primary_spans']) == 37
+
+
+@pytest.mark.asyncio
+async def test_compact_output_truncation_splits_without_repeating_full_input(flow):
+    client, _, _ = flow
+    review(client)
+    original_calls = provider(client)
+    original = client.app.state.services.model_transport
+    totals = []
+    client.app.state.services.source.pages['group-1'] = [make_page([
+        make_message(message_id=f'price-{index}', body='确认报价 12 元') for index in range(12)
+    ])]
+
+    async def transport(request):
+        payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
+        unit = payload.get('history_unit', {})
+        if unit.get('packing') == 'compact':
+            totals.append(len(unit['primary_spans']))
+            return httpx.Response(200, json={'model':'synthetic','choices':[{'finish_reason':'length'}]})
+        return await original.handle_async_request(request)
+
+    client.app.state.services.model_transport = httpx.MockTransport(transport)
+    result = await run(client, 'compact-truncates')
+    assert result.state == 'succeeded', result.error_code
+    assert totals == [result.counts['relevance_high']]
+    assert max(len(payload['history_unit'].get('primary_spans', [])) for payload in original_calls) < totals[0]
+    assert result.counts['analysis_material_completed'] == totals[0]

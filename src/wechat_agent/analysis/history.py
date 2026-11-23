@@ -24,6 +24,8 @@ from .facts import validate_unit,source_refs,deduplicate,merge_groups,combine,en
 # Workload targets are independent of provider capacity. Oversized mandatory
 # context may exceed the target when it still fits the actual window.
 INPUT_TARGET = 24_000
+COMPACT_MAX_MESSAGES = 80
+COMPACT_INPUT_TARGET = 48_000
 
 
 class WorkflowV2:
@@ -40,7 +42,8 @@ class WorkflowV2:
                     for row in payload['messages']
                 ]}
                 prompt += '\n引用原文可使用该消息的 source_alias 作为 message_id，revision 保持原值。省略没有证据的字段。'
-        uses_sparse_schema = self.strategy_version in {'workflow-v3', 'workflow-v4', 'workflow-v5'} and phase == 'extract'
+        compact = payload.get('history_unit', {}).get('packing') == 'compact'
+        uses_sparse_schema = not compact and self.strategy_version in {'workflow-v3', 'workflow-v4', 'workflow-v5'} and phase == 'extract'
         if uses_sparse_schema:
             prompt += '\n输出只需包含有证据的字段。若返回 processed_primary_ids，逐一列出主材料消息编号，每个编号只出现一次。'
         material_key = 'messages' if phase == 'extract' else 'candidates'
@@ -52,7 +55,10 @@ class WorkflowV2:
             material_bytes = len(json.dumps(material, ensure_ascii=False).encode('utf-8'))
             base, per_record = (2048, 64) if phase == 'extract' else (1024, 128)
             output_target = min(8192, base + per_record * len(material) + material_bytes // 16)
-        request=ModelRequest(allow_output_growth=True,call_id='planning',unit_id='planning',snapshot_id=snapshot.id,phase=phase,
+        if compact:
+            output_target = 8192
+            prompt += '\n只返回结构化事实与必要来源。省略无证据字段，沟通摘要简短，不逐条复述原文或列出已处理消息。'
+        request=ModelRequest(allow_output_growth=not compact,call_id='planning',unit_id='planning',snapshot_id=snapshot.id,phase=phase,
             model_config_version=self.gateway.config.version,messages=[ModelMessage(role='system',content=prompt),ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))],
             output_schema=ExtractedFacts.model_json_schema() if uses_sparse_schema else analysis_result_schema(),output_tokens=min(output_target,self.gateway.config.capabilities.max_output_tokens))
         fixed={**payload,**{key:[] for key in ('messages','candidates') if key in payload}}
@@ -178,7 +184,7 @@ class WorkflowV2:
         prompt+='\n'+files('wechat_agent.model').joinpath('prompts/history-v1.md').read_text()
         # Limit metadata to what a chunk can actually observe, without omitting
         # the target or changing the frozen global publication authority.
-        def extraction(selected,spans=()):
+        def extraction(selected,spans=(), *, compact=False):
             pack = assemble_context(base, selected)
             if evidence is not None:
                 pack = type(pack)([
@@ -201,6 +207,12 @@ class WorkflowV2:
                 **base, **asdict(pack), 'existing_shipments': [], 'gaps': scoped_gaps,
                 'history_unit': {'phase': 'extract', 'primary_spans': list(spans)},
             }
+            if compact:
+                payload['history_unit']['packing'] = 'compact'
+                payload['existing_shipments'] = [
+                    {key: batch[key] for key in ('shipment_id', 'stage', 'numbers')}
+                    for batch in batches
+                ]
             return self.request(snapshot,payload,prompt)
         if evidence is not None:
             prompt += '\n只使用 evidence_allowed=true 的原文作为事实引用，其余消息仅解释语境。'
@@ -215,6 +227,15 @@ class WorkflowV2:
             if direct_failed:
                 yield direct_failed
                 return
+            if evidence is not None:
+                packed = self.compact_unit(snapshot, cancellation, rows, context_rows, extraction)
+                if packed:
+                    chunk, request = packed
+                    req = register_unit(self.conn, snapshot, cancellation, request, chunk.spans, 0, self.gateway.config)
+                    progress.load()
+                    progress.persist()
+                    yield chunk, req
+                    return
             if self.strategy_version in {'workflow-v3', 'workflow-v4', 'workflow-v5'}:
                 windows = {}
                 for row in rows:
@@ -530,6 +551,48 @@ class WorkflowV5(WorkflowV4):
     def __init__(self, conn, gateway, reviewed_refs):
         super().__init__(conn, gateway)
         self.reviewed_refs = reviewed_refs
+
+    def compact_unit(self, snapshot, token, rows, context_rows, extraction):
+        if not 1 <= len(rows) <= COMPACT_MAX_MESSAGES:
+            return None
+        account = snapshot.key.account_id
+        # Continue older partitions when they already contain completed work.
+        # A compact parent and its refinements keep their existing cache keys.
+        previous_plan = self.conn.execute(
+            """SELECT u.request_json FROM operations o JOIN history_runs h
+                 ON h.account_id=o.account_id AND h.operation_id=substr(o.idempotency_key,8)
+               JOIN history_run_units u ON u.account_id=h.account_id AND u.snapshot_id=h.snapshot_id
+               WHERE o.account_id=? AND o.id=? AND o.idempotency_key LIKE 'resume:%'
+                 AND u.phase='extract' ORDER BY u.rowid LIMIT 1""",
+            (account, token.operation_id),
+        ).fetchone()
+        if previous_plan:
+            saved = ModelRequest.model_validate_json(previous_plan[0])
+            packing = json.loads(saved.messages[-1].content).get('history_unit', {}).get('packing')
+            if packing != 'compact':
+                return None
+
+        primary = {row['message_id'] for row in rows}
+        # Pack across months/rooms while retaining original order and metadata.
+        # Follow explicit reply dependencies only, with cycle protection.
+        by_id = {row['message_id']: row for row in context_rows}
+        visible = set(primary)
+        pending = list(rows)
+        while pending:
+            reply = pending.pop().get('reply_to')
+            if reply in by_id and reply not in visible:
+                visible.add(reply)
+                pending.append(by_id[reply])
+            if len(visible) > COMPACT_MAX_MESSAGES:
+                return None
+        material = [row for row in context_rows if row['message_id'] in visible]
+        spans = tuple(MessageSpan(row['message_id'], row['revision'], 0, len(row['body']), len(row['body']))
+                      for row in rows)
+        request = extraction(material, [asdict(span) for span in spans], compact=True)
+        budget = request_budget(request, self.gateway.config)
+        if not budget.fits or budget.input_tokens > COMPACT_INPUT_TARGET:
+            return None
+        return ContextChunk(0, tuple(material), spans, budget), request
 
     async def material_window(self, snapshot, room, window, rows, full_history, planned, extraction, target):
         return await asyncio.to_thread(
