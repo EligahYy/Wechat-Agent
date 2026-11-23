@@ -1,8 +1,8 @@
 # 当前实施状态
 
-M3 文本 workflow-v4 的五项修复已完成云端开发，接下来推进 M3 附件获取与解析。[整理链路审查修复计划](superpowers/plans/2026-11-18-organize-review-followup.md)
+M3 文本 workflow-v4 的五项修复已完成云端开发。下一项为[按档案字段筛选原文](superpowers/plans/2026-11-23-message-relevance.md)，随后推进附件获取与解析。[整理链路审查修复计划](superpowers/plans/2026-11-18-organize-review-followup.md)
 
-更新：2026-11-18（北京时间）。本页是唯一执行位置入口；依据当前代码、主计划及交付记录核对。
+更新：2026-11-23（北京时间）。本页是唯一执行位置入口；依据当前代码、主计划及交付记录核对。
 
 来源恢复补充：2026-11-16完成[接入／刷新／同步整理审查](verification/source-refresh-review.md)。统一同步前刷新、stale与failed分开、接受请求前置running并合并在途刷新；来源工具升级`.2`，Mac须按[升级步骤](MAC_SETUP.md#source-refresh-v2)更新来源及重启应用。Python完整回归503通过；Rust来源服务36通过，release构建及干净补丁重复安装校验通过；Mac恢复未验收。
 
@@ -78,7 +78,7 @@ Mac按[更新指南](MAC_SETUP.md)pull、build、重启并核对 schema 19，保
 
 ## 已知后续项
 
-- M3 下一步为附件获取／解析；视觉、业务意图发现长历史及极端超大字段结构仍待后续。
+- M3 先推进[按档案字段筛选原文](superpowers/plans/2026-11-23-message-relevance.md)，随后开发附件获取与解析。视觉、业务意图发现长历史及极端超大字段结构仍待后续。
 - 日调度、完整恢复及批量控制仍属M4。
 - 窄屏日历／详情切换的显式焦点移交、远端定位失败的专用重试状态可继续优化；当前Tab和日期键盘可操作。
 - 需求发现逐人活动派生／版本失效粒度、已发布资料列表读取成本需在扩大批量前进一步核查。
