@@ -54,3 +54,19 @@ it('preserves server ordering for legacy records without creation timestamps',as
  await waitFor(()=>expect(result.current.history).toHaveLength(2));
  expect(result.current.history.map(o=>o.id)).toEqual(['first','second']);
 });
+
+it('polls less frequently while model progress stays unchanged',async()=>{
+ vi.useFakeTimers();
+ try {
+  const running={...latest,state:'running',phase:'analysis',counts:{model_requests_started:1}} as Operation;
+  const done=vi.fn();
+  vi.mocked(request).mockImplementation(async url=>String(url).includes('/latest?')?running:{items:[running]});
+  const {unmount}=renderHook(()=>useOperations('acct-1',done));
+  await act(async()=>{await vi.advanceTimersByTimeAsync(0);});
+  await act(async()=>{await vi.advanceTimersByTimeAsync(10_000);});
+  const polls=vi.mocked(request).mock.calls.filter(([url])=>String(url).includes('/latest?')).length;
+  expect(polls).toBeGreaterThan(1);
+  expect(polls).toBeLessThanOrEqual(5);
+  unmount();
+ } finally {vi.useRealTimers();}
+});

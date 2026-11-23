@@ -28,6 +28,10 @@ COMPACT_MAX_MESSAGES = 80
 COMPACT_INPUT_TARGET = 48_000
 
 
+class PreviouslySplitTimeout(ModelCallError):
+    """A continued operation already has durable children for this timeout."""
+
+
 class WorkflowV2:
     strategy_version="workflow-v2"
     def __init__(self,conn,gateway):self.conn=conn;self.gateway=gateway
@@ -58,7 +62,8 @@ class WorkflowV2:
         if compact:
             output_target = 8192
             prompt += '\n只返回结构化事实与必要来源。省略无证据字段，沟通摘要简短，不逐条复述原文或列出已处理消息。'
-        request=ModelRequest(allow_output_growth=not compact,call_id='planning',unit_id='planning',snapshot_id=snapshot.id,phase=phase,
+        request=ModelRequest(allow_output_growth=not compact, high_value_history=self.strategy_version == 'workflow-v5',
+            call_id='planning',unit_id='planning',snapshot_id=snapshot.id,phase=phase,
             model_config_version=self.gateway.config.version,messages=[ModelMessage(role='system',content=prompt),ModelMessage(role='user',content=json.dumps(payload,ensure_ascii=False))],
             output_schema=ExtractedFacts.model_json_schema() if uses_sparse_schema else analysis_result_schema(),output_tokens=min(output_target,self.gateway.config.capabilities.max_output_tokens))
         fixed={**payload,**{key:[] for key in ('messages','candidates') if key in payload}}
@@ -80,7 +85,15 @@ class WorkflowV2:
                 set_unit(self.conn,snapshot,token,request,'succeeded',reused=True,progress=progress)
                 return result
             saved_error = saved['error_code']
-            if (saved_error in {'output_truncated', 'model_timeout'}
+            if saved_error == 'model_timeout' and request.high_value_history and self.conn.execute(
+                """SELECT 1 FROM operations o JOIN history_runs h
+                   ON h.account_id=o.account_id AND o.idempotency_key='resume:'||h.operation_id
+                   JOIN history_run_units p ON p.account_id=h.account_id AND p.snapshot_id=h.snapshot_id
+                   WHERE o.account_id=? AND o.id=? AND p.contact_id=? AND p.cache_key=? AND p.superseded=1""",
+                (snapshot.key.account_id, token.operation_id, snapshot.key.contact_id, request.checkpoint_key),
+            ).fetchone():
+                raise PreviouslySplitTimeout(saved_error)
+            if (saved_error == 'output_truncated' or (saved_error == 'model_timeout' and not request.high_value_history)
                     or (saved_error == 'history_merge_incomplete' and request.phase == 'merge'
                         and self.strategy_version in {'workflow-v4', 'workflow-v5'} and label != 'shipments')):
                 raise ModelCallError(saved_error)
@@ -278,18 +291,31 @@ class WorkflowV2:
         originals={r['message_id']:r for r in rows}
         refinement_nodes=0
         fatal={'model_cancelled','cancelled','authentication_failed','model_not_found','credential_unavailable','model_config_changed','checkpoint_scope_mismatch','refinement_invalid','analysis_budget_paused','material_changed'}
-        async def extract_tree(chunk,req,depth=0):
-            nonlocal refinement_nodes
-            visible_refs = {(row['message_id'], row['revision']) for row in chunk.messages}
-            allowed = visible_refs if evidence is None else visible_refs & evidence
-            evidence_rows = [
-                row for row in chunk.messages if (row['message_id'], row['revision']) in allowed
-            ]
-            try:
-                return [await self.unit(snapshot, cancellation, req, allowed,
-                                        reader=reader.restrict(evidence_rows), progress=progress)]
-            except ModelCallError as error:
-                if error.code not in {'output_truncated','model_timeout'} or depth>=MAX_DEPTH:raise
+        if evidence is not None:
+            fatal.update({'model_timeout', 'model_reasoning_output_exhausted'})
+
+        async def refine(chunk, req):
+            packed = json.loads(req.messages[-1].content).get('history_unit', {}).get('packing')
+            if packed == 'compact' and len(chunk.spans) > 1:
+                # Replay pre-upgrade partitions if they already have persisted children.
+                legacy = self.conn.execute(
+                    """SELECT 1 FROM operations o JOIN history_runs h
+                       ON h.account_id=o.account_id AND o.idempotency_key='resume:'||h.operation_id
+                       JOIN history_run_units p ON p.account_id=h.account_id AND p.snapshot_id=h.snapshot_id
+                       JOIN history_refinements e
+                       ON e.account_id=p.account_id AND e.snapshot_id=p.snapshot_id AND e.parent_id=p.unit_id
+                       JOIN history_run_units c ON c.account_id=e.account_id AND c.snapshot_id=e.snapshot_id
+                       AND c.unit_id=e.child_id WHERE o.account_id=? AND o.id=? AND p.contact_id=? AND p.cache_key=?
+                       AND json_extract(json_extract(c.request_json,'$.messages[#-1].content'),
+                           '$.history_unit.packing') IS NULL LIMIT 1""",
+                    (snapshot.key.account_id, cancellation.operation_id, snapshot.key.contact_id, req.checkpoint_key),
+                ).fetchone()
+                if not legacy:
+                    pivot = len(chunk.spans) // 2
+                    halves = [self.pack_rows([originals[s.message_id] for s in spans], context_rows, extraction)
+                              for spans in (chunk.spans[:pivot], chunk.spans[pivot:])]
+                    if all(halves):
+                        return halves
             primary=[]
             for span in chunk.spans:
                 row=originals[span.message_id]
@@ -302,10 +328,25 @@ class WorkflowV2:
             try:smaller=await asyncio.to_thread(plan_chunks,primary,planned,self.gateway.config,input_limit=limit,context_messages=context_rows,max_primary_messages=max(1,len(primary)//2))
             except ModelCallError:raise ModelCallError('output_truncated') from None
             if len(smaller)>4 or (len(smaller)==1 and smaller[0].spans==chunk.spans):raise ModelCallError('output_truncated')
-            planned_children = [
+            return [
                 (c, extraction(list(c.messages), [asdict(span) for span in c.spans]))
                 for c in smaller
             ]
+
+        async def extract_tree(chunk,req,depth=0):
+            nonlocal refinement_nodes
+            visible_refs = {(row['message_id'], row['revision']) for row in chunk.messages}
+            allowed = visible_refs if evidence is None else visible_refs & evidence
+            evidence_rows = [
+                row for row in chunk.messages if (row['message_id'], row['revision']) in allowed
+            ]
+            try:
+                return [await self.unit(snapshot, cancellation, req, allowed,
+                                        reader=reader.restrict(evidence_rows), progress=progress)]
+            except ModelCallError as error:
+                if error.code in fatal and not isinstance(error, PreviouslySplitTimeout):raise
+                if error.code not in {'output_truncated','model_timeout'} or depth>=MAX_DEPTH:raise
+            planned_children = await refine(chunk, req)
             child_keys = {unit_cache_key(snapshot, request, chunk.spans)
                           for chunk, request in planned_children}
             prior = {}
@@ -329,7 +370,7 @@ class WorkflowV2:
             supersede(self.conn,snapshot,cancellation,req,children,progress)
             refinement_nodes += int(not replay or self.strategy_version not in {'workflow-v4', 'workflow-v5'})
             results=[];failure=None
-            for child,request in zip(smaller,children):
+            for (child, _), request in zip(planned_children,children):
                 try:results.extend(await extract_tree(child,request,depth+1))
                 except ModelCallError as error:
                     if error.code in fatal:raise
@@ -354,6 +395,28 @@ class WorkflowV2:
             if not compute_coverage(self.conn, snapshot.key.account_id, snapshot.id).complete:
                 raise ModelCallError('history_coverage_incomplete')
             return meaningful[0].model_copy(update={'gaps': gaps})
+        if evidence is not None:
+            fields = merge_groups(meaningful, snapshot.key.contact_id)
+            if fields and all(len(values) == 1 and label != 'shipments' for label, values in fields):
+                # Identical typed values were already coalesced with all citations.
+                # A conflict, ambiguous batch or failed proof uses the regular reducer.
+                candidates = [r.model_dump(mode='json', exclude_defaults=True) for r in meaningful]
+                local = combine([(label, AnalysisResult.model_validate(values[0]))
+                                 for label, values in fields], snapshot.key.contact_id)
+                local.communication.last_business_at = max(
+                    (r.communication.last_business_at for r in meaningful if r.communication.last_business_at),
+                    default=None,
+                )
+                try:
+                    local = validate_unit(self.conn, snapshot, local.model_dump(), evidence, reader=reader.restrict(rows))
+                    record_reduction(self.conn, snapshot, cancellation, 'all', candidates, local)
+                except ModelCallError as error:
+                    if error.code != 'history_merge_incomplete':
+                        raise
+                else:
+                    if not compute_coverage(self.conn, snapshot.key.account_id, snapshot.id).complete:
+                        raise ModelCallError('history_coverage_incomplete')
+                    return local.model_copy(update={'gaps':sorted(set(local.gaps) | set(gaps))})
         def merge_request(label,candidates):
             return self.request(snapshot,{**base,'history_unit':{'phase':'merge','field':label},'candidates':candidates},prompt,'merge')
         merge_target = pinned_target(
@@ -392,6 +455,8 @@ class WorkflowV2:
                                          reader=merge_reader, progress=progress,
                                          require_coverage=covered or self.strategy_version in {'workflow-v4', 'workflow-v5'})
             except ModelCallError as error:
+                if error.code in fatal and not isinstance(error, PreviouslySplitTimeout):
+                    raise
                 if error.code not in {'output_truncated', 'model_timeout'} and not (
                     error.code == 'history_merge_incomplete' and self.strategy_version in {'workflow-v4', 'workflow-v5'}
                     and label != 'shipments'
@@ -572,6 +637,9 @@ class WorkflowV5(WorkflowV4):
             if packing != 'compact':
                 return None
 
+        return self.pack_rows(rows, context_rows, extraction)
+
+    def pack_rows(self, rows, context_rows, extraction):
         primary = {row['message_id'] for row in rows}
         # Pack across months/rooms while retaining original order and metadata.
         # Follow explicit reply dependencies only, with cycle protection.

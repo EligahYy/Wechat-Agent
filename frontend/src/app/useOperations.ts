@@ -103,6 +103,8 @@ export function useOperations(account: string | null, onDone: () => void) {
     if (!account || !active(job)) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    let delay = 750;
+    let lastProgress = "";
     const poll = async () => {
       try {
         const next = await read(job!.id, controller.signal);
@@ -110,6 +112,9 @@ export function useOperations(account: string | null, onDone: () => void) {
         setJob(next);
         setError("");
         setErrorScope(null);
+        const progress = JSON.stringify([next.phase, next.remaining, next.counts]);
+        delay = next.phase === "analysis" && progress === lastProgress ? Math.min(6000, delay * 2) : 750;
+        lastProgress = progress;
         if (!active(next)) {
           onDone();
           return;
@@ -119,7 +124,7 @@ export function useOperations(account: string | null, onDone: () => void) {
         setError(messageFor(reason));
         setErrorScope(job?.scope.contact_id ? {account_id:account,contact_id:job.scope.contact_id}:null);
       }
-      timer = setTimeout(() => void poll(), 750);
+      timer = setTimeout(() => void poll(), delay);
     };
     timer = setTimeout(() => void poll(), 250);
     return () => {

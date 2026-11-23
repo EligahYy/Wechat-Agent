@@ -277,7 +277,7 @@ async def test_compact_output_truncation_splits_without_repeating_full_input(flo
     async def transport(request):
         payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
         unit = payload.get('history_unit', {})
-        if unit.get('packing') == 'compact':
+        if unit.get('packing') == 'compact' and not totals:
             totals.append(len(unit['primary_spans']))
             return httpx.Response(200, json={'model':'synthetic','choices':[{'finish_reason':'length'}]})
         return await original.handle_async_request(request)
@@ -288,3 +288,149 @@ async def test_compact_output_truncation_splits_without_repeating_full_input(flo
     assert totals == [result.counts['relevance_high']]
     assert max(len(payload['history_unit'].get('primary_spans', [])) for payload in original_calls) < totals[0]
     assert result.counts['analysis_material_completed'] == totals[0]
+
+
+@pytest.mark.asyncio
+async def test_focused_timeout_stops_after_one_attempt_and_next_run_can_recover(flow):
+    client, _, _ = flow
+    review(client)
+    client.app.state.services.source.pages['group-1'] = [make_page([make_message(message_id='price', body='确认报价 12 元')])]
+    attempts = []
+    def timeout(request):
+        attempts.append(request)
+        raise httpx.ReadTimeout("provider stalled", request=request)
+    client.app.state.services.model_transport = httpx.MockTransport(timeout)
+    first = await run(client, 'focused-timeout')
+    assert first.error_code == 'model_timeout'
+    assert len(attempts) == 1
+    assert first.counts['analysis_refinements'] == 0
+    assert first.counts['analysis_material_completed'] == 0
+    assert first.counts['model_requests_started'] == first.counts['model_requests'] == 1
+    calls = provider(client)
+    recovered = await run(client, 'focused-timeout-retry')
+    assert recovered.state == 'succeeded', recovered.error_code
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_truncated_compact_pack_uses_two_balanced_children_and_combines_compatible_fields(flow):
+    client, _, _ = flow
+    review(client)
+    client.app.state.services.source.pages['group-1'] = [make_page([
+        make_message(message_id=f'price-{i}', body='确认报价 12 元') for i in range(34)
+    ])]
+    sent = []
+    def transport(request):
+        payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
+        sent.append(payload)
+        if len(sent) == 1:
+            choice = {'finish_reason': 'length'}
+        elif 'messages' in payload:
+            row = next((row for row in payload['messages'] if row['body'] == '确认报价 12 元'), None)
+            result = {'contact_id':'merchant-a'} if row is None else {'contact_id': 'merchant-a', 'logistics': {'price': {
+                'state':'known', 'value':'12 元',
+                'sources':[{'message_id':row['source_alias'], 'revision':row['revision']}],
+            }}}
+            if row is not None:
+                result['communication'] = {'last_business_at':row['sent_at']}
+            choice = {'finish_reason':'stop', 'message':{'content':json.dumps(result)}}
+        else:
+            choice = {'finish_reason':'stop', 'message':{'content':json.dumps(payload['candidates'][0])}}
+        return httpx.Response(200,json={'model':'synthetic','choices':[choice]})
+    client.app.state.services.model_transport = httpx.MockTransport(transport)
+    result = await run(client, 'focused-truncated-37')
+    assert result.state == 'succeeded', result.error_code
+    assert [len(p['history_unit'].get('primary_spans', [])) for p in sent] == [37, 18, 19]
+    assert result.counts['analysis_material_completed'] == 37
+    assert result.counts['model_requests_started'] == result.counts['model_requests'] == 3
+    profile = client.get('/api/contacts/merchant-a/profile', params={'account_id':'acct-1'}).json()
+    assert len(profile['effective']['logistics']['price']['sources']) == 2
+    from datetime import datetime
+    assert datetime.fromisoformat(profile['effective']['communication']['last_business_at']) == make_message().sent_at
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('ceiling,recovers', [(8192, False), (32768, True), (32768, False)])
+async def test_reasoning_only_length_has_one_bounded_recovery_and_no_split(flow, ceiling, recovers):
+    client, _, _ = flow
+    version = 1
+    if ceiling != 8192:
+        base = client.get('/api/model', params={'account_id':'acct-1'}).json()
+        config = {key:base[key] for key in ('account_id','endpoint','model_id','response_mode','context_tokens')}
+        assert client.put('/api/model',json={**config,'max_output_tokens':ceiling,'expected_version':1}).status_code == 200
+        version = 2
+        assert client.post('/api/model/check',json={'account_id':'acct-1','expected_version':version}).status_code == 200
+    assert client.post('/api/model/budget-review',json={'account_id':'acct-1','expected_version':version,
+        'reference':'https://docs.example/model-budget','acknowledged':True}).status_code == 200
+    client.app.state.services.source.pages['group-1'] = [make_page([make_message(message_id='price',body='确认报价 12 元')])]
+    provider(client)
+    original = client.app.state.services.model_transport
+    limits = []
+    async def transport(request):
+        limit = json.loads(request.content)['max_tokens']
+        limits.append(limit)
+        if recovers and len(limits) == 2:
+            return await original.handle_async_request(request)
+        return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'length','message':{'content':''}}],
+            'usage':{'completion_tokens':limit,'completion_tokens_details':{'reasoning_tokens':limit}}})
+    client.app.state.services.model_transport = httpx.MockTransport(transport)
+    result = await run(client, 'reasoning-only')
+    assert limits == ([8192, 16384] if ceiling > 8192 else [8192])
+    assert result.counts['analysis_refinements'] == 0
+    if recovers:
+        assert result.state == 'succeeded'
+    else:
+        assert result.error_code == 'model_reasoning_output_exhausted'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('resume,old_timeout', [(True,False),(True,True),(False,False)])
+async def test_existing_split_is_preserved_on_continue_and_replanned_for_new_run(flow, monkeypatch, resume, old_timeout):
+    from wechat_agent.analysis import runtime
+    from wechat_agent.analysis.execution import ExecutionBudget
+    from wechat_agent.analysis.history import WorkflowV5
+
+    client, _, _ = flow
+    review(client)
+    client.app.state.services.source.pages['group-1'] = [make_page([
+        make_message(message_id=f'price-{i}', body='确认报价 12 元') for i in range(34)
+    ])]
+    calls = provider(client)
+    original = client.app.state.services.model_transport
+    async def transport(request):
+        payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
+        if len(payload['history_unit'].get('primary_spans', [])) == 37:
+            return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'length'}]})
+        return await original.handle_async_request(request)
+    client.app.state.services.model_transport = httpx.MockTransport(transport)
+    # Reproduce the previous version's successful first child followed by a pause.
+    pack = WorkflowV5.pack_rows
+    monkeypatch.setattr(WorkflowV5, 'pack_rows', lambda self, rows, *args:
+                        pack(self, rows, *args) if len(rows) == 37 else None)
+    monkeypatch.setattr(runtime, 'ExecutionBudget', lambda:ExecutionBudget(max_calls=2))
+    paused = await run(client, 'old-refinement')
+    assert paused.error_code == 'analysis_budget_paused'
+    assert paused.counts['analysis_chunks_completed'] == 1
+    if old_timeout:
+        with closing(open_existing_db(client.app.state.database_path)) as conn:
+            conn.execute("UPDATE history_checkpoints SET error_code='model_timeout' WHERE error_code='output_truncated'")
+            conn.commit()
+        async def reject_parent(request):
+            payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
+            assert len(payload['history_unit'].get('primary_spans', [])) != 37
+            return await original.handle_async_request(request)
+        client.app.state.services.model_transport = httpx.MockTransport(reject_parent)
+    monkeypatch.setattr(WorkflowV5, 'pack_rows', pack)
+    monkeypatch.setattr(runtime, 'ExecutionBudget', ExecutionBudget)
+    calls.clear()
+    if resume:
+        response = client.post('/api/operations', json={'action':'resume','account_id':'acct-1','operation_id':paused.id})
+        assert response.status_code == 202
+        with closing(open_existing_db(client.app.state.database_path)) as conn:
+            result = await run_next(conn, client.app.state.services)
+        assert result.counts['analysis_chunks_reused'] >= 1
+    else:
+        result = await run(client, 'fresh-refinement')
+        assert [len(p['history_unit']['primary_spans']) for p in calls] == [18, 19]
+    assert result.state == 'succeeded'
+    assert result.counts['analysis_material_completed'] == 37

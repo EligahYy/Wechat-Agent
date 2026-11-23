@@ -17,3 +17,9 @@ it('keeps the direct small-history interface compact',()=>{
  const {container}=render(<HistoryProgress counts={{analysis_chunks_total:1,analysis_chunks_completed:1}} state="succeeded"/>);
  expect(container).toBeEmptyDOMElement();
 });
+it('shows a pending provider response with zero validated high-value messages',()=>{
+ render(<HistoryProgress counts={{relevance_total:341,relevance_high:37,analysis_chunks_total:3,analysis_material_total:37,analysis_refinements:1,model_requests_started:2,model_requests:1}} state="running"/>);
+ expect(screen.getByText('模型已请求 2 次 · 等待模型返回')).toBeVisible();
+ expect(screen.getByRole('progressbar')).toHaveAttribute('max','37');
+ expect(screen.getByRole('progressbar')).toHaveAttribute('value','0');
+});

@@ -51,6 +51,7 @@ class ModelMessage(BaseModel):
 
 class ModelRequest(BaseModel):
     allow_output_growth:bool=False
+    high_value_history:bool=False
     checkpoint_key:str|None=Field(default=None,min_length=1,max_length=64)
     model_config={'extra':'forbid'}
     call_id:str=Field(min_length=1,max_length=128)
