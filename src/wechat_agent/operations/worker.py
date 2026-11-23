@@ -227,7 +227,7 @@ async def run_next(conn, services, *, account_id=None, on_claim=None):
         async with _source(services, operation.scope.account_id) as source:
             result = await sync_scope(conn, source, operation.scope,
                 CancellationToken(operation_id=operation.id, generation=operation.generation),
-                **options.model_dump(), metadata_only=operation.action == 'refresh_contacts',
+                **options.model_dump(exclude={'text_strategy', 'relevance_review_refs'}), metadata_only=operation.action == 'refresh_contacts',
                 on_progress=lambda value, target: _save_progress(conn, operation, owner, value, target))
         result.elapsed_ms = round((monotonic() - source_started) * 1000)
         from ..contacts.activity import refresh_activity

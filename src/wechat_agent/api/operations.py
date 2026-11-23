@@ -85,3 +85,52 @@ def detail(request: Request, operation_id: str, account_id: str = Query(min_leng
             return get_operation(conn, account_id, operation_id)
     except sqlite3.Error:
         raise OperationError("database_unavailable", 503) from None
+
+
+@router.get("/api/operations/{operation_id}/relevance")
+def relevance_detail(request: Request, operation_id: str, account_id: str = Query(min_length=1, max_length=512),
+                     level: Literal['high', 'medium', 'low'] | None = None,
+                     day: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}-\d{2}$'),
+                     conversation_id: str | None = Query(default=None, max_length=512),
+                     page: int = Query(default=1, ge=1)):
+    from datetime import datetime
+    import json
+    from zoneinfo import ZoneInfo
+
+    from ..contacts.scope import business_scope_allows_analysis
+    from ..source.contracts import ContactKey
+    from ..context.relevance import RelevanceManifest
+
+    with closing(open_existing_db(request.app.state.database_path, readonly=True)) as conn, conn:
+        conn.execute('BEGIN')
+        authorize_account(request, conn, account_id)
+        row = conn.execute(
+            """SELECT r.contact_id,r.manifest_json,s.payload_json FROM message_relevance r JOIN snapshots s
+                 ON s.account_id=r.account_id AND s.snapshot_id=r.snapshot_id
+                 JOIN contacts c ON c.account_id=r.account_id AND c.contact_id=r.contact_id
+               WHERE r.account_id=? AND r.operation_id=? AND c.role='merchant' AND c.identity_state='active'""",
+            (account_id, operation_id),
+        ).fetchone()
+        if row is None or not business_scope_allows_analysis(conn, ContactKey(account_id=account_id, contact_id=row[0])):
+            raise OperationError('relevance_not_found', 404)
+        manifest = RelevanceManifest.model_validate_json(row[1])
+        payload = json.loads(row[2])
+        messages = {item['message_id']: item for item in payload['messages']}
+        items = []
+        for entry in manifest.entries:
+            if level and level != entry.level:
+                continue
+            message = messages[entry.message_id]
+            room = message['conversation_id']
+            if conversation_id and room != conversation_id:
+                continue
+            stamp = datetime.fromisoformat(message['sent_at'].replace('Z', '+00:00'))
+            day_key = stamp.astimezone(ZoneInfo('Asia/Shanghai')).date().isoformat()
+            if day and day != day_key:
+                continue
+            items.append({
+                **entry.model_dump(mode='json'), 'day': day_key, 'conversation_id': room,
+                'preview': message['body'][:160],
+            })
+        return {'items': items[(page - 1) * 20:page * 20], 'total': len(items), 'page': page,
+                'rule_version': manifest.rule_version, 'sources': payload['conversations']}

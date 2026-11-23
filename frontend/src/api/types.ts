@@ -76,6 +76,7 @@ export type Operation = {
     | "stopped"
     | "succeeded"
     | "failed";
+  options?: {text_strategy?: "full" | "relevance"; relevance_review_refs?: {message_id:string; revision:number}[] } | null;
   source_state: string | null;
   phase: string;
   counts: Record<string, number>;

@@ -44,14 +44,34 @@ def profile_status_for_row(conn, row, scope_version) -> ProfileStatus | None:
 def archive_status(conn, key, *, manifest, has_manual, complete, pending,
                    manual_version, role_version, scope_version) -> ProfileStatus:
     versions = dict(manual_version=manual_version, role_version=role_version, scope_version=scope_version)
+    receipt = conn.execute(
+        """SELECT s.manifest_json,r.outcome,json_extract(s.payload_json,'$.actors') FROM relevance_receipts r JOIN snapshots s
+           ON s.account_id=r.account_id AND s.snapshot_id=r.snapshot_id
+           WHERE r.account_id=? AND r.contact_id=? AND r.profile_version=COALESCE(
+             (SELECT version FROM profile_heads WHERE account_id=? AND contact_id=?),0)""",
+        (key.account_id, key.contact_id, key.account_id, key.contact_id),
+    ).fetchone()
+    current_receipt = receipt and inputs_match(conn, key, receipt[0], **versions)
+    if current_receipt:
+        actors = json.loads(receipt[2])
+        for identifier, old in actors.items():
+            current = conn.execute(
+                'SELECT role_version,identity_state,is_self FROM contacts WHERE account_id=? AND contact_id=?',
+                (key.account_id, identifier),
+            ).fetchone()
+            if current is None or tuple(current) != (old['role_version'], 'active', int(old['is_self'])):
+                current_receipt = False
+                break
     if manifest is not None:
-        if pending or not inputs_match(conn, key, manifest, **versions):
+        if pending or not current_receipt and not inputs_match(conn, key, manifest, **versions):
             return 'needs_update'
         return 'ready' if complete else 'incomplete'
     if has_manual:
         return 'manual'
     if material_rows(conn, key, '1').fetchone() is None:
         return 'no_data'
+    if current_receipt and receipt[1] == 'no_relevant_material':
+        return 'no_findings'
     empty = conn.execute(
         """SELECT s.manifest_json
            FROM history_runs h JOIN operation_items i
@@ -89,7 +109,7 @@ def latest_organization(conn, row):
         state = attempt['operation_state']
         reason = attempt['operation_error']
     if state == 'succeeded':
-        if attempt['item_state'] is None:
+        if attempt['item_state'] is None or reason == 'no_relevant_material':
             status = 'not_applicable'
         elif attempt['skipped']:
             status = 'unchanged'

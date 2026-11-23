@@ -208,7 +208,7 @@ export function App() {
       {recordDetailLoading ? <p className="muted" role="status">正在读取记录详情…</p> : recordDetailError ? (
         <div className="error-banner" role="alert"><span>{recordDetailError}</span><button className="text-button" onClick={() => void selectRecord(current, true)}>重试</button></div>
       ) : <>
-        <OperationDetails operation={current} onAction={(action)=>{if(action==='open_model_settings'){setRecordsOpen(false);setManageContacts(false);setPage('settings');}else if(action==='review_contact'){setRecordsOpen(false);setManageContacts(true);setPage('settings');}else if(action==='retry_sync'){void operations.start(current.scope.contact_id||undefined);}}} />
+        <OperationDetails operation={current} onReview={current.scope.contact_id ? refs => void operations.start(current.scope.contact_id || undefined, "relevance", refs) : undefined} onAction={(action)=>{if(action==='open_model_settings'){setRecordsOpen(false);setManageContacts(false);setPage('settings');}else if(action==='review_contact'){setRecordsOpen(false);setManageContacts(true);setPage('settings');}else if(action==='retry_sync'){void operations.start(current.scope.contact_id || undefined, current.options?.text_strategy === 'relevance' ? 'relevance' : undefined, current.options?.relevance_review_refs);}}} />
         {current.available_actions.includes("resume") && (
           <button className="button secondary" disabled={operations.submitting} onClick={() => void operations.resume(current)}>继续整理</button>
         )}

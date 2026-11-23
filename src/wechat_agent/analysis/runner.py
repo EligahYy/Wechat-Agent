@@ -4,6 +4,7 @@ from datetime import datetime,timezone
 import json
 from time import monotonic
 from .telemetry import record_stage
+from .relevance import RelevanceUnchanged
 from ..source.contracts import ContactKey
 from ..source.repository import transaction
 from ..context.builder import build_snapshot
@@ -38,9 +39,15 @@ async def analyze(conn,operation,owner,session,targets):
     counts.update(analysis_completed=0,analysis_skipped=0,analysis_failed=0,analysis_incomplete=0)
     token=CancellationToken(operation_id=operation.id,generation=operation.generation)
     first_error=None
+    workflow = session.workflow
+    if operation.options and operation.options.text_strategy == 'relevance':
+        from .history import WorkflowV5
+        workflow = WorkflowV5(conn, workflow.gateway, {
+            (ref.message_id, ref.revision) for ref in operation.options.relevance_review_refs
+        })
     for contact in targets:
         if not _owned(conn,operation,owner):_stop(conn,operation,owner);return
-        code=None;issues=[];skipped=False;incomplete=False
+        code=None;issues=[];skipped=False;incomplete=False;skip_reason=None
         with transaction(conn):conn.execute("UPDATE operation_items SET state='running' WHERE account_id=? AND operation_id=? AND item_id=?",(operation.scope.account_id,operation.id,'analysis:'+contact))
         preparing = monotonic()
         try:
@@ -59,8 +66,8 @@ async def analyze(conn,operation,owner,session,targets):
                     if i.code == NUMBERLESS_MESSAGE and i.severity == 'warning' and i.conversation_id
                 ),
             ) if item else None
-            snapshot=build_snapshot(conn,ContactKey(account_id=operation.scope.account_id,contact_id=contact),datetime.now(timezone.utc),coverage=coverage,reuse_published=True,versions={'template':'profile-v1','strategy':getattr(session.workflow,'strategy_version','workflow-v1'),'output_schema':'1','model_config':session.config.version})
-            same_input = unchanged(conn, snapshot)
+            snapshot=build_snapshot(conn,ContactKey(account_id=operation.scope.account_id,contact_id=contact),datetime.now(timezone.utc),coverage=coverage,reuse_published=workflow is session.workflow,versions={'template':'profile-v1','strategy':getattr(workflow,'strategy_version','workflow-v1'),'output_schema':'1','model_config':session.config.version})
+            same_input = workflow is session.workflow and unchanged(conn, snapshot)
             if not same_input and coverage and (set(coverage.required_conversation_ids)!=set(ContextReader(conn,snapshot).conversations()) or any(gap.split(':',1)[0] in {'source_not_complete','source_gap','source_issue','message_time_invalid','message_author_unverified'} for gap in snapshot.gaps)):
                 raise ModelCallError('source_not_complete')
             record_stage(conn, operation.scope.account_id, operation.id, 'prepare', preparing)
@@ -69,13 +76,17 @@ async def analyze(conn,operation,owner,session,targets):
                 previous=conn.execute('SELECT p.issues_json FROM profile_heads h JOIN profile_versions p ON p.account_id=h.account_id AND p.contact_id=h.contact_id AND p.version=h.version WHERE h.account_id=? AND h.contact_id=?',(operation.scope.account_id,contact)).fetchone()
                 issues=sorted(set(snapshot.gaps)|set(json.loads(previous[0]) if previous else []))
             else:
-                candidate=await session.workflow.run(snapshot,None,token)
+                candidate=await workflow.run(snapshot,None,token)
                 publishing = monotonic()
                 result=publish(conn,snapshot,candidate,token)
                 record_stage(conn, operation.scope.account_id, operation.id, 'publish', publishing)
                 issues=result.issues
                 if result.reason:raise ModelCallError(result.reason)
                 incomplete=not result.complete;issues=result.issues
+        except RelevanceUnchanged as result:
+            skipped = True
+            if result.outcome == 'no_relevant_material':
+                skip_reason = result.outcome
         except asyncio.CancelledError:raise
         except ModelCallError as error:code=error.code
         except Exception:code='analysis_failed'
@@ -92,7 +103,7 @@ async def analyze(conn,operation,owner,session,targets):
         with transaction(conn):
             if not _owned(conn,operation,owner):_stop(conn,operation,owner);return
             conn.execute('''UPDATE operation_items SET state=?,error_code=?,gaps_json=?,counts_json=? WHERE account_id=? AND operation_id=? AND item_id=?''',
-                ('failed' if code else 'succeeded',code or ('analysis_incomplete' if incomplete else None),json.dumps(issues),json.dumps({'skipped':int(skipped)}),operation.scope.account_id,operation.id,'analysis:'+contact))
+                ('failed' if code else 'succeeded',code or skip_reason or ('analysis_incomplete' if incomplete else None),json.dumps(issues),json.dumps({'skipped':int(skipped)}),operation.scope.account_id,operation.id,'analysis:'+contact))
             conn.execute('UPDATE operations SET counts_json=?,remaining=?,updated_at=? WHERE account_id=? AND id=?',
                 (json.dumps(counts),len(targets)-counts['analysis_completed']-counts['analysis_skipped'],now(),operation.scope.account_id,operation.id))
         if code == 'analysis_budget_paused':

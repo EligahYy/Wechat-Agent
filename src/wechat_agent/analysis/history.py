@@ -40,7 +40,7 @@ class WorkflowV2:
                     for row in payload['messages']
                 ]}
                 prompt += '\n引用原文可使用该消息的 source_alias 作为 message_id，revision 保持原值。省略没有证据的字段。'
-        uses_sparse_schema = self.strategy_version in {'workflow-v3', 'workflow-v4'} and phase == 'extract'
+        uses_sparse_schema = self.strategy_version in {'workflow-v3', 'workflow-v4', 'workflow-v5'} and phase == 'extract'
         if uses_sparse_schema:
             prompt += '\n输出只需包含有证据的字段。若返回 processed_primary_ids，逐一列出主材料消息编号，每个编号只出现一次。'
         material_key = 'messages' if phase == 'extract' else 'candidates'
@@ -76,13 +76,15 @@ class WorkflowV2:
             saved_error = saved['error_code']
             if (saved_error in {'output_truncated', 'model_timeout'}
                     or (saved_error == 'history_merge_incomplete' and request.phase == 'merge'
-                        and self.strategy_version == 'workflow-v4' and label != 'shipments')):
+                        and self.strategy_version in {'workflow-v4', 'workflow-v5'} and label != 'shipments')):
                 raise ModelCallError(saved_error)
             set_unit(self.conn,snapshot,token,request,'running',progress=progress)
             response=await self.gateway.generate(request,token)
-            aliases = build_aliases(allowed) if request.phase == 'extract' else {}
-            returned = resolve_aliases(response.payload, aliases)
             request_payload = json.loads(request.messages[-1].content)
+            aliases = build_aliases({
+                (row['message_id'], row['revision']) for row in request_payload.get('messages', [])
+            }) if request.phase == 'extract' else {}
+            returned = resolve_aliases(response.payload, aliases)
             if request.phase == 'extract':
                 primary = request_payload.get('history_unit', {}).get('primary_spans', request_payload.get('messages', []))
                 primary_ids = {row['message_id'] for row in primary}
@@ -146,13 +148,18 @@ class WorkflowV2:
             batches=[{'shipment_id':r['shipment_id'],'stage':r['stage'],'facts':json.loads(r['payload_json']),'numbers':json.loads(r['numbers_json']),'numbers_origin':r['numbers_origin']} for r in self.conn.execute('SELECT * FROM shipments WHERE account_id=? AND contact_id=? ORDER BY shipment_id',(snapshot.key.account_id,snapshot.key.contact_id))]
         base={'account_id':snapshot.key.account_id,'contact_id':snapshot.key.contact_id,'actors':reader.actors(),'conversations':reader.conversations(),
             'gaps':list(snapshot.gaps),'existing_shipments':batches,'manual_constraints':reader.manual()}
-        rows=reader.messages()
+        rows = reader.messages()
+        context_rows = rows
+        evidence = None
+        review_gaps = []
+        if self.strategy_version == 'workflow-v5':
+            rows, context_rows, evidence, review_gaps = self.select(snapshot, cancellation, reader, rows, batches)
         prompt=files('wechat_agent.model').joinpath('prompts/profile-v1.md').read_text()
         direct = None
         direct_failed = None
         # Raw body bytes are a lower bound for this estimator. Avoid building
         # and reserializing a full request that cannot meet the direct target.
-        if sum(len(row['body'].encode('utf-8')) for row in rows) <= INPUT_TARGET:
+        if evidence is None and sum(len(row['body'].encode('utf-8')) for row in rows) <= INPUT_TARGET:
             candidate = self.request(snapshot, {**base, 'messages': rows}, prompt)
             direct_budget = request_budget(candidate, self.gateway.config)
             if direct_budget.fits and direct_budget.input_tokens <= INPUT_TARGET:
@@ -173,6 +180,12 @@ class WorkflowV2:
         # the target or changing the frozen global publication authority.
         def extraction(selected,spans=()):
             pack = assemble_context(base, selected)
+            if evidence is not None:
+                pack = type(pack)([
+                    {**row, 'evidence_allowed': (row['message_id'], row['revision']) in evidence}
+                    for row in pack.messages
+                ], pack.actors, pack.conversations)
+
             visible_messages = {row['message_id'] for row in selected}
             rooms = set(pack.conversations)
             # Context gaps for other rooms or unrelated attachments do not
@@ -189,6 +202,8 @@ class WorkflowV2:
                 'history_unit': {'phase': 'extract', 'primary_spans': list(spans)},
             }
             return self.request(snapshot,payload,prompt)
+        if evidence is not None:
+            prompt += '\n只使用 evidence_allowed=true 的原文作为事实引用，其余消息仅解释语境。'
         # Include the primary manifest in planning as well as sending. A span per
         # visible message overestimates context-only metadata, which is safe.
         def planned(selected):
@@ -200,7 +215,7 @@ class WorkflowV2:
             if direct_failed:
                 yield direct_failed
                 return
-            if self.strategy_version in {'workflow-v3', 'workflow-v4'}:
+            if self.strategy_version in {'workflow-v3', 'workflow-v4', 'workflow-v5'}:
                 windows = {}
                 for row in rows:
                     key = (row['conversation_id'], row['sent_at'][:7])
@@ -214,19 +229,19 @@ class WorkflowV2:
             for room, window, selected in work:
                 target = INPUT_TARGET
                 if room:
-                    phase = EXTRACT_MATERIAL_PHASE if self.strategy_version == 'workflow-v4' else 'extract'
+                    phase = EXTRACT_MATERIAL_PHASE if self.strategy_version in {'workflow-v4', 'workflow-v5'} else 'extract'
                     target = pinned_target(
                         self.conn, snapshot.key.account_id, snapshot.key.contact_id,
                         self.gateway.config.version, room, window, phase=phase,
                     )
-                if room and self.strategy_version == 'workflow-v4':
+                if room and self.strategy_version in {'workflow-v4', 'workflow-v5'}:
                     chunks = await self.material_window(
-                        snapshot, room, window, selected, rows, planned, extraction, target,
+                        snapshot, room, window, selected, context_rows, planned, extraction, target,
                     )
                 else:
                     chunks = await asyncio.to_thread(
                         plan_chunks, selected, planned, self.gateway.config,
-                        soft_input_target=target, context_messages=rows,
+                        soft_input_target=target, context_messages=context_rows,
                     )
                 requests = []
                 for chunk in chunks:
@@ -244,7 +259,14 @@ class WorkflowV2:
         fatal={'model_cancelled','cancelled','authentication_failed','model_not_found','credential_unavailable','model_config_changed','checkpoint_scope_mismatch','refinement_invalid','analysis_budget_paused','material_changed'}
         async def extract_tree(chunk,req,depth=0):
             nonlocal refinement_nodes
-            try:return [await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in chunk.messages},reader=reader.restrict(chunk.messages),progress=progress)]
+            visible_refs = {(row['message_id'], row['revision']) for row in chunk.messages}
+            allowed = visible_refs if evidence is None else visible_refs & evidence
+            evidence_rows = [
+                row for row in chunk.messages if (row['message_id'], row['revision']) in allowed
+            ]
+            try:
+                return [await self.unit(snapshot, cancellation, req, allowed,
+                                        reader=reader.restrict(evidence_rows), progress=progress)]
             except ModelCallError as error:
                 if error.code not in {'output_truncated','model_timeout'} or depth>=MAX_DEPTH:raise
             primary=[]
@@ -256,7 +278,7 @@ class WorkflowV2:
             fixed=request_budget(planned(skeleton),self.gateway.config).input_tokens
             variable=request_budget(planned(primary),self.gateway.config).input_tokens-fixed
             limit=fixed+max(128,variable//2)
-            try:smaller=await asyncio.to_thread(plan_chunks,primary,planned,self.gateway.config,input_limit=limit,context_messages=rows,max_primary_messages=max(1,len(primary)//2))
+            try:smaller=await asyncio.to_thread(plan_chunks,primary,planned,self.gateway.config,input_limit=limit,context_messages=context_rows,max_primary_messages=max(1,len(primary)//2))
             except ModelCallError:raise ModelCallError('output_truncated') from None
             if len(smaller)>4 or (len(smaller)==1 and smaller[0].spans==chunk.spans):raise ModelCallError('output_truncated')
             planned_children = [
@@ -277,14 +299,14 @@ class WorkflowV2:
             ):
                 prior.setdefault((row[0], row[1]), set()).add(row[2])
             replay = any(keys == child_keys for keys in prior.values())
-            if refinement_nodes >= 8 and (not replay or self.strategy_version != 'workflow-v4'):
-                if self.strategy_version == 'workflow-v4':
+            if refinement_nodes >= 8 and (not replay or self.strategy_version not in {'workflow-v4', 'workflow-v5'}):
+                if self.strategy_version in {'workflow-v4', 'workflow-v5'}:
                     raise ModelCallError('analysis_budget_paused')
                 raise ModelCallError('output_truncated')
             children = [register_unit(self.conn, snapshot, cancellation, request, c.spans, c.ordinal, self.gateway.config)
                         for c, request in planned_children]
             supersede(self.conn,snapshot,cancellation,req,children,progress)
-            refinement_nodes += int(not replay or self.strategy_version != 'workflow-v4')
+            refinement_nodes += int(not replay or self.strategy_version not in {'workflow-v4', 'workflow-v5'})
             results=[];failure=None
             for child,request in zip(smaller,children):
                 try:results.extend(await extract_tree(child,request,depth+1))
@@ -301,23 +323,28 @@ class WorkflowV2:
                 first_error=first_error or error
             await asyncio.sleep(0)
         if first_error:raise first_error
-        gaps=sorted({gap for r in results for gap in r.gaps})
+        gaps=sorted({gap for r in results for gap in r.gaps} | set(review_gaps))
         meaningful=[r for r in results if any(source_refs(r))]
         if not meaningful:
             if not compute_coverage(self.conn, snapshot.key.account_id, snapshot.id).complete:
                 raise ModelCallError('history_coverage_incomplete')
             return AnalysisResult(contact_id=snapshot.key.contact_id, gaps=gaps)
+        if evidence is not None and len(meaningful) == 1:
+            if not compute_coverage(self.conn, snapshot.key.account_id, snapshot.id).complete:
+                raise ModelCallError('history_coverage_incomplete')
+            return meaningful[0].model_copy(update={'gaps': gaps})
         def merge_request(label,candidates):
             return self.request(snapshot,{**base,'history_unit':{'phase':'merge','field':label},'candidates':candidates},prompt,'merge')
         merge_target = pinned_target(
             self.conn, snapshot.key.account_id, snapshot.key.contact_id,
             self.gateway.config.version, '', str(snapshot.profile_version), phase='merge',
-        ) if self.strategy_version in {'workflow-v3', 'workflow-v4'} else INPUT_TARGET
+        ) if self.strategy_version in {'workflow-v3', 'workflow-v4', 'workflow-v5'} else INPUT_TARGET
         all_candidates=deduplicate(meaningful)
         aggregate_budget = request_budget(merge_request('all', all_candidates), self.gateway.config)
         if aggregate_budget.fits and aggregate_budget.input_tokens <= merge_target:
             groups = [('all', all_candidates)]
         else:groups=merge_groups(meaningful,snapshot.key.contact_id)
+        merge_reader = reader if evidence is None else reader.restrict(rows)
         first_error = None
         merge_ordinal = 0
 
@@ -341,11 +368,11 @@ class WorkflowV2:
                        for ref in source_refs(AnalysisResult.model_validate(c))}
             try:
                 result = await self.unit(snapshot, cancellation, req, allowed, label, candidates,
-                                         reader=reader, progress=progress,
-                                         require_coverage=covered or self.strategy_version == 'workflow-v4')
+                                         reader=merge_reader, progress=progress,
+                                         require_coverage=covered or self.strategy_version in {'workflow-v4', 'workflow-v5'})
             except ModelCallError as error:
                 if error.code not in {'output_truncated', 'model_timeout'} and not (
-                    error.code == 'history_merge_incomplete' and self.strategy_version == 'workflow-v4'
+                    error.code == 'history_merge_incomplete' and self.strategy_version in {'workflow-v4', 'workflow-v5'}
                     and label != 'shipments'
                 ):
                     raise
@@ -368,7 +395,7 @@ class WorkflowV2:
                 if local is not None:
                     allowed = {(ref.message_id, ref.revision) for c in candidates
                                for ref in source_refs(AnalysisResult.model_validate(c))}
-                    local = validate_unit(self.conn, snapshot, local.model_dump(), allowed, reader=reader)
+                    local = validate_unit(self.conn, snapshot, local.model_dump(), allowed, reader=merge_reader)
                     enforce_merge_scope(local, label, candidates)
                     record_reduction(self.conn, snapshot, cancellation, label, candidates, local)
                     output, units = [(label, local)], []
@@ -416,7 +443,7 @@ class WorkflowV2:
             raise first_error
         if not compute_coverage(self.conn,snapshot.key.account_id,snapshot.id).complete:raise ModelCallError('history_coverage_incomplete')
         result=combine(merged,snapshot.key.contact_id)
-        if self.strategy_version == 'workflow-v4':
+        if self.strategy_version in {'workflow-v4', 'workflow-v5'}:
             timestamps = [item.communication.last_business_at for item in results if item.communication.last_business_at]
             if timestamps:
                 result.communication.last_business_at = max(timestamps)
@@ -495,3 +522,40 @@ class WorkflowV4(WorkflowV3):
         if start < len(rows):
             chunks.extend(await plan(rows[start:], soft_material_target=target))
         return chunks
+
+
+class WorkflowV5(WorkflowV4):
+    strategy_version = 'workflow-v5'
+
+    def __init__(self, conn, gateway, reviewed_refs):
+        super().__init__(conn, gateway)
+        self.reviewed_refs = reviewed_refs
+
+    async def material_window(self, snapshot, room, window, rows, full_history, planned, extraction, target):
+        return await asyncio.to_thread(
+            plan_chunks, rows, planned, self.gateway.config,
+            context_messages=full_history, soft_material_target=target,
+        )
+
+    def select(self, snapshot, token, reader, rows, batches):
+        from ..context.relevance import classify_messages
+        from .relevance import save_relevance, selected_refs, retained_review_refs, finish_without_model
+
+        authorized = {(ref.message_id, ref.revision) for ref in snapshot.material_refs}
+        if not self.reviewed_refs <= authorized:
+            raise ModelCallError('relevance_review_material_changed')
+        reviewed = self.reviewed_refs | retained_review_refs(self.conn, snapshot)
+        manifest = classify_messages(snapshot, rows, reader.actors(), reader.conversations(),
+                                     known_batches=batches, reviewed_refs=reviewed)
+        save_relevance(self.conn, snapshot, token, manifest)
+        if any('revocation_review' in entry.reason_codes for entry in manifest.entries):
+            raise ModelCallError('relevance_revocation_review')
+        finish_without_model(self.conn, snapshot, token, manifest)
+        evidence = selected_refs(snapshot, manifest)
+        eligible = {(entry.message_id, entry.revision) for entry in manifest.entries if entry.usable}
+        primary = [row for row in rows if (row['message_id'], row['revision']) in evidence]
+        context = [row for row in rows if (row['message_id'], row['revision']) in eligible]
+        gaps = ['relevance_review_required'] if any(entry.needs_review for entry in manifest.entries) else []
+        if not primary:
+            raise ModelCallError('relevance_review_required')
+        return primary, context, evidence, gaps

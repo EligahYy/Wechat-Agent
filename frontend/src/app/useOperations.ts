@@ -127,7 +127,7 @@ export function useOperations(account: string | null, onDone: () => void) {
       clearTimeout(timer);
     };
   }, [account, job?.id, job?.state, read, onDone]);
-  const start = async (contactId?: string, action?: "refresh_contacts") => {
+  const start = async (contactId?: string, action?: "refresh_contacts" | "relevance", reviewRefs?: {message_id:string; revision:number}[]) => {
     if (!account || lock.current) return;
     lock.current = true;
     setSubmitting(true);
@@ -137,7 +137,8 @@ export function useOperations(account: string | null, onDone: () => void) {
       const result = await request<Operation>("/api/operations", {
         method: "POST",
         body: JSON.stringify({
-          action: action || "sync_and_organize",
+          action: action === "refresh_contacts" ? action : "sync_and_organize",
+          ...(action === "relevance" ? {options: {text_strategy: "relevance", relevance_review_refs: reviewRefs ?? []}} : {}),
           scope: {
             account_id: account,
             ...(contactId ? { contact_id: contactId } : {}),

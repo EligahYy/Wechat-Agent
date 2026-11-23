@@ -29,8 +29,16 @@ class CancellationToken(BaseModel):
 RunState = Literal["queued", "running", "stop_requested", "stopped", "succeeded", "failed"]
 
 
+class RelevanceReviewRef(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    message_id: str = Field(min_length=1, max_length=512)
+    revision: StrictInt = Field(gt=0)
+
+
 class SyncOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+    text_strategy: Literal['full', 'relevance'] = 'full'
+    relevance_review_refs: tuple[RelevanceReviewRef, ...] = Field(default=(), max_length=100)
     sample: StrictBool = False
     from_start: StrictBool = False
     page_size: StrictInt = Field(default=200, ge=1, le=500)
@@ -48,6 +56,8 @@ class SyncOptions(BaseModel):
 
     @model_validator(mode="after")
     def bounded_selection(self):
+        if self.relevance_review_refs and self.text_strategy != 'relevance':
+            raise ValueError('relevance_review_requires_strategy')
         if self.sample and (self.page_size > 20 or self.max_pages > 2):
             raise ValueError("sample_limits_exceeded")
         if self.conversation_ids is not None:

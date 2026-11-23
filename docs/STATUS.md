@@ -1,12 +1,14 @@
 # 当前实施状态
 
-M3 文本 workflow-v4 的五项修复已完成云端开发。下一项为[按档案字段筛选原文](superpowers/plans/2026-11-23-message-relevance.md)，随后推进附件获取与解析。[整理链路审查修复计划](superpowers/plans/2026-11-18-organize-review-followup.md)
+M3 文本 workflow-v4 的五项修复已完成云端开发。[按档案字段筛选原文](superpowers/plans/2026-11-23-message-relevance.md)已进入单客户试用。下一步核对真实样本并补齐依赖增量与模型提议补证，随后推进附件获取与解析。[整理链路审查修复计划](superpowers/plans/2026-11-18-organize-review-followup.md)
 
 更新：2026-11-23（北京时间）。本页是唯一执行位置入口；依据当前代码、主计划及交付记录核对。
 
 来源恢复补充：2026-11-16完成[接入／刷新／同步整理审查](verification/source-refresh-review.md)。统一同步前刷新、stale与failed分开、接受请求前置running并合并在途刷新；来源工具升级`.2`，Mac须按[升级步骤](MAC_SETUP.md#source-refresh-v2)更新来源及重启应用。Python完整回归503通过；Rust来源服务36通过，release构建及干净补丁重复安装校验通过；Mac恢复未验收。
 
 ## 当前执行位置
+
+已确认商家的资料页提供「高价值整理」。试用路径本地分级，模型提取高价值原文，整理记录显示分级和覆盖进度并支持选择原文复核。schema 20 保存分级清单和零调用核对记录。合成配对通过一组 278 条混合文本的请求数与原文字节各减少至少 50% 的门槛。真实 Mac 微信、DeepSeek 的分类召回与耗时待测。当前每轮按冻结快照重做本地分级，已验证的提取请求通过检查点复用。模型主动提出补证和按依赖局部重分类仍待实施。
 
 workflow-v4 增加合并核对、沟通状态保留、拆分续跑、临时故障冷却和快照复用。数据库自动升级至 schema 19。[云端回归与性能记录](verification/organize-review-followup.md)
 
@@ -26,7 +28,7 @@ workflow-v4 增加合并核对、沟通状态保留、拆分续跑、临时故�
 
 **M2任务1—7云端代码及审查修复已完成。M2真实商家与业务质量验收仍待Mac实测，不能用合成回放替代。**
 
-当前 schema 19，Python3.12，前端最低Node24.14.1。任务6检查点fe13fae；任务7交付结果见[单客户链路报告](verification/m2-profile-review.md)。
+当前 schema 20，Python3.12，前端最低Node24.14.1。任务6检查点fe13fae；任务7交付结果见[单客户链路报告](verification/m2-profile-review.md)。
 
 ## 阶段总览
 
@@ -74,7 +76,7 @@ workflow-v4 增加合并核对、沟通状态保留、拆分续跑、临时故�
 
 任务6：全Python479、资料与布局定向5浏览器、31单元、Node24.14.1构建通过。审查收尾最终全Python499、66浏览器、31单元和Node24.14.1构建通过，wheel包含本轮来源修复、runtime及014迁移；文档链接／锚点和diff检查通过。两项Important已先红后绿修复，见本轮报告。
 
-Mac按[更新指南](MAC_SETUP.md)pull、build、重启并核对 schema 19，保留现有库和wx-cli。先一名真实商家核对主体、货量／单位、路线、旧／新批次及来源、停止和人工保持，再考虑扩大调用；[质量清单](verification/m2-profile-review.md)尚未实测，不宣称真实业务质量已通过。
+Mac按[更新指南](MAC_SETUP.md)pull、build、重启并核对 schema 20，保留现有库和wx-cli。先一名真实商家核对主体、货量／单位、路线、旧／新批次及来源、停止和人工保持，再考虑扩大调用；[质量清单](verification/m2-profile-review.md)尚未实测，不宣称真实业务质量已通过。
 
 ## 已知后续项
 

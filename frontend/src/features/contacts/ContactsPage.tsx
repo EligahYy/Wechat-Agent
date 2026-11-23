@@ -74,7 +74,7 @@ export function ContactsPage({
   onScopeChanged?:()=>void;
   settings: AppSettings;
   revision: number;
-  onSync: (contactId?: string) => Promise<void>;
+  onSync: (contactId?: string, strategy?: "relevance") => Promise<void>;
   notify: (text: string) => void;
   operation: Operation|null;
   syncSubmitting:boolean;
@@ -737,7 +737,13 @@ export function ContactsPage({
         wide
         onClose={() => setDetailOpen(false)}
         headerActions={
-          detail && (
+          detail && (<>
+            {detail.role === "merchant" && (
+              <button className="button secondary" disabled={syncSubmitting || active(operation)}
+                onClick={() => void onSync(detail.key.contact_id, "relevance")}>
+                高价值整理
+              </button>
+            )}
             <button
               className="button secondary"
               disabled={syncSubmitting||active(operation)}
@@ -747,7 +753,7 @@ export function ContactsPage({
               <RefreshCw size={15} className={active(detailOperation)?'spin':undefined}/>
               {active(detailOperation)?detailOperation?.phase==='source'?'同步中…':'任务进行中…':detail.role==='merchant'?'同步并整理此客户':'同步该联系人消息'}
             </button>
-          )
+          </>)
         }
         status={detail&&(detailOperation||detailError)&&<CustomerSyncStatus operation={detailOperation} error={detailError} submitting={syncSubmitting} onStop={onStop} onDetails={onShowOperation}/>}
         title={

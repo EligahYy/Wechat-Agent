@@ -23,6 +23,13 @@ def compute_coverage(conn,account,snapshot_id):
     saved=conn.execute('SELECT s.manifest_json,h.materials_json FROM snapshots s LEFT JOIN history_runs h ON h.account_id=s.account_id AND h.snapshot_id=s.snapshot_id WHERE s.account_id=? AND s.snapshot_id=?',(account,snapshot_id)).fetchone()
     if not saved:raise ValueError('snapshot_not_authorized')
     refs={r['message_id']:r['revision'] for r in json.loads(saved['manifest_json'])['material_refs']}
+    from .relevance import load_relevance
+    relevance = load_relevance(conn, account, snapshot_id)
+    if relevance is not None:
+        classified = {entry.message_id: entry.revision for entry in relevance.entries}
+        if classified != refs or len(classified) != len(relevance.entries):
+            raise ValueError('relevance_coverage_incomplete')
+        refs = {entry.message_id: entry.revision for entry in relevance.entries if entry.level == 'high'}
     materials=json.loads(saved['materials_json']) if saved['materials_json'] else {}
     authorized={k:v['revision'] for k,v in materials.items()}==refs
     states={key:[] for key in refs}

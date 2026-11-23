@@ -1,3 +1,4 @@
+import {RelevanceReview,type ReviewRef} from './RelevanceReview';
 import {HistoryProgress} from './HistoryProgress';
 import {reasonLabels,presentOperation} from '../app/operationOutcome';
 import { metadataTotals } from "../app/operationPresentation";
@@ -44,7 +45,7 @@ const gapLabels: Record<string, string> = {
   archive_write_failed: "原文归档写入失败。",
 };
 
-export function OperationDetails({ operation,onAction }: { operation: Operation;onAction?:(action:string)=>void }) {
+export function OperationDetails({ operation,onAction,onReview }: { operation: Operation;onAction?:(action:string)=>void;onReview?:(refs:ReviewRef[])=>void }) {
   if(operation.action!=='refresh_contacts' && operation.report && !['queued','running','stop_requested'].includes(operation.state)) {
     const report=operation.report;
     const presentation=presentOperation(operation);
@@ -65,6 +66,9 @@ export function OperationDetails({ operation,onAction }: { operation: Operation;
           .map(([label,key])=>`${label} ${(operation.counts[key]/1000).toFixed(1)}秒`).join(' · ')}
           {operation.counts.model_requests!==undefined&&` · 模型请求 ${operation.counts.model_requests} 次`}</p>}
       <HistoryProgress counts={operation.counts} state={operation.state}/>
+      {operation.counts.relevance_total !== undefined && onReview && (
+        <RelevanceReview key={operation.id} operation={operation} onReview={onReview}/>
+      )}
       <div className="operation-outcomes"><p>消息同步：{{completed:'已完成（已知范围）',partial:(operation.counts.conversations_total>0&&operation.counts.completed_conversations>=operation.counts.conversations_total)?'会话已读取，仍有消息异常':'部分完成',failed:'未完成',stopped:'已停止',not_started:'未开始'}[report.source_outcome]||'处理中'} · {operation.counts.completed_conversations||0}/{operation.counts.conversations_total||0} 个会话</p>
       <p>资料整理：{operationTitle(operation)}</p></div>
       {(unique.length>0||notApplicable.length>0||report.analysis_outcome==='failed'||presentation.action)&&<div className="operation-gaps"><h4>本次处理提示</h4>

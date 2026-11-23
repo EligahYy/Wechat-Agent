@@ -18,7 +18,14 @@ def create_run(conn,snapshot,token,mode,config,*,messages=None):
         from ..context.reader import ContextReader
         messages=ContextReader(conn,snapshot).messages()
     materials={r['message_id']:{'revision':r['revision'],'total':len(r['body'])} for r in messages}
-    if {(k,v['revision']) for k,v in materials.items()}!={(r.message_id,r.revision) for r in snapshot.material_refs}:
+    authorized = {(r.message_id, r.revision) for r in snapshot.material_refs}
+    if snapshot.versions.get('strategy') == 'workflow-v5':
+        from .relevance import load_relevance, selected_refs
+        manifest = load_relevance(conn, snapshot.key.account_id, snapshot.id)
+        if manifest is None:
+            raise ModelCallError('relevance_coverage_incomplete')
+        authorized = selected_refs(snapshot, manifest)
+    if {(k, v['revision']) for k, v in materials.items()} != authorized:
         raise ModelCallError('snapshot_not_authorized')
     with transaction(conn):
         if cancellation_requested(conn,snapshot.key.account_id,token):raise ModelCallError('model_cancelled')

@@ -55,7 +55,28 @@ def _publish(conn,snapshot,result,cancellation):
         reader,head,reason=check_inputs(conn,snapshot,cancellation)
         if reason:return PublishResult(reason=reason)
         account,contact=snapshot.key.account_id,snapshot.key.contact_id
-        validated=validate_result(conn,snapshot,result)
+        evidence_reader = reader
+        if snapshot.versions.get('strategy') == 'workflow-v5':
+            from ..analysis.relevance import load_relevance, selected_refs
+
+            manifest = load_relevance(conn, account, snapshot.id)
+            if manifest is None:
+                return PublishResult(reason='relevance_coverage_incomplete')
+            allowed = selected_refs(snapshot, manifest)
+            evidence_reader = reader.restrict([
+                row for row in reader.messages() if (row['message_id'], row['revision']) in allowed
+            ])
+            # Existing batches can remain visible without a candidate in this
+            # run. Require explicit review before carrying stale evidence forward.
+            from ..analysis.facts import source_refs
+            for row in conn.execute('SELECT payload_json FROM shipments WHERE account_id=? AND contact_id=?',
+                                    (account, contact)):
+                prior_batch = AnalysisResult(contact_id=contact, shipments=[
+                    ShipmentCandidate.model_validate_json(row[0])
+                ])
+                if any((ref.message_id, ref.revision) not in allowed for ref in source_refs(prior_batch)):
+                    return PublishResult(reason='retained_evidence_unavailable')
+        validated=validate_result(conn,snapshot,result,reader=evidence_reader)
         if validated.reason:return PublishResult(reason=validated.reason,issues=validated.issues)
         previous=conn.execute('SELECT * FROM profile_versions WHERE account_id=? AND snapshot_id=?',(account,snapshot.id)).fetchone()
         if previous:return PublishResult(version=previous['version'],complete=bool(previous['complete']),pending=bool(previous['pending']),issues=json.loads(previous['issues_json']))
@@ -63,7 +84,7 @@ def _publish(conn,snapshot,result,cancellation):
         candidate=validated.result;issues=list(validated.issues)
         if head and head['version']:
             old=AnalysisResult.model_validate_json(conn.execute('SELECT result_json FROM profile_versions WHERE account_id=? AND contact_id=? AND version=?',(account,contact,head['version'])).fetchone()[0])
-            prior=validate_result(conn,snapshot,old)
+            prior=validate_result(conn,snapshot,old,reader=evidence_reader)
             original_old=old
             old=prior.result
             if snapshot.coverage is not None:
@@ -100,7 +121,7 @@ def _publish(conn,snapshot,result,cancellation):
         indices={}
         for i,batch in enumerate(original.shipments):indices.setdefault(batch.candidate_key,i)
         def restore_batch(payload,batch):
-            prior=validate_result(conn,snapshot,AnalysisResult(contact_id=contact,shipments=[ShipmentCandidate.model_validate_json(payload)]))
+            prior=validate_result(conn,snapshot,AnalysisResult(contact_id=contact,shipments=[ShipmentCandidate.model_validate_json(payload)]),reader=evidence_reader)
             previous_batch=ShipmentCandidate.model_validate_json(payload)
             if snapshot.coverage is not None:
                 restored=prior.result.shipments[0] if prior.result and prior.result.shipments else None
