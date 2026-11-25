@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from tests.factories import make_message, make_page
-from tests.test_single_customer_flow import flow, open_existing_db, review, run_next
+from tests.test_single_customer_flow import flow, open_existing_db, review, run_next, sync
 from wechat_agent.source.repository import archive_page
 
 
@@ -107,7 +107,6 @@ async def test_paired_history_sends_fewer_model_requests(flow):
         *[make_message(message_id=f'noise-{n}', body='早上好') for n in range(277)],
         make_message(message_id='tail', body='确认报价 12 元'),
     ])]
-    from tests.test_single_customer_flow import sync
     full = await sync(client, 'full-baseline')
     assert full.state == 'succeeded', full.error_code
     baseline_calls = len(calls)
@@ -390,24 +389,46 @@ async def test_reasoning_only_length_has_one_bounded_recovery_and_no_split(flow,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('resume,old_timeout', [(True,False),(True,True),(False,False)])
-async def test_existing_split_is_preserved_on_continue_and_replanned_for_new_run(flow, monkeypatch, resume, old_timeout):
+@pytest.mark.parametrize('resume,old_timeout,upgrade', [(True,False,False),(True,True,False),(False,False,False),(True,False,'once'),(True,False,'twice')])
+async def test_existing_split_is_preserved_on_continue_and_replanned_for_new_run(flow, monkeypatch, resume, old_timeout, upgrade):
     from wechat_agent.analysis import runtime
     from wechat_agent.analysis.execution import ExecutionBudget
     from wechat_agent.analysis.history import WorkflowV5
 
     client, _, _ = flow
-    review(client)
+    model = 'deepseek-flash' if upgrade else 'synthetic'
+    if upgrade:
+        from wechat_agent.analysis import checkpoints
+        from wechat_agent.context import tokens
+        from wechat_agent.model import gateway
+        assert client.put('/api/model',json={'account_id':'acct-1','expected_version':1,
+            'endpoint':'https://api.deepseek.com/chat/completions','model_id':model,'api_key':'synthetic-key',
+            'response_mode':'json_object','context_tokens':128000,'max_output_tokens':8192}).status_code == 200
+        client.app.state.services.model_transport = httpx.MockTransport(lambda _: httpx.Response(200,
+            json={'model':model,'choices':[{'finish_reason':'stop','message':{'content':'{"probe":"ok"}'}}]}))
+        assert client.post('/api/model/check',json={'account_id':'acct-1','expected_version':2}).status_code == 200
+        assert client.post('/api/model/budget-review',json={'account_id':'acct-1','expected_version':2,
+            'reference':'https://docs.example/model-budget','acknowledged':True}).status_code == 200
+        flags = [checkpoints, tokens, gateway]
+        original_flags = [module.profile_non_thinking for module in flags]
+        for module in flags:
+            monkeypatch.setattr(module, 'profile_non_thinking', lambda *_: False)
+    else:
+        review(client)
     client.app.state.services.source.pages['group-1'] = [make_page([
         make_message(message_id=f'price-{i}', body='确认报价 12 元') for i in range(34)
     ])]
     calls = provider(client)
     original = client.app.state.services.model_transport
+    async def regular_reply(request):
+        reply = (await original.handle_async_request(request)).json()
+        return httpx.Response(200, json={**reply, 'model':model})
+
     async def transport(request):
         payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
         if len(payload['history_unit'].get('primary_spans', [])) == 37:
-            return httpx.Response(200,json={'model':'synthetic','choices':[{'finish_reason':'length'}]})
-        return await original.handle_async_request(request)
+            return httpx.Response(200,json={'model':model,'choices':[{'finish_reason':'length'}]})
+        return await regular_reply(request)
     client.app.state.services.model_transport = httpx.MockTransport(transport)
     # Reproduce the previous version's successful first child followed by a pause.
     pack = WorkflowV5.pack_rows
@@ -417,24 +438,38 @@ async def test_existing_split_is_preserved_on_continue_and_replanned_for_new_run
     paused = await run(client, 'old-refinement')
     assert paused.error_code == 'analysis_budget_paused'
     assert paused.counts['analysis_chunks_completed'] == 1
+    if upgrade:
+        for module, flag in zip(flags, original_flags):
+            monkeypatch.setattr(module, 'profile_non_thinking', flag)
     if old_timeout:
         with closing(open_existing_db(client.app.state.database_path)) as conn:
             conn.execute("UPDATE history_checkpoints SET error_code='model_timeout' WHERE error_code='output_truncated'")
             conn.commit()
+    if old_timeout or upgrade:
         async def reject_parent(request):
             payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
             assert len(payload['history_unit'].get('primary_spans', [])) != 37
-            return await original.handle_async_request(request)
+            return await regular_reply(request)
         client.app.state.services.model_transport = httpx.MockTransport(reject_parent)
     monkeypatch.setattr(WorkflowV5, 'pack_rows', pack)
     monkeypatch.setattr(runtime, 'ExecutionBudget', ExecutionBudget)
     calls.clear()
     if resume:
+        if upgrade == 'twice':
+            monkeypatch.setattr(runtime, 'ExecutionBudget', lambda:ExecutionBudget(max_calls=0))
         response = client.post('/api/operations', json={'action':'resume','account_id':'acct-1','operation_id':paused.id})
         assert response.status_code == 202
         with closing(open_existing_db(client.app.state.database_path)) as conn:
             result = await run_next(conn, client.app.state.services)
         assert result.counts['analysis_chunks_reused'] >= 1
+        if upgrade == 'twice':
+            assert result.error_code == 'analysis_budget_paused'
+            monkeypatch.setattr(runtime, 'ExecutionBudget', ExecutionBudget)
+            response = client.post('/api/operations', json={'action':'resume','account_id':'acct-1','operation_id':result.id})
+            assert response.status_code == 202
+            with closing(open_existing_db(client.app.state.database_path)) as conn:
+                result = await run_next(conn, client.app.state.services)
+            assert result.counts['analysis_chunks_reused'] >= 1
     else:
         result = await run(client, 'fresh-refinement')
         assert [len(p['history_unit']['primary_spans']) for p in calls] == [18, 19]
@@ -544,3 +579,68 @@ async def test_prior_batch_needing_review_does_not_block_new_fields(flow):
     with closing(open_existing_db(client.app.state.database_path)) as conn:
         old = conn.execute('SELECT payload_json FROM shipments WHERE shipment_id=?', (batches[0].existing_id,)).fetchone()
         assert ShipmentCandidate.model_validate_json(old[0]) == batches[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['default','ignored','ignored_without_usage','resume'])
+async def test_official_deepseek_flash_uses_non_thinking_for_extraction(flow, mode):
+
+    client, _, _ = flow
+    source = client.app.state.services.source
+    source.pages['group-1'] = [make_page([
+        make_message(message_id=f'quote-{index}', body='确认报价 12 元')
+        for index in range(36)
+    ])]
+    requests = []
+    model = 'deepseek-flash'
+    def respond(request):
+        body = json.loads(request.content)
+        if body['messages'][-1]['content'] == 'Return {"probe":"ok"}.':
+            requests.append(('probe', body))
+            choice = {'finish_reason':'stop', 'message':{'content':'{"probe":"ok"}'}}
+        else:
+            requests.append(('extract', body))
+            if mode == 'resume' and len(requests) == 1:
+                raise httpx.ReadTimeout('provider stalled', request=request)
+            if mode == 'ignored_without_usage':
+                return httpx.Response(200,json={'model':model,'choices':[{
+                    'finish_reason':'stop','message':{'content':'','reasoning_content':'synthetic reasoning output'}
+                }]})
+            if mode == 'ignored' or body.get('thinking') != {'type':'disabled'}:
+                return httpx.Response(200, json={'model':model, 'choices':[
+                    {'finish_reason':'length','message':{'content':'','reasoning_content':'synthetic reasoning output'}}
+                ], 'usage':{'completion_tokens':body['max_tokens'],
+                             'completion_tokens_details':{'reasoning_tokens':body['max_tokens']}}})
+            fact = {'state':'known','value':'12 元','sources':[{'message_id':'quote-0','revision':1}]}
+            choice = {'finish_reason':'stop','message':{'content':json.dumps({
+                'contact_id':'merchant-a','logistics':{'price':fact}
+            })}}
+        return httpx.Response(200,json={'model':model,'choices':[choice]})
+
+    client.app.state.services.model_transport = httpx.MockTransport(respond)
+    assert client.put('/api/model',json={'account_id':'acct-1','expected_version':1,
+        'endpoint':'https://api.deepseek.com/chat/completions','model_id':model,'api_key':'synthetic-key',
+        'response_mode':'json_object','context_tokens':1048000,'max_output_tokens':32768}).status_code == 200
+    assert client.post('/api/model/check',json={'account_id':'acct-1','expected_version':2}).status_code == 200
+    assert client.post('/api/model/budget-review',json={'account_id':'acct-1','expected_version':2,
+        'reference':'https://docs.example/model-budget','acknowledged':True}).status_code == 200
+    assert [kind for kind, _ in requests] == ['probe']
+    assert requests[0][1].get('thinking') == {'type':'disabled'}
+    requests.clear()
+    result = await run(client, f'non-thinking-{mode}')
+    assert result.counts['relevance_high'] == 39
+    if mode == 'resume':
+        assert result.error_code == 'model_timeout'
+        response = client.post('/api/operations',json={'action':'resume','account_id':'acct-1','operation_id':result.id})
+        assert response.status_code == 202
+        with closing(open_existing_db(client.app.state.database_path)) as conn:
+            result = await run_next(conn, client.app.state.services)
+    assert [body['max_tokens'] for _, body in requests] == ([8192,8192] if mode == 'resume' else [8192])
+    assert all(body.get('thinking') == {'type':'disabled'} for _, body in requests)
+    assert result.counts['model_non_thinking_requests'] == 1
+    if mode.startswith('ignored'):
+        assert result.error_code == 'model_reasoning_output_exhausted'
+        assert result.counts.get('model_reasoning_exhausted_tokens') == (8192 if mode == 'ignored' else None)
+    else:
+        assert result.state == 'succeeded', result.error_code
+        assert result.counts['analysis_material_completed'] == 39

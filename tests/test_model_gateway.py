@@ -227,3 +227,71 @@ async def test_connect_timeout_is_distinguished_from_provider_response_timeout(s
     assert error.value.code == 'model_connect_timeout'
     assert len(calls) == 1
     assert db.execute('SELECT status FROM model_calls').fetchone()[0] == 'model_connect_timeout'
+
+
+@pytest.mark.parametrize('old_state', ['succeeded', 'failed'])
+def test_deepseek_request_policy_reuses_only_verified_previous_checkpoints(setup_gateway, db, old_state):
+    from wechat_agent.analysis.checkpoints import checkpoint, create_run, register_unit, unit_cache_key
+    from wechat_agent.context.contracts import ContextSnapshot
+    from wechat_agent.model.contracts import ModelMessage
+
+    gateway, request, token, *_ = setup_gateway
+    snapshot = ContextSnapshot.model_validate_json(db.execute(
+        'SELECT manifest_json FROM snapshots WHERE snapshot_id=?', (request.snapshot_id,)
+    ).fetchone()[0])
+    config = gateway.config.model_copy(update={
+        'endpoint': 'https://api.deepseek.com/v1/chat/completions',
+        'model_id': 'deepseek-v4-flash',
+        'capabilities': gateway.config.capabilities.model_copy(update={'model_id': 'deepseek-v4-flash'}),
+    })
+    request = request.model_copy(update={'messages': [ModelMessage(role='user', content='{"messages":[]}')]})
+    create_run(db, snapshot, token, 'direct', config)
+    legacy_key = unit_cache_key(snapshot, request, ())
+    output = '{"contact_id":"merchant-a"}' if old_state == 'succeeded' else None
+    with db:
+        db.execute('''INSERT INTO history_checkpoints VALUES(?,?,?,?,?,?,?,?)''',
+                   ('acct-1', 'merchant-a', legacy_key, 'extract', old_state, 6, output,
+                    None if output else 'output_truncated'))
+    new_request = register_unit(db, snapshot, token, request, (), 0, config)
+    saved = checkpoint(db, snapshot, new_request)
+    assert new_request.checkpoint_key != legacy_key
+    assert saved['requests'] == 0 and saved['error_code'] is None
+    assert saved['state'] == ('succeeded' if output else 'pending')
+    assert saved['output_json'] == output
+
+
+@pytest.mark.parametrize('endpoint,model_id,phase,purpose,enabled', [
+    ('https://api.deepseek.com:443/v1/chat/completions','deepseek-v4-pro','merge','profile',True),
+    ('https://api.deepseek.com/chat/completions','deepseek-flash','verify','discovery',False),
+    ('https://api.deepseek.com/chat/completions','deepseek-reasoner','extract','profile',False),
+    ('https://proxy.example/chat/completions','deepseek-flash','extract','profile',False),
+])
+def test_provider_payload_keeps_other_endpoints_and_purposes_compatible(setup_gateway, endpoint, model_id, phase, purpose, enabled):
+    from wechat_agent.context.tokens import wire_payload
+    gateway, request, *_ = setup_gateway
+    config = gateway.config.model_copy(update={'endpoint': endpoint, 'model_id': model_id})
+    request = request.model_copy(update={'phase': phase, 'purpose': purpose})
+    payload = wire_payload(request, config)
+    assert payload.get('thinking') == ({'type': 'disabled'} if enabled else None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('finish_reason', ['length', 'stop'])
+async def test_other_endpoints_keep_existing_empty_result_recovery(setup_gateway, finish_reason):
+    from wechat_agent.model.contracts import ModelCallError
+
+    gateway, request, token, responses, calls, _, client = setup_gateway
+    request = request.model_copy(update={'high_value_history':True})
+    responses.append(httpx.Response(200, json={'model':'synthetic','choices':[
+        {'finish_reason':finish_reason,'message':{'content':'','reasoning_content':'synthetic'}}
+    ]}))
+    responses.append(answer())
+    async with client:
+        if finish_reason == 'stop':
+            assert (await gateway.generate(request, token)).payload == {'ok': True}
+            assert [json.loads(call.content)['max_tokens'] for call in calls] == [100, 100]
+        else:
+            with pytest.raises(ModelCallError, match='模型请求未完成') as error:
+                await gateway.generate(request, token)
+            assert error.value.code == 'output_truncated'
+            assert len(calls) == 1

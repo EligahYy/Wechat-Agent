@@ -4,6 +4,7 @@ import hashlib
 import json
 from ..source.repository import transaction,cancellation_requested
 from ..model.contracts import ModelCallError
+from ..model.provider_options import profile_non_thinking
 from ..context.tokens import ESTIMATOR,request_budget
 from ..operations.service import now
 from .coverage import span_coverage
@@ -47,7 +48,7 @@ def material_dependencies(payload):
     return sorted(refs)
 
 
-def unit_cache_key(snapshot, request, primary):
+def unit_cache_key(snapshot, request, primary, config=None):
     payload = json.loads(request.messages[-1].content)
     reads_previous_profile = request.phase != 'extract' or 'history_unit' not in payload
     versions = snapshot.versions
@@ -55,14 +56,18 @@ def unit_cache_key(snapshot, request, primary):
         # V4 changes merge and publication. Identical extraction requests
         # retain their validated results and cross-operation retry history.
         versions = {**versions, 'strategy': 'workflow-v3'}
-    return digest({'policy':'chunked-text-v1','account':snapshot.key.account_id,'contact':snapshot.key.contact_id,
+    policy = 'chunked-text-v1'
+    if config is not None and profile_non_thinking(request, config):
+        policy = 'chunked-text-v1:deepseek-non-thinking'
+    return digest({'policy':policy,'account':snapshot.key.account_id,'contact':snapshot.key.contact_id,
         'role':snapshot.role_version,'manual':snapshot.manual_version,'scope':snapshot.scope_version,
         'profile':snapshot.profile_version if reads_previous_profile else None,'versions':versions,'coverage':snapshot.coverage.model_dump() if reads_previous_profile and snapshot.coverage else None,
         'phase':request.phase,'messages':[m.model_dump() for m in request.messages],
         'schema':request.output_schema,'output':request.output_tokens,'primary':[asdict(s) for s in primary]})
 
 def register_unit(conn,snapshot,token,request,primary,ordinal,config):
-    key = unit_cache_key(snapshot, request, primary)
+    key = unit_cache_key(snapshot, request, primary, config)
+    legacy_key = unit_cache_key(snapshot, request, primary) if profile_non_thinking(request, config) else key
     payload = json.loads(request.messages[-1].content)
     unit='h:'+digest([snapshot.id,token.operation_id,key])
     request=request.model_copy(update={'unit_id':unit,'call_id':unit,'checkpoint_key':key})
@@ -73,6 +78,19 @@ def register_unit(conn,snapshot,token,request,primary,ordinal,config):
         if cancellation_requested(conn,snapshot.key.account_id,token):raise ModelCallError('model_cancelled')
         conn.execute('''INSERT INTO history_checkpoints(account_id,contact_id,cache_key,phase,state)
             VALUES(?,?,?,?,'pending') ON CONFLICT DO NOTHING''',(snapshot.key.account_id,snapshot.key.contact_id,key,request.phase))
+        if legacy_key != key:
+            # Keep verified facts. Failures and request quotas belong to the old request mode.
+            account, contact = snapshot.key.account_id, snapshot.key.contact_id
+            saved = conn.execute(
+                "SELECT output_json FROM history_checkpoints WHERE account_id=? AND contact_id=? AND cache_key=? AND state='succeeded'",
+                (account, contact, legacy_key),
+            ).fetchone()
+            if saved:
+                conn.execute(
+                    """UPDATE history_checkpoints SET state='succeeded',output_json=?
+                       WHERE account_id=? AND contact_id=? AND cache_key=? AND state='pending' AND requests=0""",
+                    (saved['output_json'], account, contact, key),
+                )
         conn.executemany(
             'INSERT INTO history_checkpoint_refs VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING',
             ((snapshot.key.account_id, snapshot.key.contact_id, key, identifier, revision)

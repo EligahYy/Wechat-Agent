@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..source.contracts import CapabilityReport
+from .provider_options import deepseek_non_thinking
 
 
 class ModelProbeConfig(BaseModel):
@@ -59,6 +60,8 @@ def _request(config: ModelProbeConfig) -> dict:
             {"role": "user", "content": 'Return {"probe":"ok"}.'},
         ],
     }
+    if deepseek_non_thinking(config.endpoint, config.model_id):
+        payload["thinking"] = {"type": "disabled"}
     if config.response_mode == "json_object":
         payload["response_format"] = {"type": "json_object"}
     elif config.response_mode == "json_schema":

@@ -10,6 +10,7 @@ from ..context.assembler import assemble_context
 from .adaptive import EXTRACT_MATERIAL_PHASE, pinned_target
 from ..context.tokens import request_budget
 from ..model.gateway import MODEL_DEADLINE_SECONDS
+from ..model.provider_options import deepseek_non_thinking
 from ..model.contracts import ModelRequest,ModelMessage,ModelCallError
 from ..profiles.contracts import AnalysisResult,analysis_result_schema
 from ..profiles.publisher import check_inputs
@@ -191,7 +192,6 @@ class WorkflowV2:
             rows, context_rows, evidence, review_gaps = self.select(snapshot, cancellation, reader, rows, batches)
         prompt=files('wechat_agent.model').joinpath('prompts/profile-v1.md').read_text()
         direct = None
-        direct_failed = None
         # Raw body bytes are a lower bound for this estimator. Avoid building
         # and reserializing a full request that cannot meet the direct target.
         if evidence is None and sum(len(row['body'].encode('utf-8')) for row in rows) <= INPUT_TARGET:
@@ -199,17 +199,6 @@ class WorkflowV2:
             direct_budget = request_budget(candidate, self.gateway.config)
             if direct_budget.fits and direct_budget.input_tokens <= INPUT_TARGET:
                 direct = candidate
-        if direct is not None:
-            create_run(self.conn,snapshot,cancellation,'direct',self.gateway.config,messages=rows)
-            spans=tuple(MessageSpan(r['message_id'],r['revision'],0,len(r['body']),len(r['body'])) for r in rows)
-            req=register_unit(self.conn,snapshot,cancellation,direct,spans,0,self.gateway.config)
-            progress=RunProgress(self.conn,snapshot,cancellation);progress.persist()
-            try:result=await self.unit(snapshot,cancellation,req,{(r['message_id'],r['revision']) for r in rows},reader=reader,progress=progress)
-            except ModelCallError as error:
-                if error.code not in {'output_truncated','model_timeout'}:raise
-                direct_failed=(ContextChunk(0,tuple(rows),spans,request_budget(req,self.gateway.config)),req)
-            if direct_failed is None and not compute_coverage(self.conn,snapshot.key.account_id,snapshot.id).complete:raise ModelCallError('history_coverage_incomplete')
-            if direct_failed is None:return result
         prompt+='\n'+files('wechat_agent.model').joinpath('prompts/history-v1.md').read_text()
         # Limit metadata to what a chunk can actually observe, without omitting
         # the target or changing the frozen global publication authority.
@@ -249,12 +238,18 @@ class WorkflowV2:
         # visible message overestimates context-only metadata, which is safe.
         def planned(selected):
             return extraction(selected,[{'message_id':r['message_id'],'revision':r['revision'],**r.get('body_fragment',{'start':0,'end':len(r['body']),'total':len(r['body'])})} for r in selected])
-        create_run(self.conn,snapshot,cancellation,'chunked',self.gateway.config,messages=rows)
+        create_run(self.conn, snapshot, cancellation, 'direct' if direct else 'chunked',
+                   self.gateway.config, messages=rows)
         progress = RunProgress(self.conn, snapshot, cancellation)
 
         async def planned_requests():
-            if direct_failed:
-                yield direct_failed
+            if direct is not None:
+                spans = tuple(MessageSpan(row['message_id'], row['revision'], 0, len(row['body']), len(row['body']))
+                              for row in rows)
+                req = register_unit(self.conn, snapshot, cancellation, direct, spans, 0, self.gateway.config)
+                progress.load()
+                progress.persist()
+                yield ContextChunk(0, tuple(rows), spans, request_budget(req, self.gateway.config)), req
                 return
             if evidence is not None:
                 packed = self.compact_unit(snapshot, cancellation, rows, context_rows, extraction)
@@ -308,7 +303,10 @@ class WorkflowV2:
         refinement_nodes=0
         fatal={'model_cancelled','cancelled','authentication_failed','model_not_found','credential_unavailable','model_config_changed','checkpoint_scope_mismatch','refinement_invalid','analysis_budget_paused','material_changed','model_connect_timeout'}
         if evidence is not None:
-            fatal.update({'model_timeout', 'model_reasoning_output_exhausted'})
+            fatal.add('model_timeout')
+        non_thinking = deepseek_non_thinking(self.gateway.config.endpoint, self.gateway.config.model_id)
+        if evidence is not None or non_thinking:
+            fatal.add('model_reasoning_output_exhausted')
 
         async def refine(chunk, req):
             packed = json.loads(req.messages[-1].content).get('history_unit', {}).get('packing')
@@ -321,10 +319,11 @@ class WorkflowV2:
                        JOIN history_refinements e
                        ON e.account_id=p.account_id AND e.snapshot_id=p.snapshot_id AND e.parent_id=p.unit_id
                        JOIN history_run_units c ON c.account_id=e.account_id AND c.snapshot_id=e.snapshot_id
-                       AND c.unit_id=e.child_id WHERE o.account_id=? AND o.id=? AND p.contact_id=? AND p.cache_key=?
+                       AND c.unit_id=e.child_id WHERE o.account_id=? AND o.id=? AND p.contact_id=? AND p.cache_key IN (?,?)
                        AND json_extract(json_extract(c.request_json,'$.messages[#-1].content'),
                            '$.history_unit.packing') IS NULL LIMIT 1""",
-                    (snapshot.key.account_id, cancellation.operation_id, snapshot.key.contact_id, req.checkpoint_key),
+                    (snapshot.key.account_id, cancellation.operation_id, snapshot.key.contact_id,
+                     req.checkpoint_key, unit_cache_key(snapshot, req, chunk.spans)),
                 ).fetchone()
                 if not legacy:
                     pivot = len(chunk.spans) // 2
@@ -349,6 +348,55 @@ class WorkflowV2:
                 for c in smaller
             ]
 
+        async def replan_verified_children(chunk, req):
+            # The old parent budget does not apply to the current request mode.
+            # Keep a prior split on explicit continuation if its children still match.
+            if not non_thinking or checkpoint(self.conn, snapshot, req)['state'] != 'pending':
+                return None
+            legacy_key = unit_cache_key(snapshot, req, chunk.spans)
+            old_children = self.conn.execute(
+                """WITH RECURSIVE prior_parent AS (
+                     SELECT p.account_id,p.snapshot_id,p.unit_id,p.cache_key
+                     FROM operations o JOIN history_runs h
+                       ON h.account_id=o.account_id AND o.idempotency_key='resume:'||h.operation_id
+                     JOIN history_run_units p ON p.account_id=h.account_id AND p.snapshot_id=h.snapshot_id
+                     WHERE o.account_id=? AND o.id=? AND p.contact_id=?
+                       AND p.cache_key IN (?,?) AND p.superseded=1
+                   ), prior_tree(account_id,snapshot_id,unit_id) AS (
+                     SELECT account_id,snapshot_id,unit_id FROM prior_parent
+                     UNION
+                     SELECT e.account_id,e.snapshot_id,e.child_id FROM prior_tree p
+                     JOIN history_refinements e ON e.account_id=p.account_id AND e.snapshot_id=p.snapshot_id
+                       AND e.parent_id=p.unit_id
+                   )
+                   SELECT p.cache_key AS parent_key,child.cache_key
+                   FROM prior_parent p JOIN history_refinements e ON e.account_id=p.account_id
+                     AND e.snapshot_id=p.snapshot_id AND e.parent_id=p.unit_id
+                   JOIN history_run_units child ON child.account_id=e.account_id AND child.snapshot_id=e.snapshot_id
+                     AND child.unit_id=e.child_id
+                   WHERE EXISTS (
+                     SELECT 1 FROM prior_tree t JOIN history_run_units verified ON verified.account_id=t.account_id
+                       AND verified.snapshot_id=t.snapshot_id AND verified.unit_id=t.unit_id
+                     WHERE verified.state='succeeded' AND verified.superseded=0
+                   )""",
+                (snapshot.key.account_id, cancellation.operation_id, snapshot.key.contact_id,
+                 req.checkpoint_key, legacy_key),
+            ).fetchall()
+            if not old_children:
+                return None
+            try:
+                children = await refine(chunk, req)
+            except ModelCallError as error:
+                if error.code != 'output_truncated':
+                    raise
+                return None
+            old_config = None if old_children[0]['parent_key'] == legacy_key else self.gateway.config
+            if {unit_cache_key(snapshot, request, child.spans, old_config) for child, request in children} == {
+                row['cache_key'] for row in old_children
+            }:
+                return children
+            return None
+
         async def extract_tree(chunk,req,depth=0):
             nonlocal refinement_nodes
             visible_refs = {(row['message_id'], row['revision']) for row in chunk.messages}
@@ -356,14 +404,16 @@ class WorkflowV2:
             evidence_rows = [
                 row for row in chunk.messages if (row['message_id'], row['revision']) in allowed
             ]
-            try:
-                return [await self.unit(snapshot, cancellation, req, allowed,
-                                        reader=reader.restrict(evidence_rows), progress=progress)]
-            except ModelCallError as error:
-                if error.code in fatal and not isinstance(error, PreviouslySplitTimeout):raise
-                if error.code not in {'output_truncated','model_timeout'} or depth>=MAX_DEPTH:raise
-            planned_children = await refine(chunk, req)
-            child_keys = {unit_cache_key(snapshot, request, chunk.spans)
+            verified_plan = await replan_verified_children(chunk, req) if depth < MAX_DEPTH else None
+            if verified_plan is None:
+                try:
+                    return [await self.unit(snapshot, cancellation, req, allowed,
+                                            reader=reader.restrict(evidence_rows), progress=progress)]
+                except ModelCallError as error:
+                    if error.code in fatal and not isinstance(error, PreviouslySplitTimeout):raise
+                    if error.code not in {'output_truncated','model_timeout'} or depth>=MAX_DEPTH:raise
+            planned_children = verified_plan or await refine(chunk, req)
+            child_keys = {unit_cache_key(snapshot, request, chunk.spans, self.gateway.config)
                           for chunk, request in planned_children}
             prior = {}
             for row in self.conn.execute(
@@ -376,14 +426,14 @@ class WorkflowV2:
                 (snapshot.key.account_id, snapshot.key.contact_id, req.checkpoint_key),
             ):
                 prior.setdefault((row[0], row[1]), set()).add(row[2])
-            replay = any(keys == child_keys for keys in prior.values())
+            replay = verified_plan is not None or any(keys == child_keys for keys in prior.values())
             if refinement_nodes >= 8 and (not replay or self.strategy_version not in {'workflow-v4', 'workflow-v5'}):
                 if self.strategy_version in {'workflow-v4', 'workflow-v5'}:
                     raise ModelCallError('analysis_budget_paused')
                 raise ModelCallError('output_truncated')
             children = [register_unit(self.conn, snapshot, cancellation, request, c.spans, c.ordinal, self.gateway.config)
                         for c, request in planned_children]
-            supersede(self.conn,snapshot,cancellation,req,children,progress)
+            supersede(self.conn,snapshot,cancellation,req,children,progress,replaying_verified_plan=verified_plan is not None)
             refinement_nodes += int(not replay or self.strategy_version not in {'workflow-v4', 'workflow-v5'})
             results=[];failure=None
             for (child, _), request in zip(planned_children,children):
@@ -401,6 +451,10 @@ class WorkflowV2:
                 first_error=first_error or error
             await asyncio.sleep(0)
         if first_error:raise first_error
+        if direct is not None and len(results) == 1:
+            if not compute_coverage(self.conn, snapshot.key.account_id, snapshot.id).complete:
+                raise ModelCallError('history_coverage_incomplete')
+            return results[0]
         gaps=sorted({gap for r in results for gap in r.gaps} | set(review_gaps))
         meaningful=[r for r in results if any(source_refs(r))]
         if not meaningful:
@@ -587,11 +641,13 @@ class WorkflowV4(WorkflowV3):
                 if span.start or span.end != span.total:
                     fragment_chunks.setdefault(span.message_id, set()).add(index)
             request = extraction(list(chunk.messages), [asdict(span) for span in chunk.spans])
-            key = unit_cache_key(snapshot, request, chunk.spans)
+            key = unit_cache_key(snapshot, request, chunk.spans, config)
+            legacy_key = unit_cache_key(snapshot, request, chunk.spans)
             saved = self.conn.execute(
-                """SELECT 1 FROM history_checkpoints WHERE account_id=? AND contact_id=? AND cache_key=?
-                   AND (state='succeeded' OR requests>0)""",
-                (*identity, key),
+                """SELECT 1 FROM history_checkpoints WHERE account_id=? AND contact_id=?
+                   AND ((cache_key=? AND (state='succeeded' OR requests>0))
+                        OR (cache_key=? AND state='succeeded'))""",
+                (*identity, key, legacy_key),
             ).fetchone()
             if saved:
                 saved_indices.add(index)
