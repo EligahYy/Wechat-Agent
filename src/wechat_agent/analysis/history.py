@@ -773,7 +773,7 @@ class WorkflowV5(WorkflowV4):
         )
 
     def select(self, snapshot, token, reader, rows, batches):
-        from ..context.relevance import classify_messages
+        from ..context.relevance import classify_messages, has_review_gap
         from .relevance import save_relevance, selected_refs, retained_review_refs, finish_without_model
 
         authorized = {(ref.message_id, ref.revision) for ref in snapshot.material_refs}
@@ -790,7 +790,7 @@ class WorkflowV5(WorkflowV4):
         eligible = {(entry.message_id, entry.revision) for entry in manifest.entries if entry.usable}
         primary = [row for row in rows if (row['message_id'], row['revision']) in evidence]
         context = [row for row in rows if (row['message_id'], row['revision']) in eligible]
-        gaps = ['relevance_review_required'] if any(entry.needs_review for entry in manifest.entries) else []
+        gaps = ['relevance_review_required'] if any(has_review_gap(entry) for entry in manifest.entries) else []
         if not primary:
             raise ModelCallError('relevance_review_required')
         return primary, context, evidence, gaps

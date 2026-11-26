@@ -44,7 +44,10 @@ test('new customer outcome stays in the list when switching records and reopenin
  await expect(newest).toHaveAttribute('aria-expanded','true');
  await expect(history.locator('.history-record').filter({hasText:'消息已同步，整理未完成'})).toHaveAttribute('data-tone','error');
  expect(await newest.evaluate(node=>{const c=getComputedStyle(node).backgroundColor.match(/[\d.]+/g)!.map(Number);return c[0]>c[1]&&c[0]>c[2];})).toBe(true);
- await expect(history.locator('.operation-facts .info-chip').filter({hasText:'新增 0'})).toBeVisible();
+ const archiveCount=history.getByText('新增 0',{exact:true});
+ await expect(archiveCount).toBeHidden();
+ await history.getByText('诊断详情',{exact:true}).click();
+ await expect(archiveCount).toBeVisible();
  await expect(history.locator('.operation-outcomes')).toBeVisible();
  await history.locator('.history-entry').filter({hasText:'来源同步不完整'}).click();
  await expect(newest).toBeVisible();await newest.click();

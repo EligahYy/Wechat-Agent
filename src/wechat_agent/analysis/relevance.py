@@ -3,7 +3,7 @@
 import json
 
 from ..context.reader import ContextReader
-from ..context.relevance import RelevanceManifest
+from ..context.relevance import RelevanceManifest, has_review_gap, reviewable
 from ..model.contracts import ModelCallError
 from ..source.repository import cancellation_requested, transaction
 
@@ -40,6 +40,7 @@ def save_relevance(conn, snapshot, token, manifest):
                            (account, token.operation_id)).fetchone()
         counts = json.loads(row[0])
         counts['relevance_total'] = len(manifest.entries)
+        counts['relevance_reviewable'] = sum(reviewable(entry) for entry in manifest.entries)
         for level in ('high', 'medium', 'low'):
             counts[f'relevance_{level}'] = sum(entry.level == level for entry in manifest.entries)
         conn.execute('UPDATE operations SET counts_json=? WHERE account_id=? AND id=?',
@@ -81,7 +82,7 @@ def finish_without_model(conn, snapshot, token, manifest):
     from ..profiles.status import inputs_match
 
     key = snapshot.key
-    if any(entry.needs_review for entry in manifest.entries):
+    if any(has_review_gap(entry) for entry in manifest.entries):
         return
     high = selected_refs(snapshot, manifest)
     outcome = None

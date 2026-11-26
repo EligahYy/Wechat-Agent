@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 
-RULE_VERSION = 'text-relevance-v1'
+RULE_VERSION = 'text-relevance-v2'
 FIELDS = {
     'goods.products': r'货品|品名|塑料|服装|配件|收纳盒|电池|纯电|带电|液体|粉末',
     'goods.special_attributes': r'纯电|带电|液体|粉末|磁性|敏感货|危险品',
@@ -25,7 +25,6 @@ FIELDS = {
 }
 PATTERNS = [(field, re.compile(pattern, re.I)) for field, pattern in FIELDS.items()]
 NOISE = re.compile(r'(?:早上好|早安|晚安|你好|您好|节日快乐|哈哈+|\[表情\]|[👍😂🙂🙏❤❤️]+)[!！。\s]*')
-CONTEXTUAL = re.compile(r'改成|改为|改一下|改了|换成|先别|先不|按上次|按之前|就这个|就这样|另外一票|取消|收到|可以的?|对的?|确认')
 CHANGE = re.compile(r'改成|改为|换成|先别|先不|取消|已发|签收|暂缓|放行|卸货|延后')
 ATTACHMENT_KINDS = {'image', 'video', 'voice', 'file', 'attachment', 'link', 'forward'}
 
@@ -46,6 +45,21 @@ class RelevanceManifest(BaseModel):
     model_config = ConfigDict(frozen=True)
     rule_version: str = RULE_VERSION
     entries: tuple[RelevanceEntry, ...]
+
+
+def reviewable(entry: RelevanceEntry) -> bool:
+    return (
+        entry.level == 'medium' and entry.usable and entry.needs_review
+        and ('business_change_review' in entry.reason_codes
+             or any(path != 'communication.summary' for path in entry.field_paths))
+    )
+
+
+def has_review_gap(entry: RelevanceEntry) -> bool:
+    return reviewable(entry) or any(
+        code in {'revocation_review', 'ambiguous_recipients', 'attachment_unprocessed'}
+        for code in entry.reason_codes
+    )
 
 
 def classify_messages(snapshot, rows, actors, conversations, *, known_batches=(), reviewed_refs=()):
@@ -114,10 +128,10 @@ def classify_messages(snapshot, rows, actors, conversations, *, known_batches=()
         elif NOISE.fullmatch(body) and not linked:
             entry = RelevanceEntry(**local, level='low', reason_codes=('greeting_or_reaction',))
         else:
+            business_change = bool(active and attributable and CHANGE.search(body))
             entry = RelevanceEntry(**local, level='medium', usable=active and attributable,
                                    dependencies=(prior.message_id,) if linked else (),
-                                   reason_codes=('context_required',),
-                                   needs_review=bool(fields or CONTEXTUAL.search(body) or (
-                                       active and attributable and len(body) >= 12)))
+                                   reason_codes=('business_change_review',) if business_change else ('context_required',),
+                                   needs_review=business_change or any(path != 'communication.summary' for path in fields))
         results[identifier] = (room, entry)
     return RelevanceManifest(entries=tuple(entry for _, entry in results.values()))

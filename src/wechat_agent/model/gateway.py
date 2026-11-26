@@ -14,6 +14,7 @@ from .contracts import ModelConfig,ModelRequest,ModelResponse,ModelCallError,MOD
 from ..source.repository import transaction,cancellation_requested
 from ..context.tokens import request_budget,wire_payload
 from .provider_options import profile_non_thinking
+from ..analysis.execution import RESUMABLE_FAILURES
 
 TEMPORARY_FAILURES = {'rate_limited', 'model_temporary_error'}
 MODEL_DEADLINE_SECONDS = 120
@@ -82,18 +83,19 @@ class ModelGateway:
                 self.execution_budget.reserve(self.conn, account, token.operation_id)
             if request.checkpoint_key:
                 identity = (account, contact, request.checkpoint_key)
-                if unit['requests'] == 0 and self.conn.execute(
-                    """SELECT 1 FROM operations o JOIN operations parent
+                if unit['requests'] == 0:
+                    parent = self.conn.execute(
+                        """SELECT parent.error_code FROM operations o JOIN operations parent
                          ON parent.account_id=o.account_id AND o.idempotency_key='resume:'||parent.id
                        WHERE o.account_id=? AND o.id=? AND parent.contact_id=?
-                         AND parent.action=o.action AND parent.state='failed'
-                         AND parent.error_code IN ('model_timeout','model_connect_timeout','unit_request_limit','call_request_limit')""",
-                    (account, token.operation_id, contact),
-                ).fetchone():
-                    self.conn.execute(
-                        'UPDATE history_checkpoints SET requests=0 WHERE account_id=? AND contact_id=? AND cache_key=? AND requests>=6',
-                        identity,
-                    )
+                         AND parent.action=o.action AND parent.state='failed'""",
+                        (account, token.operation_id, contact),
+                    ).fetchone()
+                    if parent is not None and parent['error_code'] in RESUMABLE_FAILURES:
+                        self.conn.execute(
+                            'UPDATE history_checkpoints SET requests=0 WHERE account_id=? AND contact_id=? AND cache_key=? AND requests>=6',
+                            identity,
+                        )
                 if self.execution_budget is not None:
                     retry = self.conn.execute(
                         'SELECT operation_id,retry_at FROM history_retry_windows WHERE account_id=? AND contact_id=? AND cache_key=?',

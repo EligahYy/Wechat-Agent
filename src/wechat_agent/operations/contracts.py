@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, computed_field, model_validator
 
 from ..source.contracts import ContactKey
+from ..analysis.execution import RESUMABLE_FAILURES
 
 
 class OperationScope(BaseModel):
@@ -107,7 +108,7 @@ class Operation(BaseModel):
     def available_actions(self) -> list[str]:
         retryable = (
             self.scope.contact_id and self.phase == 'analysis'
-            and self.error_code in {'model_timeout', 'model_connect_timeout', 'unit_request_limit', 'call_request_limit'}
+            and self.error_code in RESUMABLE_FAILURES
         )
         if self.action == 'sync_and_organize' and self.state == 'failed' and retryable:
             return ['resume']

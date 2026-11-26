@@ -753,3 +753,79 @@ async def test_timeout_split_preserves_large_required_reply_context(flow):
     assert len(reply_sizes) > 1 and all(size < reply_sizes[0] for size in reply_sizes[1:])
     assert final.counts['analysis_material_completed'] == final.counts['relevance_high']
     assert final.counts['analysis_chunks_reused'] > 0
+
+
+@pytest.mark.asyncio
+async def test_review_queue_only_lists_actionable_business_messages(flow):
+    client, _, _ = flow
+    review(client)
+    provider(client)
+    client.app.state.services.source.pages['group-1'] = [make_page([
+        make_message(message_id='quote', body='确认报价 12 元'),
+        make_message(message_id='chatter', body='今天这边天气很好大家晚上出去吃饭吧'),
+        make_message(message_id='short-confirmation', body='对的'),
+        make_message(message_id='business-change', body='这个先别发'),
+        make_message(message_id='attachment', body='报价文件.pdf', kind='file'),
+        make_message(message_id='unattributed-price', body='报价 16 元', sender_id='provider-p'),
+    ])]
+    result = await run(client, 'reviewable-only')
+    assert result.state == 'succeeded', result.error_code
+    url = f'/api/operations/{result.id}/relevance'
+    reviewable = client.get(url, params={'account_id':'acct-1', 'reviewable_only':True}).json()
+    assert reviewable['total'] == 1
+    assert [row['message_id'] for row in reviewable['items']] == ['business-change']
+    archived = client.get(url, params={'account_id':'acct-1'}).json()
+    assert {'chatter', 'attachment', 'unattributed-price', 'short-confirmation'} <= {
+        row['message_id'] for row in archived['items']
+    }
+
+
+@pytest.mark.asyncio
+async def test_format_failure_at_execution_limit_can_continue_from_archive(flow, monkeypatch):
+    from wechat_agent.analysis import history, runtime
+    from wechat_agent.analysis.execution import ExecutionBudget
+    from wechat_agent.operations import worker
+
+    client, _, _ = flow
+    review(client)
+    client.app.state.services.source.pages['group-1'] = [
+        make_page([
+            make_message(message_id='price', body='确认报价 12 元', sent_at='2026-10-20T18:00:00+08:00'),
+            make_message(message_id='quantity', body='确认货量 20 方'),
+        ])
+    ]
+    provider(client)
+    original = client.app.state.services.model_transport
+
+    async def malformed_second_window(request):
+        messages = json.loads(request.content)['messages']
+        payload = json.loads(next(message['content'] for message in messages if message['role'] == 'user'))
+        if any(span['message_id'] == 'quantity' for span in payload['history_unit']['primary_spans']):
+            return httpx.Response(200, json={
+                'model':'synthetic','choices':[{'finish_reason':'stop','message':{'content':'invalid output'}}],
+            })
+        return await original.handle_async_request(request)
+
+    client.app.state.services.model_transport = httpx.MockTransport(malformed_second_window)
+    monkeypatch.setattr(history, 'COMPACT_MAX_MESSAGES', 1)
+    monkeypatch.setattr(runtime, 'ExecutionBudget', lambda:ExecutionBudget(max_calls=4))
+    failed = await run(client, 'invalid-at-budget')
+    assert failed.error_code == 'output_invalid'
+    assert failed.counts['model_requests'] == 4
+    assert failed.counts['analysis_chunks_completed'] == 2
+    assert failed.available_actions == ['resume']
+
+    calls = provider(client)
+    def unexpected_sync(*args, **kwargs):
+        raise AssertionError('compatible local archive should be reused')
+    monkeypatch.setattr(worker, 'sync_scope', unexpected_sync)
+    response = client.post('/api/operations', json={
+        'action':'resume', 'account_id':'acct-1', 'operation_id':failed.id,
+    })
+    assert response.status_code == 202
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        result = await run_next(conn, client.app.state.services)
+    assert result.state == 'succeeded', result.error_code
+    assert len(calls) == 1
+    assert result.counts['analysis_chunks_reused'] == 2
+    assert result.counts['source_checkpoint_reused'] == 1

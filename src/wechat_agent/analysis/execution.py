@@ -5,6 +5,15 @@ import time
 from ..model.contracts import ModelCallError
 
 
+# Failed attempts that can be re-run against the same archive and authorization.
+RESUMABLE_FAILURES = frozenset({
+    'model_timeout', 'model_connect_timeout', 'model_temporary_error',
+    'rate_limited', 'model_retry_limit', 'model_retry_cooling_down', 'retry_after_exceeds_deadline',
+    'output_invalid', 'completion_not_finished', 'chunk_source_outside_unit',
+    'unit_request_limit', 'call_request_limit',
+})
+
+
 @dataclass(frozen=True)
 class ExecutionBudget:
     max_calls: int = 20

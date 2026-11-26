@@ -67,26 +67,13 @@ export function OperationDetails({ operation,onAction,onReview }: { operation: O
       ['读取响应正文时超时', 'model_timeout_reading_body'],
     ].filter(([, key]) => operation.counts[key]);
     return <section className="operation-detail"><h3>{operationTitle(operation)}</h3>
-      <div className="operation-facts">
-        <span className="info-chip">新增 {operation.counts.inserted||0}</span>
-        <span className="info-chip">修订 {operation.counts.revised||0}</span>
-        <span className="info-chip">不变 {operation.counts.unchanged||0}</span>
-      </div>
       {!!operation.counts.source_checkpoint_reused&&<p className="muted">本次复用已同步的原文。</p>}
       {operation.error_code==='analysis_budget_paused'&&<p>本次已到处理预算，继续整理时会复用已验证的分段。</p>}
-      {Object.keys(operation.counts).some(key=>key.startsWith('timing_'))&&
-        <p className="muted">{([
-          ['同步','timing_source_ms'], ['准备','timing_prepare_ms'], ['提取','timing_model_extract_ms'],
-          ['归纳','timing_model_merge_ms'], ['重试等待','timing_retry_wait_ms'], ['发布','timing_publish_ms'],
-        ] as const).filter(([,key])=>operation.counts[key]!==undefined)
-          .map(([label,key])=>`${label} ${(operation.counts[key]/1000).toFixed(1)}秒`).join(' · ')}
-          {operation.counts.model_requests!==undefined&&` · 模型请求 ${operation.counts.model_requests} 次`}</p>}
-      <HistoryProgress counts={operation.counts} state={operation.state}/>
-      {operation.counts.relevance_total !== undefined && onReview && (
+      {!!operation.counts.analysis_material_total&&<p className="muted">已校验 {operation.counts.analysis_material_completed||0} / {operation.counts.analysis_material_total} 条原文</p>}
+      {operation.counts.relevance_total !== undefined && operation.counts.relevance_reviewable !== 0 && onReview && (
         <RelevanceReview key={operation.id} operation={operation} onReview={onReview}/>
       )}
-      <div className="operation-outcomes"><p>消息同步：{{completed:'已完成（已知范围）',partial:(operation.counts.conversations_total>0&&operation.counts.completed_conversations>=operation.counts.conversations_total)?'会话已读取，仍有消息异常':'部分完成',failed:'未完成',stopped:'已停止',not_started:'未开始'}[report.source_outcome]||'处理中'} · {operation.counts.completed_conversations||0}/{operation.counts.conversations_total||0} 个会话</p>
-      <p>资料整理：{operationTitle(operation)}</p></div>
+      <div className="operation-outcomes"><p>消息同步：{{completed:'已完成（已知范围）',partial:(operation.counts.conversations_total>0&&operation.counts.completed_conversations>=operation.counts.conversations_total)?'会话已读取，仍有消息异常':'部分完成',failed:'未完成',stopped:'已停止',not_started:'未开始'}[report.source_outcome]||'处理中'} · {operation.counts.completed_conversations||0}/{operation.counts.conversations_total||0} 个会话</p></div>
       {(unique.length>0||notApplicable.length>0||report.analysis_outcome==='failed'||presentation.action)&&<div className="operation-gaps"><h4>本次处理提示</h4>
       {notApplicable.map(c=><p key={c.contact_id}>{reasonLabels[c.reason!]}</p>)}
       {[...new Map(unique.map(i=>[i.code,i])).values()].slice(0,2).map((i,n)=><p key={n}>{i.severity==='warning'?(i.stage==='publication'?'待核对':'范围提示'):'原因'}：{reasonLabels[i.code]||gapLabels[i.code]||'本次处理遇到异常，可展开诊断详情查看。'}</p>)}
@@ -95,6 +82,19 @@ export function OperationDetails({ operation,onAction,onReview }: { operation: O
       </div>}
       {report.contacts.length>1&&<ul className="operation-customer-results">{report.contacts.map(c=><li key={c.contact_id}>{c.name_snapshot||c.contact_id} · {c.analysis_outcome==='failed'?'未完成':c.analysis_outcome==='partial'?'已更新，需核对':c.analysis_outcome==='updated'?'已更新':c.analysis_outcome==='unchanged'?'无需更新':c.analysis_outcome==='no_findings'?'暂无可确认事实':'未执行'}</li>)}</ul>}
       <details className="operation-diagnostics"><summary>诊断详情</summary>
+      <div className="operation-facts">
+        <span className="info-chip">新增 {operation.counts.inserted||0}</span>
+        <span className="info-chip">修订 {operation.counts.revised||0}</span>
+        <span className="info-chip">不变 {operation.counts.unchanged||0}</span>
+      </div>
+      {Object.keys(operation.counts).some(key=>key.startsWith('timing_'))&&
+        <p className="muted">{([
+          ['同步','timing_source_ms'], ['准备','timing_prepare_ms'], ['提取','timing_model_extract_ms'],
+          ['归纳','timing_model_merge_ms'], ['重试等待','timing_retry_wait_ms'], ['发布','timing_publish_ms'],
+        ] as const).filter(([,key])=>operation.counts[key]!==undefined)
+          .map(([label,key])=>`${label} ${(operation.counts[key]/1000).toFixed(1)}秒`).join(' · ')}
+          {operation.counts.model_requests!==undefined&&` · 模型请求 ${operation.counts.model_requests} 次`}</p>}
+      <HistoryProgress counts={operation.counts} state={operation.state}/>
         {attempts.length>0&&<p>{attempts.map(([label,key])=>`${label} ${operation.counts[key]} 次`).join(' · ')}</p>}
         {!!operation.counts.model_non_thinking_requests&&<p>请求关闭推理 {operation.counts.model_non_thinking_requests} 次</p>}
         {!!operation.counts.model_reasoning_exhausted_tokens&&<p>最近一次只返回推理，用量 {operation.counts.model_reasoning_exhausted_tokens} tokens</p>}
@@ -139,6 +139,10 @@ export function OperationDetails({ operation,onAction,onReview }: { operation: O
         <span>已完成 {completed}</span>
         <span>未完成 {unfinished}</span>
       </div></>}
+      {!metadataOnly && ["queued","running","stop_requested"].includes(operation.state) &&
+        <details className="operation-diagnostics"><summary>整理进度</summary>
+          <HistoryProgress counts={counts} state={operation.state}/>
+        </details>}
       {metadataOnly && archive && <div className="operation-facts">
         <span>刷新后归档 {archive.total} 人</span>
         <span>本次来源收录 {archive.current} 人</span>

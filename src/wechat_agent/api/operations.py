@@ -92,6 +92,7 @@ def relevance_detail(request: Request, operation_id: str, account_id: str = Quer
                      level: Literal['high', 'medium', 'low'] | None = None,
                      day: str | None = Query(default=None, pattern=r'^\d{4}-\d{2}-\d{2}$'),
                      conversation_id: str | None = Query(default=None, max_length=512),
+                     reviewable_only: bool = False,
                      page: int = Query(default=1, ge=1)):
     from datetime import datetime
     import json
@@ -99,7 +100,7 @@ def relevance_detail(request: Request, operation_id: str, account_id: str = Quer
 
     from ..contacts.scope import business_scope_allows_analysis
     from ..source.contracts import ContactKey
-    from ..context.relevance import RelevanceManifest
+    from ..context.relevance import RelevanceManifest, reviewable
 
     with closing(open_existing_db(request.app.state.database_path, readonly=True)) as conn, conn:
         conn.execute('BEGIN')
@@ -118,6 +119,8 @@ def relevance_detail(request: Request, operation_id: str, account_id: str = Quer
         messages = {item['message_id']: item for item in payload['messages']}
         items = []
         for entry in manifest.entries:
+            if reviewable_only and not reviewable(entry):
+                continue
             if level and level != entry.level:
                 continue
             message = messages[entry.message_id]
@@ -132,5 +135,7 @@ def relevance_detail(request: Request, operation_id: str, account_id: str = Quer
                 **entry.model_dump(mode='json'), 'day': day_key, 'conversation_id': room,
                 'preview': message['body'][:160],
             })
+        if reviewable_only:
+            items.reverse()
         return {'items': items[(page - 1) * 20:page * 20], 'total': len(items), 'page': page,
                 'rule_version': manifest.rule_version, 'sources': payload['conversations']}

@@ -29,13 +29,14 @@ test('customer sees scoped progress and result without closing or scrolling up',
   const progress=detail.getByRole('region',{name:'当前客户同步状态'});
   await expect(progress.getByText('正在同步微信原文',{exact:true})).toBeVisible();
   await expect(progress.getByRole('progressbar')).toHaveAttribute('value','1');
+  await expect(detail.locator('.dialog-status')).toHaveCSS('overflow-y','visible');
   await expect(detail.getByRole('button',{name:'同步中…',exact:true})).toBeDisabled();
   await detail.locator('.dialog-body').evaluate(node=>node.scrollTop=node.scrollHeight);
   await expect(progress).toBeInViewport();
   await page.screenshot({path:info.outputPath('customer-progress.png')});
   finished=true;
   await expect(progress.getByText('原文已同步，档案整理尚未接入',{exact:true})).toBeVisible();
-  await expect(progress.getByText(/已完成 3 \/ 3 个会话/)).toBeVisible();
+  await expect(progress.getByText('已同步 3 / 3 个会话',{exact:true})).toBeVisible();
   await detail.getByRole('button',{name:'关闭弹窗',exact:true}).click();
   await page.getByRole('button',{name:'查看 商家乙',exact:true}).click();
   await expect(page.getByRole('region',{name:'当前客户同步状态'})).toHaveCount(0);
@@ -110,4 +111,26 @@ test('an open source menu follows the dialog while search changes its height',as
     const menu=await dialog.getByRole('listbox',{name:'消息来源'}).boundingBox();
     return Math.abs(menu!.y-(trigger!.y+trigger!.height+6));
   }).toBeLessThan(2);
+});
+
+
+test("打开嵌套弹窗时背景保持原位，关闭后恢复页面滚动", async ({page})=>{
+  await page.evaluate(()=>{document.body.style.minHeight="2400px";});
+  await page.getByRole("button",{name:"查看 商家甲",exact:true}).click();
+  const profile = page.getByRole("dialog").first();
+  const pagePosition = await page.evaluate(()=>window.scrollY);
+  await page.mouse.move(20, 600);
+  await page.mouse.wheel(0, 500);
+  await expect.poll(()=>page.evaluate(()=>window.scrollY)).toBe(pagePosition);
+  await expect.poll(()=>page.evaluate(()=>getComputedStyle(document.documentElement).overflowY)).toBe("hidden");
+
+  await profile.getByRole("button",{name:"编辑货品资料",exact:true}).click();
+  const editor = page.getByRole("dialog",{name:"编辑货品资料",exact:true});
+  await editor.getByRole("button",{name:"关闭弹窗",exact:true}).click();
+  await expect(editor).toBeHidden();
+  await expect.poll(()=>page.evaluate(()=>getComputedStyle(document.documentElement).overflowY)).toBe("hidden");
+  await profile.getByRole("button",{name:"关闭弹窗",exact:true}).click();
+  await expect(profile).toBeHidden();
+  await page.mouse.wheel(0, 500);
+  await expect.poll(()=>page.evaluate(()=>window.scrollY)).toBeGreaterThan(pagePosition);
 });
