@@ -444,6 +444,7 @@ async def test_existing_split_is_preserved_on_continue_and_replanned_for_new_run
     if old_timeout:
         with closing(open_existing_db(client.app.state.database_path)) as conn:
             conn.execute("UPDATE history_checkpoints SET error_code='model_timeout' WHERE error_code='output_truncated'")
+            conn.execute("UPDATE history_run_units SET error_code='model_timeout' WHERE error_code='output_truncated'")
             conn.commit()
     if old_timeout or upgrade:
         async def reject_parent(request):
@@ -611,7 +612,11 @@ async def test_official_deepseek_flash_uses_non_thinking_for_extraction(flow, mo
                     {'finish_reason':'length','message':{'content':'','reasoning_content':'synthetic reasoning output'}}
                 ], 'usage':{'completion_tokens':body['max_tokens'],
                              'completion_tokens_details':{'reasoning_tokens':body['max_tokens']}}})
-            fact = {'state':'known','value':'12 元','sources':[{'message_id':'quote-0','revision':1}]}
+            payload = json.loads(body['messages'][-1]['content'])
+            quote = next(row for row in payload['messages'] if row['body'] == '确认报价 12 元')
+            fact = {'state':'known','value':'12 元','sources':[
+                {'message_id':quote['message_id'],'revision':quote['revision']}
+            ]}
             choice = {'finish_reason':'stop','message':{'content':json.dumps({
                 'contact_id':'merchant-a','logistics':{'price':fact}
             })}}
@@ -635,12 +640,116 @@ async def test_official_deepseek_flash_uses_non_thinking_for_extraction(flow, mo
         assert response.status_code == 202
         with closing(open_existing_db(client.app.state.database_path)) as conn:
             result = await run_next(conn, client.app.state.services)
-    assert [body['max_tokens'] for _, body in requests] == ([8192,8192] if mode == 'resume' else [8192])
+    assert [body['max_tokens'] for _, body in requests] == ([8192,8192,8192] if mode == 'resume' else [8192])
     assert all(body.get('thinking') == {'type':'disabled'} for _, body in requests)
-    assert result.counts['model_non_thinking_requests'] == 1
+    assert result.counts['model_non_thinking_requests'] == (2 if mode == 'resume' else 1)
     if mode.startswith('ignored'):
         assert result.error_code == 'model_reasoning_output_exhausted'
         assert result.counts.get('model_reasoning_exhausted_tokens') == (8192 if mode == 'ignored' else None)
     else:
         assert result.state == 'succeeded', result.error_code
         assert result.counts['analysis_material_completed'] == 39
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('other_failure', [None, 'request_invalid', 'stopped'])
+async def test_explicit_resume_splits_timed_out_53_message_unit_and_reuses_verified_half(flow, other_failure):
+    client, _, _ = flow
+    review(client)
+    client.app.state.services.source.pages['group-1'] = [make_page([
+        make_message(message_id=f'quote-{index}', body='确认报价 12 元') for index in range(50)
+    ])]
+    provider(client)
+    original = client.app.state.services.model_transport
+    sizes = []
+
+    async def stall_oversized(request):
+        payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
+        size = len(payload['history_unit'].get('primary_spans', []))
+        sizes.append(size)
+        if size > 26:
+            raise httpx.ReadTimeout('provider stalled', request=request)
+        return await original.handle_async_request(request)
+
+    async def continue_from(operation):
+        response = client.post('/api/operations', json={
+            'action':'resume', 'account_id':'acct-1', 'operation_id':operation.id,
+        })
+        assert response.status_code == 202
+        with closing(open_existing_db(client.app.state.database_path)) as conn:
+            return await run_next(conn, client.app.state.services)
+
+    client.app.state.services.model_transport = httpx.MockTransport(stall_oversized)
+    failed = await run(client, 'large-timeout')
+    assert failed.error_code == 'model_timeout'
+    assert sizes == [53]
+    if other_failure:
+        import asyncio
+
+        def fail_independently(_):
+            if other_failure == 'stopped':
+                raise asyncio.CancelledError()
+            return httpx.Response(400)
+
+        client.app.state.services.model_transport = httpx.MockTransport(fail_independently)
+        other = await run(client, 'unrelated-attempt-same-unit')
+        assert (other.error_code if other_failure == 'request_invalid' else other.state) == other_failure
+        client.app.state.services.model_transport = httpx.MockTransport(stall_oversized)
+    partial = await continue_from(failed)
+    assert partial.error_code == 'model_timeout'
+    assert sizes == [53, 26, 27]
+    assert partial.counts['analysis_material_completed'] == 26
+    assert partial.counts['analysis_timeout_refinements'] == 1
+
+    final = await continue_from(partial)
+    assert final.state == 'succeeded', final.error_code
+    assert sizes == [53, 26, 27, 13, 14]
+    assert final.counts['analysis_material_completed'] == 53
+    assert final.counts['analysis_chunks_reused'] == 1
+
+
+@pytest.mark.asyncio
+async def test_timeout_split_preserves_large_required_reply_context(flow):
+    from datetime import datetime
+
+    client, _, _ = flow
+    review(client)
+    source = client.app.state.services.source
+    source.pages['dm-a'] = [make_page([
+        make_message(conversation_id='dm-a', message_id=f'direct-{index}', body='确认报价 12 元')
+        for index in range(70)
+    ], conversation_id='dm-a', conversation_kind='private')]
+    source.pages['group-1'] = [make_page([
+        make_message(message_id='large-context', body='按上次那个 ' + 'x' * 14500,
+                     sent_at=datetime.fromisoformat('2026-11-11T17:00:00+08:00')),
+        *[make_message(message_id=f'reply-{index}', body='确认报价 12 元', reply_to='large-context')
+          for index in range(17)],
+    ])]
+    provider(client)
+    original = client.app.state.services.model_transport
+    reply_sizes = []
+
+    async def respond(request):
+        payload = json.loads(json.loads(request.content)['messages'][-1]['content'])
+        primary = payload['history_unit'].get('primary_spans', [])
+        if any(row['message_id'].startswith('reply-') for row in primary):
+            reply_sizes.append(len(primary))
+            assert any(row['message_id'] == 'large-context' for row in payload['messages'])
+            if len(primary) >= 16:
+                raise httpx.ReadTimeout('provider stalled', request=request)
+        return await original.handle_async_request(request)
+
+    client.app.state.services.model_transport = httpx.MockTransport(respond)
+    first = await run(client, 'large-reply-timeout')
+    assert first.error_code == 'model_timeout', first.report
+    assert len(reply_sizes) == 1 and reply_sizes[0] >= 16
+    response = client.post('/api/operations', json={
+        'action':'resume', 'account_id':'acct-1', 'operation_id':first.id,
+    })
+    assert response.status_code == 202
+    with closing(open_existing_db(client.app.state.database_path)) as conn:
+        final = await run_next(conn, client.app.state.services)
+    assert final.state == 'succeeded', final.error_code
+    assert len(reply_sizes) > 1 and all(size < reply_sizes[0] for size in reply_sizes[1:])
+    assert final.counts['analysis_material_completed'] == final.counts['relevance_high']
+    assert final.counts['analysis_chunks_reused'] > 0

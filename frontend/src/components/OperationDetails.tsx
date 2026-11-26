@@ -62,6 +62,10 @@ export function OperationDetails({ operation,onAction,onReview }: { operation: O
       ['响应超时','model_failure_model_timeout'], ['只返回推理','model_failure_model_reasoning_output_exhausted'],
       ['限流','model_failure_rate_limited'], ['临时服务错误','model_failure_model_temporary_error'],
     ].filter(([, key]) => operation.counts[key]);
+    const timeoutStages = [
+      ['收到响应头前超时', 'model_timeout_before_headers'],
+      ['读取响应正文时超时', 'model_timeout_reading_body'],
+    ].filter(([, key]) => operation.counts[key]);
     return <section className="operation-detail"><h3>{operationTitle(operation)}</h3>
       <div className="operation-facts">
         <span className="info-chip">新增 {operation.counts.inserted||0}</span>
@@ -95,6 +99,8 @@ export function OperationDetails({ operation,onAction,onReview }: { operation: O
         {!!operation.counts.model_non_thinking_requests&&<p>请求关闭推理 {operation.counts.model_non_thinking_requests} 次</p>}
         {!!operation.counts.model_reasoning_exhausted_tokens&&<p>最近一次只返回推理，用量 {operation.counts.model_reasoning_exhausted_tokens} tokens</p>}
         {failures.length>0&&<p>{failures.map(([label,key])=>`${label} ${operation.counts[key]} 次`).join(' · ')}</p>}
+        {timeoutStages.length>0&&<p>{timeoutStages.map(([label,key])=>`${label} ${operation.counts[key]} 次`).join(' · ')}</p>}
+        {operation.counts.model_last_response_headers_ms!==undefined&&<p>最近请求收到响应头用时 {(operation.counts.model_last_response_headers_ms/1000).toFixed(1)} 秒</p>}
         {!!(operation.counts.model_source_unknown||operation.counts.model_source_revision_mismatch||operation.counts.model_source_other_unit)&&<p>引用问题：未知编号 {operation.counts.model_source_unknown||0} · 修订不符 {operation.counts.model_source_revision_mismatch||0} · 引用其他段 {operation.counts.model_source_other_unit||0}。仅按当前段合法清单尝试一次纠错，不放宽引用权限。</p>}{!!operation.counts.model_last_output_limit&&<p>最近请求输出上限 {operation.counts.model_last_output_limit} · 输出截断 {operation.counts.model_output_truncations||0} 次{operation.counts.model_last_completion_tokens!==undefined&&` · 返回用量 ${operation.counts.model_last_completion_tokens}`}{operation.counts.model_last_reasoning_tokens!==undefined&&` · 其中推理 ${operation.counts.model_last_reasoning_tokens}`}</p>}{!!operation.counts.analysis_context_tokens&&<p>上下文容量 {operation.counts.analysis_context_tokens} · 最大单元输入估算 {operation.counts.analysis_max_input_tokens||0} · 输出预留 {operation.counts.analysis_max_output_tokens||0} · 安全余量 10%。输入采用 UTF-8 保守上界，非精确 token 数。</p>}{unique.map((i,n)=><p key={n}>{i.stage} · <code>{i.code}</code> {i.field_path} {i.conversation_id}</p>)}{report.contacts.map(c=><p key={c.contact_id}>{c.contact_id} · {c.analysis_outcome} {c.reason}</p>)}</details>
     </section>;
   }

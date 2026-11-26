@@ -179,7 +179,7 @@ async def test_retry_after_beyond_remaining_deadline_does_not_timeout(setup_gate
     from wechat_agent.model.contracts import ModelCallError
 
     gateway, request, token, responses, calls, delays, client = setup_gateway
-    clock = iter([0, 0, 25, 25])
+    clock = iter([0, 0, 1, 25, 25])
     monkeypatch.setattr(gateway_module, 'monotonic', lambda: next(clock))
     responses.append(httpx.Response(429, headers={'Retry-After': '100'}))
     async with client:
@@ -192,18 +192,21 @@ async def test_retry_after_beyond_remaining_deadline_does_not_timeout(setup_gate
 @pytest.mark.asyncio
 async def test_unit_deadline_records_timeout_and_format_repair(setup_gateway, db):
     from asyncio import sleep, get_running_loop
+    from contextlib import asynccontextmanager
     from wechat_agent.model.contracts import ModelCallError
 
     gateway, request, token, _, _, _, client = setup_gateway
     calls = []
 
-    async def post(*args, **kwargs):
+    @asynccontextmanager
+    async def stream(*args, **kwargs):
         calls.append(kwargs['json'])
         if len(calls) == 1:
-            return answer('invalid json')
-        await sleep(1)
+            yield answer('invalid json')
+        else:
+            await sleep(1)
 
-    gateway.client.post = post
+    gateway.client.stream = stream
     async with client:
         with pytest.raises(ModelCallError) as error:
             await gateway.generate(request, token, deadline=get_running_loop().time() + .08)
@@ -295,3 +298,35 @@ async def test_other_endpoints_keep_existing_empty_result_recovery(setup_gateway
                 await gateway.generate(request, token)
             assert error.value.code == 'output_truncated'
             assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('headers_received', [False, True])
+async def test_deadline_distinguishes_waiting_for_headers_and_reading_body(setup_gateway, db, headers_received):
+    import asyncio
+    from wechat_agent.model.contracts import ModelCallError
+
+    gateway, request, token, *_ = setup_gateway
+
+    class StalledBody(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{'
+            await asyncio.sleep(1)
+
+    async def respond(_):
+        if not headers_received:
+            await asyncio.sleep(1)
+        return httpx.Response(200, stream=StalledBody())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        gateway.client = client
+        with pytest.raises(ModelCallError) as error:
+            await gateway.generate(request, token, deadline=asyncio.get_running_loop().time() + .1)
+    case = 'reading_body' if headers_received else 'before_headers'
+    assert error.value.code == 'model_timeout'
+    call = db.execute('SELECT usage_json FROM model_calls').fetchone()
+    usage = json.loads(call[0])
+    assert usage['timeout_stage'] == case
+    assert ('response_headers_ms' in usage) == headers_received
+    counts = json.loads(db.execute('SELECT counts_json FROM operations WHERE id=?',(token.operation_id,)).fetchone()[0])
+    assert counts[f'model_timeout_{case}'] == 1

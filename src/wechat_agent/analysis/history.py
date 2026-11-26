@@ -29,10 +29,12 @@ from .facts import validate_unit,source_refs,deduplicate,merge_groups,combine,en
 INPUT_TARGET = 24_000
 COMPACT_MAX_MESSAGES = 80
 COMPACT_INPUT_TARGET = 48_000
+# Keep small, transient failures retryable without multiplying requests.
+TIMEOUT_SPLIT_MIN_MESSAGES = 16
 
 
-class PreviouslySplitTimeout(ModelCallError):
-    """A continued operation already has durable children for this timeout."""
+class ResumeTimedOutUnit(ModelCallError):
+    """A continued operation can split or reuse a previously timed-out unit."""
 
 
 class WorkflowV2:
@@ -75,7 +77,8 @@ class WorkflowV2:
         available=budget.context_tokens-budget.safety_tokens-budget.input_tokens-budget.context_tokens//10
         return request.model_copy(update={'output_tokens':min(request.output_tokens,max(16,available))})
 
-    async def unit(self,snapshot,token,request,allowed,label='all',candidates=(),*,reader=None,progress=None,require_coverage=False):
+    async def unit(self,snapshot,token,request,allowed,label='all',candidates=(),*,reader=None,progress=None,
+                   require_coverage=False,split_prior_timeout=False):
         try:
             saved=checkpoint(self.conn,snapshot,request)
             if saved['state']=='succeeded':
@@ -88,14 +91,16 @@ class WorkflowV2:
                 set_unit(self.conn,snapshot,token,request,'succeeded',reused=True,progress=progress)
                 return result
             saved_error = saved['error_code']
-            if saved_error == 'model_timeout' and request.high_value_history and self.conn.execute(
+            if request.high_value_history and self.conn.execute(
                 """SELECT 1 FROM operations o JOIN history_runs h
                    ON h.account_id=o.account_id AND o.idempotency_key='resume:'||h.operation_id
                    JOIN history_run_units p ON p.account_id=h.account_id AND p.snapshot_id=h.snapshot_id
-                   WHERE o.account_id=? AND o.id=? AND p.contact_id=? AND p.cache_key=? AND p.superseded=1""",
-                (snapshot.key.account_id, token.operation_id, snapshot.key.contact_id, request.checkpoint_key),
+                   WHERE o.account_id=? AND o.id=? AND p.contact_id=? AND p.cache_key=?
+                     AND p.error_code='model_timeout' AND (p.superseded=1 OR (? AND p.state='failed'))""",
+                (snapshot.key.account_id, token.operation_id, snapshot.key.contact_id, request.checkpoint_key,
+                 split_prior_timeout),
             ).fetchone():
-                raise PreviouslySplitTimeout(saved_error)
+                raise ResumeTimedOutUnit('model_timeout')
             if (saved_error == 'output_truncated' or (saved_error == 'model_timeout' and not request.high_value_history)
                     or (saved_error == 'history_merge_incomplete' and request.phase == 'merge'
                         and self.strategy_version in {'workflow-v4', 'workflow-v5'} and label != 'shipments')):
@@ -170,7 +175,8 @@ class WorkflowV2:
             return result
         except ModelCallError as error:
             if error.code in {'model_cancelled','cancelled'}:raise
-            set_unit(self.conn,snapshot,token,request,'failed',error=error.code,progress=progress)
+            set_unit(self.conn,snapshot,token,request,'failed',error=error.code,progress=progress,
+                     preserve_checkpoint=isinstance(error, ResumeTimedOutUnit))
             raise
 
     async def run(self,snapshot,checkpoint_hint,cancellation):
@@ -308,7 +314,7 @@ class WorkflowV2:
         if evidence is not None or non_thinking:
             fatal.add('model_reasoning_output_exhausted')
 
-        async def refine(chunk, req):
+        async def refine(chunk, req, *, after_timeout=False):
             packed = json.loads(req.messages[-1].content).get('history_unit', {}).get('packing')
             if packed == 'compact' and len(chunk.spans) > 1:
                 # Replay pre-upgrade partitions if they already have persisted children.
@@ -340,9 +346,28 @@ class WorkflowV2:
             fixed=request_budget(planned(skeleton),self.gateway.config).input_tokens
             variable=request_budget(planned(primary),self.gateway.config).input_tokens-fixed
             limit=fixed+max(128,variable//2)
-            try:smaller=await asyncio.to_thread(plan_chunks,primary,planned,self.gateway.config,input_limit=limit,context_messages=context_rows,max_primary_messages=max(1,len(primary)//2))
-            except ModelCallError:raise ModelCallError('output_truncated') from None
-            if len(smaller)>4 or (len(smaller)==1 and smaller[0].spans==chunk.spans):raise ModelCallError('output_truncated')
+            async def smaller_chunks(input_limit):
+                return await asyncio.to_thread(
+                    plan_chunks, primary, planned, self.gateway.config, input_limit=input_limit,
+                    context_messages=context_rows, max_primary_messages=max(1, len(primary)//2),
+                )
+
+            def valid_split(chunks):
+                return 0 < len(chunks) <= 4 and not (len(chunks) == 1 and chunks[0].spans == chunk.spans)
+
+            try:
+                smaller = await smaller_chunks(limit)
+            except ModelCallError:
+                smaller = []
+            if after_timeout and not valid_split(smaller):
+                # Required reply context may exceed the soft split target on its own.
+                # Keep the true context limit and halve the maximum primary message count.
+                try:
+                    smaller = await smaller_chunks(None)
+                except ModelCallError:
+                    smaller = []
+            if not valid_split(smaller):
+                raise ModelCallError('model_timeout' if after_timeout else 'output_truncated')
             return [
                 (c, extraction(list(c.messages), [asdict(span) for span in c.spans]))
                 for c in smaller
@@ -405,14 +430,21 @@ class WorkflowV2:
                 row for row in chunk.messages if (row['message_id'], row['revision']) in allowed
             ]
             verified_plan = await replan_verified_children(chunk, req) if depth < MAX_DEPTH else None
+            after_timeout = False
             if verified_plan is None:
                 try:
+                    split_prior_timeout = (
+                        depth < MAX_DEPTH
+                        and len({span.message_id for span in chunk.spans}) >= TIMEOUT_SPLIT_MIN_MESSAGES
+                    )
                     return [await self.unit(snapshot, cancellation, req, allowed,
-                                            reader=reader.restrict(evidence_rows), progress=progress)]
+                                            reader=reader.restrict(evidence_rows), progress=progress,
+                                            split_prior_timeout=split_prior_timeout)]
                 except ModelCallError as error:
-                    if error.code in fatal and not isinstance(error, PreviouslySplitTimeout):raise
+                    after_timeout = isinstance(error, ResumeTimedOutUnit)
+                    if error.code in fatal and not after_timeout:raise
                     if error.code not in {'output_truncated','model_timeout'} or depth>=MAX_DEPTH:raise
-            planned_children = verified_plan or await refine(chunk, req)
+            planned_children = verified_plan or await refine(chunk, req, after_timeout=after_timeout)
             child_keys = {unit_cache_key(snapshot, request, chunk.spans, self.gateway.config)
                           for chunk, request in planned_children}
             prior = {}
@@ -525,7 +557,7 @@ class WorkflowV2:
                                          reader=merge_reader, progress=progress,
                                          require_coverage=covered or self.strategy_version in {'workflow-v4', 'workflow-v5'})
             except ModelCallError as error:
-                if error.code in fatal and not isinstance(error, PreviouslySplitTimeout):
+                if error.code in fatal and not isinstance(error, ResumeTimedOutUnit):
                     raise
                 if error.code not in {'output_truncated', 'model_timeout'} and not (
                     error.code == 'history_merge_incomplete' and self.strategy_version in {'workflow-v4', 'workflow-v5'}

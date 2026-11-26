@@ -117,10 +117,11 @@ def checkpoint(conn,snapshot,request):
     return saved
 
 
-def set_unit(conn,snapshot,token,request,state,*,output=None,error=None,reused=False,progress=None):
+def set_unit(conn,snapshot,token,request,state,*,output=None,error=None,reused=False,progress=None,
+             preserve_checkpoint=False):
     with transaction(conn):
         if cancellation_requested(conn,snapshot.key.account_id,token):raise ModelCallError('model_cancelled')
-        if not reused:
+        if not reused and not preserve_checkpoint:
             conn.execute('''UPDATE history_checkpoints SET state=?,output_json=?,error_code=?
                 WHERE account_id=? AND contact_id=? AND cache_key=?''',
                 (state,output.model_dump_json(exclude_defaults=True, exclude_none=True) if output is not None else None,error,snapshot.key.account_id,snapshot.key.contact_id,request.checkpoint_key))
@@ -139,7 +140,16 @@ class RunProgress:
         self.materials=json.loads(saved['materials_json'])
         self.window=saved['context_tokens'];self.units={};self.done_parts={};self.parts={};self.covered=set()
         self.values={f'analysis_{phase}_{name}':0 for phase in ('chunks','merge') for name in ('total','completed','failed','reused')}
-        self.values['analysis_refinements']=conn.execute('SELECT COUNT(DISTINCT parent_id) FROM history_refinements WHERE account_id=? AND snapshot_id=?',(snapshot.key.account_id,snapshot.id)).fetchone()[0]
+        refinements, timeout_refinements = conn.execute(
+            """SELECT COUNT(DISTINCT edge.parent_id),
+                      COUNT(DISTINCT CASE WHEN unit.phase='extract' AND unit.error_code='model_timeout'
+                                          THEN edge.parent_id END)
+               FROM history_refinements edge JOIN history_run_units unit ON unit.account_id=edge.account_id
+                   AND unit.snapshot_id=edge.snapshot_id AND unit.unit_id=edge.parent_id
+               WHERE edge.account_id=? AND edge.snapshot_id=?""",
+            (snapshot.key.account_id, snapshot.id),
+        ).fetchone()
+        self.values.update(analysis_refinements=refinements, analysis_timeout_refinements=timeout_refinements)
         self.values.update(analysis_context_tokens=self.window,analysis_max_input_tokens=0,analysis_max_output_tokens=0)
         self.load()
 
